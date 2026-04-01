@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "truckspot",
-    "slug": "truckspot",
+    "name": "TruckSpot",
+    "slug": "truckspot-live",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "truckspot",
+    "scheme": "truckspotlive",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
