@@ -1,0 +1,931 @@
+import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
+import * as ImagePicker from 'expo-image-picker';
+import { router } from 'expo-router';
+import { useState } from 'react';
+import {
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+
+import { BrandMark } from '@/components/brand-mark';
+import { PageShell } from '@/components/page-shell';
+import { palette, radii, spacing } from '@/constants/theme';
+import { checkProfessionalText } from '@/lib/moderation';
+import { BusinessCategory, PaymentMethod } from '@/types/marketplace';
+
+const categories: {
+  id: BusinessCategory;
+  label: string;
+  detail: string;
+  icon: keyof typeof FontAwesome6.glyphMap;
+}[] = [
+  { id: 'food_truck', label: 'Food truck', detail: 'Mobile or recurring stops', icon: 'truck' },
+  { id: 'restaurant', label: 'Restaurant', detail: 'Permanent storefront', icon: 'utensils' },
+  { id: 'pop_up', label: 'Pop-up', detail: 'Markets and temporary service', icon: 'store' },
+  { id: 'cafe_bakery', label: 'Café or bakery', detail: 'Coffee, pastry, or counter', icon: 'mug-hot' },
+  { id: 'home_kitchen', label: 'Home kitchen', detail: 'Jurisdiction and permit gated', icon: 'house' },
+];
+
+const payments: PaymentMethod[] = [
+  'Cash',
+  'Visa',
+  'Mastercard',
+  'Amex',
+  'Apple Pay',
+  'Google Pay',
+  'Cash App',
+  'Venmo',
+];
+
+function Input({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  required,
+  keyboardType,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+  required?: boolean;
+  keyboardType?: 'default' | 'email-address' | 'phone-pad';
+}) {
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>
+        {label}
+        {required ? <Text style={styles.required}> *</Text> : null}
+      </Text>
+      <TextInput
+        autoCapitalize={keyboardType === 'email-address' ? 'none' : 'words'}
+        keyboardType={keyboardType}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={palette.mutedLight}
+        style={styles.input}
+        value={value}
+      />
+    </View>
+  );
+}
+
+export default function BusinessOnboardingScreen() {
+  const [step, setStep] = useState(1);
+  const [category, setCategory] = useState<BusinessCategory>('food_truck');
+  const [businessName, setBusinessName] = useState('');
+  const [cuisine, setCuisine] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [website, setWebsite] = useState('');
+  const [address, setAddress] = useState('');
+  const [city, setCity] = useState('');
+  const [region, setRegion] = useState('CA');
+  const [postalCode, setPostalCode] = useState('');
+  const [permitNumber, setPermitNumber] = useState('');
+  const [selectedPayments, setSelectedPayments] = useState<PaymentMethod[]>(['Cash', 'Visa']);
+  const [logoUri, setLogoUri] = useState<string | null>(null);
+  const [logoMeta, setLogoMeta] = useState('');
+  const [description, setDescription] = useState('');
+  const [claimExisting, setClaimExisting] = useState(false);
+  const [accuracyConfirmed, setAccuracyConfirmed] = useState(false);
+
+  const pickLogo = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Photo access needed', 'Allow photo access to choose a business logo.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: true,
+      aspect: [1, 1],
+      mediaTypes: ['images'],
+      quality: 0.9,
+    });
+
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+
+    if ((asset.width ?? 0) < 512 || (asset.height ?? 0) < 512) {
+      Alert.alert('Logo is too small', 'Choose a square image at least 512 × 512 pixels.');
+      return;
+    }
+
+    if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
+      Alert.alert('Logo is too large', 'Choose an image under 5 MB.');
+      return;
+    }
+
+    setLogoUri(asset.uri);
+    setLogoMeta(`${asset.width} × ${asset.height} · ready for safe processing`);
+  };
+
+  const togglePayment = (payment: PaymentMethod) => {
+    setSelectedPayments((current) =>
+      current.includes(payment) ? current.filter((item) => item !== payment) : [...current, payment]
+    );
+  };
+
+  const next = () => {
+    if (step === 1) {
+      const nameCheck = checkProfessionalText(businessName, 80);
+      if (!nameCheck.ok || !cuisine.trim() || !email.trim() || !phone.trim()) {
+        Alert.alert('Complete the essentials', nameCheck.ok ? 'Add cuisine, email, and business phone.' : nameCheck.reason);
+        return;
+      }
+    }
+
+    if (step === 2) {
+      if (category !== 'food_truck' && category !== 'pop_up' && (!address.trim() || !city.trim() || !postalCode.trim())) {
+        Alert.alert('Add the business location', 'A public storefront needs a complete address.');
+        return;
+      }
+      if (category === 'home_kitchen' && !permitNumber.trim()) {
+        Alert.alert('Permit details required', 'Home kitchens remain private and unpublished until local eligibility is verified.');
+        return;
+      }
+      if (!selectedPayments.length) {
+        Alert.alert('Select a payment method', 'Customers need to know how they can pay.');
+        return;
+      }
+    }
+
+    setStep((current) => Math.min(3, current + 1));
+  };
+
+  const submit = () => {
+    const descriptionCheck = checkProfessionalText(description, 280);
+    if (!logoUri || !descriptionCheck.ok || !accuracyConfirmed) {
+      Alert.alert(
+        'Finish the listing',
+        !logoUri
+          ? 'Add a square business logo.'
+          : !descriptionCheck.ok
+            ? descriptionCheck.reason
+            : 'Confirm that the information is accurate and authorized.'
+      );
+      return;
+    }
+
+    Alert.alert(
+      claimExisting ? 'Claim submitted for review' : 'Business submitted for review',
+      category === 'home_kitchen'
+        ? 'The listing stays private until jurisdiction and permit checks are complete.'
+        : 'Spottr will verify ownership before publishing business controls.'
+    );
+    router.replace('/(tabs)/studio');
+  };
+
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={24}
+      style={styles.keyboard}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        style={styles.screen}>
+        <PageShell narrow>
+          <View style={styles.topbar}>
+            <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.backButton}>
+              <FontAwesome6 color={palette.ink} name="arrow-left" size={14} />
+            </Pressable>
+            <BrandMark />
+            <View style={styles.backSpacer} />
+          </View>
+
+          <View style={styles.progressHeader}>
+            <Text style={styles.progressEyebrow}>Business verification</Text>
+            <Text style={styles.title}>
+              {step === 1 ? 'Tell us what you serve.' : step === 2 ? 'Where and how do you operate?' : 'Make it unmistakably yours.'}
+            </Text>
+            <Text style={styles.subtitle}>
+              {step === 1
+                ? 'Start a new listing or claim one that already appears in discovery.'
+                : step === 2
+                  ? 'Accurate location, permit, and payment details build customer trust.'
+                  : 'A clean logo and a short description complete the public profile.'}
+            </Text>
+            <View style={styles.progress}>
+              {[1, 2, 3].map((item) => (
+                <View key={item} style={[styles.progressBar, item <= step && styles.progressBarActive]} />
+              ))}
+            </View>
+            <Text style={styles.stepLabel}>Step {step} of 3</Text>
+          </View>
+
+          <View style={styles.formPanel}>
+            {step === 1 ? (
+              <>
+                <View style={styles.modeRow}>
+                  <Pressable
+                    onPress={() => setClaimExisting(false)}
+                    style={[styles.modeOption, !claimExisting && styles.modeOptionActive]}>
+                    <Text style={[styles.modeText, !claimExisting && styles.modeTextActive]}>Add new</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setClaimExisting(true)}
+                    style={[styles.modeOption, claimExisting && styles.modeOptionActive]}>
+                    <Text style={[styles.modeText, claimExisting && styles.modeTextActive]}>Claim existing</Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.field}>
+                  <Text style={styles.label}>Business category *</Text>
+                  <View style={styles.categoryList}>
+                    {categories.map((item) => {
+                      const active = category === item.id;
+                      return (
+                        <Pressable
+                          key={item.id}
+                          onPress={() => setCategory(item.id)}
+                          style={[styles.categoryOption, active && styles.categoryOptionActive]}>
+                          <View style={[styles.categoryIcon, active && styles.categoryIconActive]}>
+                            <FontAwesome6 color={active ? '#FFFFFF' : palette.ink} name={item.icon} size={14} />
+                          </View>
+                          <View style={styles.categoryCopy}>
+                            <Text style={[styles.categoryTitle, active && styles.categoryTitleActive]}>{item.label}</Text>
+                            <Text style={[styles.categoryDetail, active && styles.categoryDetailActive]}>{item.detail}</Text>
+                          </View>
+                          {active ? <FontAwesome6 color={palette.mint} name="circle-check" size={13} solid /> : null}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {category === 'home_kitchen' ? (
+                  <View style={styles.legalNotice}>
+                    <FontAwesome6 color={palette.warning} name="scale-balanced" size={16} />
+                    <View style={styles.legalCopy}>
+                      <Text style={styles.legalTitle}>Legal availability varies by location</Text>
+                      <Text style={styles.legalText}>
+                        Your residence and exact pickup point stay private. The listing cannot publish until Spottr verifies
+                        local eligibility, permit status, and allowed food categories.
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                <Input
+                  label="Business name"
+                  onChangeText={setBusinessName}
+                  placeholder="The public business name"
+                  required
+                  value={businessName}
+                />
+                <Input
+                  label="Cuisine or specialty"
+                  onChangeText={setCuisine}
+                  placeholder="Example: Sonoran tacos"
+                  required
+                  value={cuisine}
+                />
+                <Input
+                  keyboardType="email-address"
+                  label="Business email"
+                  onChangeText={setEmail}
+                  placeholder="owner@business.com"
+                  required
+                  value={email}
+                />
+                <Input
+                  keyboardType="phone-pad"
+                  label="Business phone"
+                  onChangeText={setPhone}
+                  placeholder="Used for private ownership checks"
+                  required
+                  value={phone}
+                />
+                <Input
+                  label="Website or social page"
+                  onChangeText={setWebsite}
+                  placeholder="Optional"
+                  value={website}
+                />
+              </>
+            ) : null}
+
+            {step === 2 ? (
+              <>
+                {category === 'food_truck' || category === 'pop_up' ? (
+                  <View style={styles.locationMode}>
+                    <FontAwesome6 color={palette.accent} name="route" size={18} />
+                    <View style={styles.locationModeCopy}>
+                      <Text style={styles.locationModeTitle}>Mobile location schedule</Text>
+                      <Text style={styles.locationModeText}>
+                        Add today’s stop now. Recurring weekly stops and future dates can be managed after verification.
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                <Input
+                  label={category === 'home_kitchen' ? 'Public service area' : 'Street address / current stop'}
+                  onChangeText={setAddress}
+                  placeholder={category === 'home_kitchen' ? 'Example: Highland Park' : 'Address or named lot'}
+                  required={category !== 'food_truck' && category !== 'pop_up'}
+                  value={address}
+                />
+                <Input label="City" onChangeText={setCity} placeholder="City" required value={city} />
+                <View style={styles.inlineFields}>
+                  <View style={styles.inlineField}>
+                    <Input label="State" onChangeText={setRegion} placeholder="CA" required value={region} />
+                  </View>
+                  <View style={styles.inlineField}>
+                    <Input
+                      label="ZIP code"
+                      onChangeText={setPostalCode}
+                      placeholder="90026"
+                      required
+                      value={postalCode}
+                    />
+                  </View>
+                </View>
+
+                {category === 'home_kitchen' ? (
+                  <Input
+                    label="Permit or registration number"
+                    onChangeText={setPermitNumber}
+                    placeholder="Kept private during verification"
+                    required
+                    value={permitNumber}
+                  />
+                ) : null}
+
+                <View style={styles.field}>
+                  <Text style={styles.label}>Accepted payments *</Text>
+                  <Text style={styles.fieldDetail}>Select every method customers can use today.</Text>
+                  <View style={styles.paymentList}>
+                    {payments.map((payment) => {
+                      const active = selectedPayments.includes(payment);
+                      return (
+                        <Pressable
+                          key={payment}
+                          onPress={() => togglePayment(payment)}
+                          style={[styles.paymentOption, active && styles.paymentOptionActive]}>
+                          <View style={[styles.smallCheckbox, active && styles.smallCheckboxActive]}>
+                            {active ? <FontAwesome6 color="#FFFFFF" name="check" size={8} /> : null}
+                          </View>
+                          <Text style={[styles.paymentText, active && styles.paymentTextActive]}>{payment}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                <View style={styles.verificationNote}>
+                  <FontAwesome6 color={palette.success} name="user-shield" size={16} />
+                  <Text style={styles.verificationText}>
+                    Claims use a code sent to an already-listed business phone or domain email when possible. Documents stay
+                    private and are removed under the verification retention policy.
+                  </Text>
+                </View>
+              </>
+            ) : null}
+
+            {step === 3 ? (
+              <>
+                <View style={styles.logoSection}>
+                  <View style={styles.logoPreview}>
+                    {logoUri ? (
+                      <Image source={{ uri: logoUri }} style={styles.logoImage} />
+                    ) : (
+                      <FontAwesome6 color={palette.mutedLight} name="image" size={27} />
+                    )}
+                  </View>
+                  <View style={styles.logoCopy}>
+                    <Text style={styles.label}>Business logo *</Text>
+                    <Text style={styles.logoRequirements}>
+                      Square PNG, JPEG, or WebP · 512–2048 px · up to 5 MB
+                    </Text>
+                    {logoMeta ? <Text style={styles.logoSuccess}>{logoMeta}</Text> : null}
+                    <Pressable onPress={pickLogo} style={styles.logoButton}>
+                      <FontAwesome6 color={palette.ink} name="upload" size={11} />
+                      <Text style={styles.logoButtonText}>{logoUri ? 'Choose another' : 'Choose logo'}</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                <View style={styles.field}>
+                  <View style={styles.fieldHeader}>
+                    <Text style={styles.label}>Short description *</Text>
+                    <Text style={styles.fieldDetail}>{description.length}/280</Text>
+                  </View>
+                  <TextInput
+                    maxLength={280}
+                    multiline
+                    onChangeText={setDescription}
+                    placeholder="Tell customers what makes your food and business distinct."
+                    placeholderTextColor={palette.mutedLight}
+                    style={[styles.input, styles.descriptionInput]}
+                    textAlignVertical="top"
+                    value={description}
+                  />
+                </View>
+
+                <View style={styles.reviewSummary}>
+                  <Text style={styles.reviewTitle}>Ready for verification</Text>
+                  <View style={styles.reviewRow}>
+                    <Text style={styles.reviewLabel}>Business</Text>
+                    <Text style={styles.reviewValue}>{businessName || 'Not added'}</Text>
+                  </View>
+                  <View style={styles.reviewRow}>
+                    <Text style={styles.reviewLabel}>Category</Text>
+                    <Text style={styles.reviewValue}>
+                      {categories.find((item) => item.id === category)?.label}
+                    </Text>
+                  </View>
+                  <View style={styles.reviewRow}>
+                    <Text style={styles.reviewLabel}>Operation</Text>
+                    <Text style={styles.reviewValue}>
+                      {category === 'food_truck' || category === 'pop_up' ? 'Mobile schedule' : city || 'Location pending'}
+                    </Text>
+                  </View>
+                  <View style={styles.reviewRow}>
+                    <Text style={styles.reviewLabel}>Payments</Text>
+                    <Text style={styles.reviewValue}>{selectedPayments.length} selected</Text>
+                  </View>
+                </View>
+
+                <Pressable
+                  onPress={() => setAccuracyConfirmed((current) => !current)}
+                  style={styles.confirmRow}>
+                  <View style={[styles.checkbox, accuracyConfirmed && styles.checkboxActive]}>
+                    {accuracyConfirmed ? <FontAwesome6 color="#FFFFFF" name="check" size={10} /> : null}
+                  </View>
+                  <Text style={styles.confirmText}>
+                    I’m authorized to represent this business, and the information is accurate. I understand public updates and
+                    menu details must remain professional and current.
+                  </Text>
+                </Pressable>
+              </>
+            ) : null}
+
+            <View style={styles.actions}>
+              {step > 1 ? (
+                <Pressable onPress={() => setStep((current) => current - 1)} style={styles.secondaryButton}>
+                  <FontAwesome6 color={palette.ink} name="arrow-left" size={11} />
+                  <Text style={styles.secondaryButtonText}>Back</Text>
+                </Pressable>
+              ) : (
+                <Pressable onPress={() => router.back()} style={styles.secondaryButton}>
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+              )}
+
+              <Pressable onPress={step === 3 ? submit : next} style={styles.primaryButton}>
+                <Text style={styles.primaryButtonText}>{step === 3 ? 'Submit for verification' : 'Continue'}</Text>
+                <FontAwesome6 color="#FFFFFF" name="arrow-right" size={11} />
+              </Pressable>
+            </View>
+          </View>
+        </PageShell>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  keyboard: {
+    backgroundColor: palette.bg,
+    flex: 1,
+  },
+  screen: {
+    backgroundColor: palette.bg,
+    flex: 1,
+  },
+  content: {
+    padding: spacing.lg,
+    paddingBottom: 64,
+  },
+  topbar: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  backButton: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  backSpacer: {
+    width: 40,
+  },
+  progressHeader: {
+    gap: spacing.sm,
+    marginTop: spacing.xxxl,
+  },
+  progressEyebrow: {
+    color: palette.accentDeep,
+    fontFamily: 'SpaceMono',
+    fontSize: 10,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  title: {
+    color: palette.ink,
+    fontSize: 39,
+    fontWeight: '900',
+    letterSpacing: -1.8,
+    lineHeight: 42,
+  },
+  subtitle: {
+    color: palette.muted,
+    fontSize: 14,
+    lineHeight: 21,
+    maxWidth: 600,
+  },
+  progress: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: spacing.md,
+  },
+  progressBar: {
+    backgroundColor: palette.line,
+    borderRadius: 999,
+    flex: 1,
+    height: 5,
+  },
+  progressBarActive: {
+    backgroundColor: palette.accent,
+  },
+  stepLabel: {
+    color: palette.muted,
+    fontFamily: 'SpaceMono',
+    fontSize: 9,
+  },
+  formPanel: {
+    backgroundColor: palette.surface,
+    borderColor: palette.line,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    gap: spacing.lg,
+    marginTop: spacing.xl,
+    padding: spacing.xl,
+  },
+  modeRow: {
+    backgroundColor: palette.bg,
+    borderRadius: radii.pill,
+    flexDirection: 'row',
+    padding: 4,
+  },
+  modeOption: {
+    alignItems: 'center',
+    borderRadius: radii.pill,
+    flex: 1,
+    paddingVertical: 10,
+  },
+  modeOptionActive: {
+    backgroundColor: palette.card,
+  },
+  modeText: {
+    color: palette.muted,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  modeTextActive: {
+    color: palette.ink,
+  },
+  field: {
+    gap: 8,
+  },
+  fieldHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  label: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  required: {
+    color: palette.accent,
+  },
+  fieldDetail: {
+    color: palette.muted,
+    fontSize: 9,
+    lineHeight: 14,
+  },
+  input: {
+    backgroundColor: palette.card,
+    borderColor: palette.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    color: palette.ink,
+    fontSize: 14,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 14,
+  },
+  categoryList: {
+    gap: spacing.sm,
+  },
+  categoryOption: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  categoryOptionActive: {
+    backgroundColor: palette.dark,
+    borderColor: palette.dark,
+  },
+  categoryIcon: {
+    alignItems: 'center',
+    backgroundColor: palette.bg,
+    borderRadius: 999,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  categoryIconActive: {
+    backgroundColor: palette.accent,
+  },
+  categoryCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  categoryTitle: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  categoryTitleActive: {
+    color: '#FFFFFF',
+  },
+  categoryDetail: {
+    color: palette.muted,
+    fontSize: 9,
+  },
+  categoryDetailActive: {
+    color: palette.darkMuted,
+  },
+  legalNotice: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.warningSoft,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  legalCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  legalTitle: {
+    color: palette.warning,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  legalText: {
+    color: palette.warning,
+    fontSize: 9,
+    lineHeight: 15,
+  },
+  locationMode: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  locationModeCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  locationModeTitle: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  locationModeText: {
+    color: palette.muted,
+    fontSize: 9,
+    lineHeight: 15,
+  },
+  inlineFields: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  inlineField: {
+    flex: 1,
+  },
+  paymentList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  paymentOption: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  paymentOptionActive: {
+    backgroundColor: palette.successSoft,
+    borderColor: palette.successSoft,
+  },
+  smallCheckbox: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: 4,
+    borderWidth: 1,
+    height: 16,
+    justifyContent: 'center',
+    width: 16,
+  },
+  smallCheckboxActive: {
+    backgroundColor: palette.success,
+    borderColor: palette.success,
+  },
+  paymentText: {
+    color: palette.muted,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  paymentTextActive: {
+    color: palette.success,
+  },
+  verificationNote: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.successSoft,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  verificationText: {
+    color: palette.success,
+    flex: 1,
+    fontSize: 9,
+    lineHeight: 15,
+  },
+  logoSection: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.lg,
+  },
+  logoPreview: {
+    alignItems: 'center',
+    backgroundColor: palette.bg,
+    borderColor: palette.line,
+    borderRadius: radii.lg,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    height: 118,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    width: 118,
+  },
+  logoImage: {
+    height: '100%',
+    width: '100%',
+  },
+  logoCopy: {
+    flex: 1,
+    gap: 7,
+  },
+  logoRequirements: {
+    color: palette.muted,
+    fontSize: 9,
+    lineHeight: 14,
+  },
+  logoSuccess: {
+    color: palette.success,
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  logoButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderColor: palette.line,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  logoButtonText: {
+    color: palette.ink,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  descriptionInput: {
+    minHeight: 120,
+    paddingTop: 14,
+  },
+  reviewSummary: {
+    backgroundColor: palette.bg,
+    borderRadius: radii.lg,
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  reviewTitle: {
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
+    marginBottom: 3,
+  },
+  reviewRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+  },
+  reviewLabel: {
+    color: palette.muted,
+    fontSize: 10,
+  },
+  reviewValue: {
+    color: palette.ink,
+    flex: 1,
+    fontSize: 10,
+    fontWeight: '800',
+    textAlign: 'right',
+  },
+  confirmRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  checkbox: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: 6,
+    borderWidth: 1,
+    height: 22,
+    justifyContent: 'center',
+    width: 22,
+  },
+  checkboxActive: {
+    backgroundColor: palette.success,
+    borderColor: palette.success,
+  },
+  confirmText: {
+    color: palette.muted,
+    flex: 1,
+    fontSize: 9,
+    lineHeight: 15,
+  },
+  actions: {
+    borderTopColor: palette.line,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
+    paddingTop: spacing.lg,
+  },
+  secondaryButton: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 7,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  secondaryButtonText: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  primaryButton: {
+    alignItems: 'center',
+    backgroundColor: palette.accent,
+    borderRadius: radii.pill,
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 17,
+    paddingVertical: 12,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+});

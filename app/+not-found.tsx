@@ -1,40 +1,71 @@
-import { Link, Stack } from 'expo-router';
-import { StyleSheet } from 'react-native';
+import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
+import { Link } from 'expo-router';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Text, View } from '@/components/Themed';
+import { BrandMark } from '@/components/brand-mark';
+import { palette, radii, spacing } from '@/constants/theme';
 
 export default function NotFoundScreen() {
   return (
-    <>
-      <Stack.Screen options={{ title: 'Oops!' }} />
-      <View style={styles.container}>
-        <Text style={styles.title}>This screen doesn't exist.</Text>
-
-        <Link href="/" style={styles.link}>
-          <Text style={styles.linkText}>Go to home screen!</Text>
-        </Link>
+    <View style={styles.screen}>
+      <BrandMark />
+      <View style={styles.icon}>
+        <FontAwesome6 color={palette.accent} name="location-dot" size={23} />
       </View>
-    </>
+      <Text style={styles.title}>We couldn’t find that stop.</Text>
+      <Text style={styles.detail}>The listing may have moved, expired, or changed its public link.</Text>
+      <Link href="/" asChild>
+        <Pressable style={styles.button}>
+          <Text style={styles.buttonText}>Back to discovery</Text>
+        </Pressable>
+      </Link>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  screen: {
     alignItems: 'center',
+    backgroundColor: palette.bg,
+    flex: 1,
+    gap: spacing.md,
     justifyContent: 'center',
-    padding: 20,
+    padding: spacing.xl,
+  },
+  icon: {
+    alignItems: 'center',
+    backgroundColor: palette.accentSoft,
+    borderRadius: 999,
+    height: 54,
+    justifyContent: 'center',
+    marginTop: spacing.xl,
+    width: 54,
   },
   title: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    color: palette.ink,
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: -0.7,
+    textAlign: 'center',
   },
-  link: {
-    marginTop: 15,
-    paddingVertical: 15,
+  detail: {
+    color: palette.muted,
+    fontSize: 13,
+    lineHeight: 20,
+    maxWidth: 420,
+    textAlign: 'center',
   },
-  linkText: {
-    fontSize: 14,
-    color: '#2e78b7',
+  button: {
+    backgroundColor: palette.accent,
+    borderRadius: radii.pill,
+    marginTop: spacing.sm,
+    paddingHorizontal: 17,
+    paddingVertical: 12,
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
   },
 });
+

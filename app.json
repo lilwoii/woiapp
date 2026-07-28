@@ -1,36 +1,55 @@
 {
   "expo": {
-    "name": "TruckSpot",
-    "slug": "truckspot-live",
-    "version": "1.0.0",
+    "name": "Spottr",
+    "slug": "spottr-food",
+    "version": "0.1.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "truckspotlive",
-    "userInterfaceStyle": "automatic",
+    "icon": "./assets/images/spottr-icon.png",
+    "scheme": "spottr",
+    "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/splash-icon.png",
+      "image": "./assets/images/spottr-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#F6F3EC"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.spottr.food",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Spottr uses your location while the app is open to show nearby food trucks and restaurants. Your precise location is not saved to your profile.",
+        "NSPhotoLibraryUsageDescription": "Spottr uses photo access only when you choose a business logo or attach a photo to a review."
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/images/spottr-icon.png",
+        "backgroundColor": "#F6F3EC"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.spottr.food",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/spottr-icon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Spottr uses photo access only when you choose a business logo or attach a photo to a review.",
+          "cameraPermission": "Spottr uses the camera only when you choose to take a business or review photo."
+        }
+      ],
+      "expo-secure-store",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true

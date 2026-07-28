@@ -7,7 +7,7 @@ import { useFonts } from 'expo-font';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 
-import { TruckStoreProvider } from '@/context/truck-store';
+import { MarketplaceStoreProvider } from '@/context/marketplace-store';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -21,11 +21,11 @@ const theme = {
   ...DefaultTheme,
   colors: {
     ...DefaultTheme.colors,
-    background: '#F3EFE6',
-    card: '#FBF8F2',
-    primary: '#C95C31',
-    text: '#132218',
-    border: '#D9D2C4',
+    background: '#F6F3EC',
+    card: '#FFFDF8',
+    primary: '#F15A3A',
+    text: '#191D1B',
+    border: '#DEDCD4',
   },
 };
 
@@ -50,19 +50,22 @@ export default function RootLayout() {
   }
 
   return (
-    <TruckStoreProvider>
+    <MarketplaceStoreProvider>
       <ThemeProvider value={theme}>
         <StatusBar style="dark" />
         <Stack
           screenOptions={{
             headerShadowVisible: false,
-            headerStyle: { backgroundColor: '#FBF8F2' },
-            headerTitleStyle: { color: '#132218', fontWeight: '800' },
+            headerShown: false,
+            headerStyle: { backgroundColor: '#FFFDF8' },
+            headerTitleStyle: { color: '#191D1B', fontWeight: '800' },
           }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="truck/[id]" options={{ title: 'Truck details' }} />
+          <Stack.Screen name="place/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="auth" options={{ headerShown: false, presentation: 'modal' }} />
+          <Stack.Screen name="business-onboarding" options={{ headerShown: false }} />
         </Stack>
       </ThemeProvider>
-    </TruckStoreProvider>
+    </MarketplaceStoreProvider>
   );
 }
