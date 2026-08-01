@@ -1,0 +1,26 @@
+{
+  "name": "Spottr — Live local food, mapped",
+  "short_name": "Spottr",
+  "description": "Find nearby food trucks and trusted local food with live locations, menus, payments, and owner updates.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F6F3EC",
+  "theme_color": "#F6F3EC",
+  "orientation": "any",
+  "categories": ["food", "navigation", "lifestyle"],
+  "icons": [
+    {
+      "src": "/spottr-icon.png",
+      "sizes": "1254x1254",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/spottr-icon-maskable.png",
+      "sizes": "1254x1254",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -8,6 +8,7 @@ node_modules/
 dist/
 web-build/
 expo-env.d.ts
+tmp/
 
 # Native
 .kotlin/
@@ -30,11 +31,19 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# local environment files (only the redacted template may be committed)
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo
+
+# generated test reports
+coverage/
+.tmp-pglast/
+dist-ios/
+dist-android/
 
 # generated native folders
 /ios

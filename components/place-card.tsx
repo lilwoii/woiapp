@@ -1,83 +1,115 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router } from 'expo-router';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { OwnerUpdate } from '@/components/owner-update';
 import { Rating } from '@/components/rating';
 import { StatusPill } from '@/components/status-pill';
 import { palette, radii, spacing } from '@/constants/theme';
-import { Place } from '@/types/marketplace';
+import { showMessage } from '@/lib/platform-dialog';
+import { ActionResult, Place } from '@/types/marketplace';
 
 type Props = {
   place: Place;
   followed: boolean;
-  onToggleFollow: (placeId: string) => void;
+  onToggleFollow: (placeId: string) => Promise<ActionResult>;
   compact?: boolean;
 };
 
 export function PlaceCard({ place, followed, onToggleFollow, compact = false }: Props) {
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async () => {
+    if (saving) return;
+    setSaving(true);
+    const result = await onToggleFollow(place.id);
+    setSaving(false);
+    if (!result.ok && result.code === 'AUTH_REQUIRED') {
+      router.push('/auth');
+      return;
+    }
+    if (!result.ok) showMessage('Follow could not be updated', result.reason);
+  };
+
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`View ${place.name}`}
-      onPress={() => router.push(`/place/${place.id}`)}
-      style={({ pressed }) => [styles.card, compact && styles.compactCard, pressed && styles.pressed]}>
-      <Image source={{ uri: place.coverImageUrl }} style={[styles.image, compact && styles.compactImage]} />
-      <View style={styles.body}>
-        <View style={styles.topRow}>
-          <StatusPill compact status={place.status} />
-          <Pressable
-            accessibilityLabel={followed ? `Unfollow ${place.name}` : `Follow ${place.name}`}
-            hitSlop={12}
-            onPress={(event) => {
-              event.stopPropagation();
-              onToggleFollow(place.id);
-            }}
-            style={[styles.saveButton, followed && styles.saveButtonActive]}>
-            <FontAwesome6
-              color={followed ? palette.accent : palette.ink}
-              name={followed ? 'heart' : 'heart'}
-              size={14}
-              solid={followed}
-            />
-          </Pressable>
-        </View>
+    <View style={[styles.card, compact && styles.compactCard]}>
+      <Pressable
+        accessibilityLabel={`View ${place.name}`}
+        accessibilityRole="link"
+        onPress={() => router.push(`/place/${place.id}`)}
+        style={({ pressed }) => [styles.cardAction, pressed && styles.pressed]}>
+        <Image
+          accessibilityLabel={`${place.name} food and business photo`}
+          source={
+            place.coverImageUrl
+              ? { uri: place.coverImageUrl }
+              : require('../assets/images/spottr-icon.png')
+          }
+          style={[styles.image, compact && styles.compactImage]}
+        />
+        <View style={styles.body}>
+          <View style={styles.topRow}>
+            <StatusPill compact status={place.status} />
+          </View>
 
-        <View style={styles.titleRow}>
-          <Text numberOfLines={1} style={styles.name}>
-            {place.name}
+          <View style={styles.titleRow}>
+            <Text numberOfLines={1} style={styles.name}>
+              {place.name}
+            </Text>
+            {place.verified ? (
+              <FontAwesome6 color={palette.success} name="circle-check" size={15} solid />
+            ) : null}
+          </View>
+
+          <View style={styles.metaRow}>
+            <Rating compact count={place.reviewCount} rating={place.rating} />
+            <Text style={styles.dot}>·</Text>
+            <Text style={styles.meta}>{'$'.repeat(place.priceLevel)}</Text>
+            <Text style={styles.dot}>·</Text>
+            {place.distanceMiles !== null ? (
+              <Text style={styles.meta}>{place.distanceMiles.toFixed(1)} mi</Text>
+            ) : null}
+          </View>
+
+          <Text numberOfLines={1} style={styles.cuisine}>
+            {place.categoryLabel} · {place.cuisines.join(' · ')}
           </Text>
-          {place.verified ? (
-            <FontAwesome6 color={palette.success} name="circle-check" size={15} solid />
-          ) : null}
-        </View>
-
-        <View style={styles.metaRow}>
-          <Rating compact count={place.reviewCount} rating={place.rating} />
-          <Text style={styles.dot}>·</Text>
-          <Text style={styles.meta}>{'$'.repeat(place.priceLevel)}</Text>
-          <Text style={styles.dot}>·</Text>
-          <Text style={styles.meta}>{place.distanceMiles.toFixed(1)} mi</Text>
-        </View>
-
-        <Text numberOfLines={1} style={styles.cuisine}>
-          {place.categoryLabel} · {place.cuisines.join(' · ')}
-        </Text>
-        <Text numberOfLines={1} style={styles.hours}>
-          {place.todayHours}
-        </Text>
-
-        <View style={styles.paymentRow}>
-          <FontAwesome6 color={palette.muted} name="wallet" size={12} />
-          <Text numberOfLines={1} style={styles.paymentText}>
-            {place.payments.slice(0, 3).join(' · ')}
-            {place.payments.length > 3 ? ` +${place.payments.length - 3}` : ''}
+          <Text numberOfLines={1} style={styles.hours}>
+            {place.todayHours}
           </Text>
-        </View>
 
-        {place.update && !compact ? <OwnerUpdate update={place.update} /> : null}
-      </View>
-    </Pressable>
+          <View style={styles.paymentRow}>
+            <FontAwesome6 color={palette.muted} name="wallet" size={12} />
+            <Text numberOfLines={1} style={styles.paymentText}>
+              {place.payments.length ? place.payments.slice(0, 3).join(' · ') : 'Payments not confirmed'}
+              {place.payments.length > 3 ? ` +${place.payments.length - 3}` : ''}
+            </Text>
+          </View>
+
+          {place.update && !compact ? <OwnerUpdate update={place.update} /> : null}
+        </View>
+      </Pressable>
+      <Pressable
+        accessibilityLabel={followed ? `Unfollow ${place.name}` : `Follow ${place.name}`}
+        accessibilityRole="button"
+        accessibilityState={{ busy: saving, selected: followed }}
+        disabled={saving}
+        hitSlop={8}
+        onPress={toggle}
+        style={[styles.saveButton, followed && styles.saveButtonActive]}>
+        {saving ? (
+          <ActivityIndicator color={followed ? palette.accentDeep : palette.ink} size="small" />
+        ) : (
+          <FontAwesome6
+            color={followed ? palette.accentDeep : palette.ink}
+            name="heart"
+            size={14}
+            solid={followed}
+          />
+        )}
+      </Pressable>
+    </View>
   );
 }
 
@@ -87,12 +119,16 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     borderRadius: radii.lg,
     borderWidth: 1,
-    flexDirection: 'row',
     minHeight: 172,
     overflow: 'hidden',
+    position: 'relative',
   },
   compactCard: {
     minHeight: 142,
+  },
+  cardAction: {
+    flex: 1,
+    flexDirection: 'row',
   },
   pressed: {
     opacity: 0.9,
@@ -109,11 +145,12 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 7,
     padding: spacing.md,
+    paddingRight: 58,
   },
   topRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
   },
   saveButton: {
     alignItems: 'center',
@@ -121,9 +158,13 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     borderRadius: 999,
     borderWidth: 1,
-    height: 32,
+    height: 44,
     justifyContent: 'center',
-    width: 32,
+    position: 'absolute',
+    right: 12,
+    top: 12,
+    width: 44,
+    zIndex: 4,
   },
   saveButtonActive: {
     backgroundColor: palette.accentSoft,
@@ -175,4 +216,3 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-

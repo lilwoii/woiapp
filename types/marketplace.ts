@@ -48,18 +48,23 @@ export type BusinessUpdate = {
   message: string;
   createdAt: string;
   expiresAt: string;
+  moderation?: 'pending' | 'approved' | 'rejected' | 'removed';
 };
 
 export type Review = {
   id: string;
+  authorId?: string;
   username: string;
   displayName: string;
   rating: number;
   comment: string;
   createdAt: string;
   photos: string[];
+  photoMediaIds?: string[];
   helpfulCount: number;
   ownerResponse?: string;
+  ownerResponseId?: string;
+  moderation?: 'pending' | 'approved' | 'rejected' | 'removed';
 };
 
 export type Place = {
@@ -71,10 +76,13 @@ export type Place = {
   cuisines: string[];
   address: string;
   city: string;
+  region?: string;
   postalCode: string;
+  phone?: string;
+  websiteUrl?: string;
   latitude: number;
   longitude: number;
-  distanceMiles: number;
+  distanceMiles: number | null;
   status: VenueStatus;
   todayHours: string;
   weeklyHours: WeeklyHours[];
@@ -85,6 +93,7 @@ export type Place = {
   logoUrl: string;
   coverImageUrl: string;
   gallery: string[];
+  galleryMediaIds?: string[];
   rating: number;
   reviewCount: number;
   verified: boolean;
@@ -92,25 +101,47 @@ export type Place = {
   payments: PaymentMethod[];
   menu: MenuSection[];
   reviews: Review[];
+  hasMoreReviews?: boolean;
   update?: BusinessUpdate;
   features: string[];
   trendingScore: number;
   popularityScore: number;
-  reliabilityScore: number;
+  reliabilityScore?: number;
   serviceArea?: string;
-  sourceLabel: 'Owner verified' | 'Community added' | 'Licensed provider';
+  pickup?: {
+    enabled: boolean;
+    orderingMode: 'spottr' | 'external' | 'phone' | 'none';
+    estimatedMinutes?: number;
+  };
+  sponsoredPlacement?: {
+    id: string;
+    disclosure: 'Sponsored ad';
+    reason: string;
+  };
+  sourceLabel: 'Owner verified' | 'Owner provided' | 'Community added' | 'Licensed provider';
+  publicationState?: 'draft' | 'pending' | 'published' | 'suspended' | 'archived';
+  detailsLoaded?: boolean;
 };
 
 export type ReviewInput = {
   rating: number;
   comment: string;
   photos?: string[];
+  photoUploads?: ReviewPhotoInput[];
+  idempotencyKey?: string;
+};
+
+export type ReviewPhotoInput = {
+  uri: string;
+  mimeType?: string | null;
+  fileSize?: number | null;
 };
 
 export type OwnerUpdateInput = {
   placeId: string;
   type: BusinessUpdate['type'];
   message: string;
+  idempotencyKey?: string;
 };
 
 export type AccountRole = 'customer' | 'business';
@@ -121,7 +152,27 @@ export type DemoAccount = {
   displayName: string;
   email: string;
   role: AccountRole;
+  emailVerified?: boolean;
+  avatarPath?: string | null;
 };
 
-export type SyncStatus = 'demo' | 'syncing' | 'live' | 'error';
+export type SyncStatus = 'demo' | 'idle' | 'syncing' | 'live' | 'error';
 
+export type ActionResult<T = undefined> =
+  | {
+      ok: true;
+      data?: T;
+      message?: string;
+    }
+  | {
+      ok: false;
+      reason: string;
+      code?:
+        | 'AUTH_REQUIRED'
+        | 'CONFIG_REQUIRED'
+        | 'CONFLICT'
+        | 'INVALID'
+        | 'NETWORK'
+        | 'NOT_FOUND'
+        | 'UNKNOWN';
+    };

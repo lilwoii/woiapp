@@ -1,9 +1,9 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
+  ActivityIndicator,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -18,7 +18,18 @@ import {
 import { BrandMark } from '@/components/brand-mark';
 import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
+import { useMarketplaceStore } from '@/context/marketplace-store';
+import { featureFlags } from '@/lib/features';
+import {
+  createBusinessDraft,
+  searchMarketplacePlaces,
+  submitBusinessClaim,
+  uploadBusinessLogo,
+} from '@/lib/marketplace-api';
+import type { LocalMedia } from '@/lib/media-upload';
 import { checkProfessionalText } from '@/lib/moderation';
+import { showMessage } from '@/lib/platform-dialog';
 import { BusinessCategory, PaymentMethod } from '@/types/marketplace';
 
 const categories: {
@@ -52,6 +63,7 @@ function Input({
   placeholder,
   required,
   keyboardType,
+  autoCapitalize,
 }: {
   label: string;
   value: string;
@@ -59,6 +71,7 @@ function Input({
   placeholder: string;
   required?: boolean;
   keyboardType?: 'default' | 'email-address' | 'phone-pad';
+  autoCapitalize?: 'none' | 'words';
 }) {
   return (
     <View style={styles.field}>
@@ -67,7 +80,8 @@ function Input({
         {required ? <Text style={styles.required}> *</Text> : null}
       </Text>
       <TextInput
-        autoCapitalize={keyboardType === 'email-address' ? 'none' : 'words'}
+        autoCapitalize={autoCapitalize ?? (keyboardType === 'email-address' ? 'none' : 'words')}
+        autoCorrect={false}
         keyboardType={keyboardType}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -80,6 +94,8 @@ function Input({
 }
 
 export default function BusinessOnboardingScreen() {
+  const auth = useAuth();
+  const { places, refreshAccess } = useMarketplaceStore();
   const [step, setStep] = useState(1);
   const [category, setCategory] = useState<BusinessCategory>('food_truck');
   const [businessName, setBusinessName] = useState('');
@@ -91,18 +107,112 @@ export default function BusinessOnboardingScreen() {
   const [city, setCity] = useState('');
   const [region, setRegion] = useState('CA');
   const [postalCode, setPostalCode] = useState('');
+  const [timezone, setTimezone] = useState(
+    Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles'
+  );
   const [permitNumber, setPermitNumber] = useState('');
   const [selectedPayments, setSelectedPayments] = useState<PaymentMethod[]>(['Cash', 'Visa']);
   const [logoUri, setLogoUri] = useState<string | null>(null);
+  const [logoMedia, setLogoMedia] = useState<LocalMedia | null>(null);
+  const [logoUploadComplete, setLogoUploadComplete] = useState(false);
+  const [createdBusinessId, setCreatedBusinessId] = useState<string | null>(null);
   const [logoMeta, setLogoMeta] = useState('');
   const [description, setDescription] = useState('');
   const [claimExisting, setClaimExisting] = useState(false);
+  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
+  const [claimMethod, setClaimMethod] = useState<'listed_phone' | 'domain_email'>('listed_phone');
+  const [claimSearchResults, setClaimSearchResults] = useState<typeof places>([]);
+  const [claimSearching, setClaimSearching] = useState(false);
+  const [claimSearchError, setClaimSearchError] = useState<string | null>(null);
   const [accuracyConfirmed, setAccuracyConfirmed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [formMessage, setFormMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
+    null
+  );
+
+  const visibleCategories = useMemo(
+    () => categories.filter((item) => item.id !== 'home_kitchen' || featureFlags.homeKitchens),
+    []
+  );
+  const previewClaimMatches = useMemo(() => {
+    if (!claimExisting || businessName.trim().length < 2) return [];
+    const normalized = businessName.trim().toLocaleLowerCase('en-US');
+    return places
+      .filter((place) => place.name.toLocaleLowerCase('en-US').includes(normalized))
+      .slice(0, 5);
+  }, [businessName, claimExisting, places]);
+  const claimMatches = auth.isConfigured ? claimSearchResults : previewClaimMatches;
+
+  useEffect(() => {
+    let active = true;
+    const unavailable =
+      !auth.isConfigured || !claimExisting || businessName.trim().length < 2;
+    const timer = setTimeout(() => {
+      if (unavailable) {
+        setClaimSearchResults([]);
+        setClaimSearchError(null);
+        setClaimSearching(false);
+        return;
+      }
+      setClaimSearching(true);
+      setClaimSearchError(null);
+      void searchMarketplacePlaces(businessName).then((result) => {
+        if (!active) return;
+        setClaimSearching(false);
+        if (!result.ok) {
+          setClaimSearchResults([]);
+          setClaimSearchError(result.reason);
+          return;
+        }
+        setClaimSearchResults((result.data?.places ?? []).slice(0, 5));
+      });
+    }, unavailable ? 0 : 450);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [auth.isConfigured, businessName, claimExisting]);
+
+  if (auth.isConfigured && auth.status === 'loading') {
+    return (
+      <View style={styles.authGate}>
+        <ActivityIndicator color={palette.accentDeep} />
+        <Text style={styles.authGateDetail}>Checking secure business access…</Text>
+      </View>
+    );
+  }
+
+  if (auth.isConfigured && auth.status !== 'authenticated') {
+    return (
+      <View style={styles.authGate}>
+        <BrandMark />
+        <View style={styles.authGateIcon}>
+          <FontAwesome6 color={palette.accentDeep} name="user-shield" size={21} />
+        </View>
+        <Text accessibilityRole="header" style={styles.authGateTitle}>
+          Sign in before adding a business.
+        </Text>
+        <Text style={styles.authGateDetail}>
+          A verified account is required for ownership checks, audit history, and protected business details.
+        </Text>
+        <Pressable accessibilityRole="button" onPress={() => router.replace('/auth')} style={styles.authGateButton}>
+          <Text style={styles.authGateButtonText}>Sign in or create account</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   const pickLogo = async () => {
+    if (auth.isConfigured && !featureFlags.mediaUploads) {
+      showMessage(
+        'Secure uploads are not active',
+        'Logo upload stays disabled until the private scanning service is connected. You can still submit the business draft.'
+      );
+      return;
+    }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Photo access needed', 'Allow photo access to choose a business logo.');
+      showMessage('Photo access needed', 'Allow photo access to choose a business logo.');
       return;
     }
 
@@ -115,18 +225,35 @@ export default function BusinessOnboardingScreen() {
 
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (asset.mimeType && !allowedTypes.includes(asset.mimeType)) {
+      showMessage('Unsupported logo', 'Choose a JPEG, PNG, or WebP image.');
+      return;
+    }
 
-    if ((asset.width ?? 0) < 512 || (asset.height ?? 0) < 512) {
-      Alert.alert('Logo is too small', 'Choose a square image at least 512 × 512 pixels.');
+    if (
+      (asset.width ?? 0) < 512 ||
+      (asset.height ?? 0) < 512 ||
+      (asset.width ?? 0) > 2048 ||
+      (asset.height ?? 0) > 2048 ||
+      Math.abs((asset.width ?? 0) - (asset.height ?? 0)) > 2
+    ) {
+      showMessage('Logo size needs attention', 'Choose a square image between 512 × 512 and 2048 × 2048 pixels.');
       return;
     }
 
     if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
-      Alert.alert('Logo is too large', 'Choose an image under 5 MB.');
+      showMessage('Logo is too large', 'Choose an image under 5 MB.');
       return;
     }
 
     setLogoUri(asset.uri);
+    setLogoMedia({
+      uri: asset.uri,
+      mimeType: asset.mimeType,
+      fileSize: asset.fileSize,
+    });
+    setLogoUploadComplete(false);
     setLogoMeta(`${asset.width} × ${asset.height} · ready for safe processing`);
   };
 
@@ -137,25 +264,49 @@ export default function BusinessOnboardingScreen() {
   };
 
   const next = () => {
+    setFormMessage(null);
     if (step === 1) {
       const nameCheck = checkProfessionalText(businessName, 80);
+      if (claimExisting && !selectedClaimId) {
+        setFormMessage({ type: 'error', text: 'Choose the existing listing you are authorized to claim.' });
+        return;
+      }
       if (!nameCheck.ok || !cuisine.trim() || !email.trim() || !phone.trim()) {
-        Alert.alert('Complete the essentials', nameCheck.ok ? 'Add cuisine, email, and business phone.' : nameCheck.reason);
+        setFormMessage({
+          type: 'error',
+          text: nameCheck.ok ? 'Add cuisine, email, and business phone.' : nameCheck.reason,
+        });
         return;
       }
     }
 
     if (step === 2) {
-      if (category !== 'food_truck' && category !== 'pop_up' && (!address.trim() || !city.trim() || !postalCode.trim())) {
-        Alert.alert('Add the business location', 'A public storefront needs a complete address.');
+      if (!city.trim() || !region.trim() || !postalCode.trim() || !timezone.trim()) {
+        setFormMessage({ type: 'error', text: 'Add the operating city, state, ZIP code, and time zone.' });
+        return;
+      }
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: timezone.trim() }).format();
+      } catch {
+        setFormMessage({ type: 'error', text: 'Use a valid IANA time zone, such as America/Los_Angeles.' });
+        return;
+      }
+      if (
+        (category === 'restaurant' || category === 'cafe_bakery') &&
+        !address.trim()
+      ) {
+        setFormMessage({ type: 'error', text: 'A public storefront needs a complete address.' });
         return;
       }
       if (category === 'home_kitchen' && !permitNumber.trim()) {
-        Alert.alert('Permit details required', 'Home kitchens remain private and unpublished until local eligibility is verified.');
+        setFormMessage({
+          type: 'error',
+          text: 'Home kitchens remain private until local eligibility and permit status are verified.',
+        });
         return;
       }
       if (!selectedPayments.length) {
-        Alert.alert('Select a payment method', 'Customers need to know how they can pay.');
+        setFormMessage({ type: 'error', text: 'Select at least one accepted payment method.' });
         return;
       }
     }
@@ -163,27 +314,148 @@ export default function BusinessOnboardingScreen() {
     setStep((current) => Math.min(3, current + 1));
   };
 
-  const submit = () => {
+  const submit = async () => {
+    if (auth.isConfigured && auth.status !== 'authenticated') {
+      setFormMessage({ type: 'error', text: 'Sign in before creating a business draft.' });
+      router.push('/auth');
+      return;
+    }
+    if (
+      auth.isConfigured &&
+      (auth.securityStatus !== 'ready' || !auth.mfaEnrolled || auth.assuranceLevel !== 'aal2')
+    ) {
+      setFormMessage({
+        type: 'error',
+        text: 'Connect and verify an authenticator before creating a business draft.',
+      });
+      router.push('/security');
+      return;
+    }
     const descriptionCheck = checkProfessionalText(description, 280);
-    if (!logoUri || !descriptionCheck.ok || !accuracyConfirmed) {
-      Alert.alert(
-        'Finish the listing',
-        !logoUri
-          ? 'Add a square business logo.'
-          : !descriptionCheck.ok
-            ? descriptionCheck.reason
-            : 'Confirm that the information is accurate and authorized.'
-      );
+    const logoRequired = !auth.isConfigured || featureFlags.mediaUploads;
+    if ((logoRequired && !logoUri) || !descriptionCheck.ok || !accuracyConfirmed) {
+      setFormMessage({
+        type: 'error',
+        text:
+          logoRequired && !logoUri
+            ? 'Add a square business logo.'
+            : !descriptionCheck.ok
+              ? descriptionCheck.reason
+              : 'Confirm that the information is accurate and authorized.',
+      });
       return;
     }
 
-    Alert.alert(
-      claimExisting ? 'Claim submitted for review' : 'Business submitted for review',
-      category === 'home_kitchen'
-        ? 'The listing stays private until jurisdiction and permit checks are complete.'
-        : 'Spottr will verify ownership before publishing business controls.'
+    setSubmitting(true);
+    setFormMessage(null);
+    let businessId = createdBusinessId;
+    let successMessage = 'Business draft created.';
+    if (!businessId) {
+      const result = await createBusinessDraft({
+        kind: category,
+        name: businessName,
+        description: descriptionCheck.clean,
+        cuisines: cuisine.split(','),
+        businessEmail: email,
+        businessPhone: phone,
+        websiteUrl: website,
+        address,
+        city,
+        region,
+        postalCode,
+        timezone,
+        payments: selectedPayments,
+        permitNumber: category === 'home_kitchen' ? permitNumber : undefined,
+      });
+      if (!result.ok) {
+        setSubmitting(false);
+        setFormMessage({ type: 'error', text: result.reason });
+        return;
+      }
+      businessId = result.data?.businessId ?? null;
+      if (auth.isConfigured && !businessId) {
+        setSubmitting(false);
+        setFormMessage({
+          type: 'error',
+          text: 'The business draft was saved without a usable identifier. Contact support before retrying.',
+        });
+        return;
+      }
+      setCreatedBusinessId(businessId);
+      successMessage = result.message ?? successMessage;
+    }
+
+    if (
+      auth.isConfigured &&
+      featureFlags.mediaUploads &&
+      businessId &&
+      logoMedia &&
+      !logoUploadComplete
+    ) {
+      const logoResult = await uploadBusinessLogo(businessId, logoMedia);
+      if (!logoResult.ok) {
+        setSubmitting(false);
+        setFormMessage({
+          type: 'error',
+          text: `Your business draft is safely saved, but its logo was not attached. ${logoResult.reason} Press Submit again to retry the logo without creating another draft.`,
+        });
+        return;
+      }
+      setLogoUploadComplete(true);
+      successMessage = `${successMessage} ${logoResult.message ?? ''}`.trim();
+    }
+
+    setSubmitting(false);
+    await refreshAccess();
+    setFormMessage({ type: 'success', text: successMessage });
+    setTimeout(
+      () =>
+        router.replace(
+          businessId && auth.isConfigured
+            ? { pathname: '/business-setup', params: { businessId } }
+            : '/(tabs)/studio'
+        ),
+      500
     );
-    router.replace('/(tabs)/studio');
+  };
+
+  const submitClaim = async () => {
+    setFormMessage(null);
+    if (auth.isConfigured && auth.status !== 'authenticated') {
+      setFormMessage({ type: 'error', text: 'Sign in before claiming a business.' });
+      router.push('/auth');
+      return;
+    }
+    if (
+      auth.isConfigured &&
+      (auth.securityStatus !== 'ready' || !auth.mfaEnrolled || auth.assuranceLevel !== 'aal2')
+    ) {
+      setFormMessage({
+        type: 'error',
+        text: 'Connect and verify an authenticator before submitting a business claim.',
+      });
+      router.push('/security');
+      return;
+    }
+    if (!selectedClaimId) {
+      setFormMessage({ type: 'error', text: 'Choose an existing listing first.' });
+      return;
+    }
+    if (!accuracyConfirmed) {
+      setFormMessage({
+        type: 'error',
+        text: 'Confirm that you are authorized to represent this business.',
+      });
+      return;
+    }
+    setSubmitting(true);
+    const result = await submitBusinessClaim(selectedClaimId, claimMethod);
+    setSubmitting(false);
+    if (!result.ok) {
+      setFormMessage({ type: 'error', text: result.reason });
+      return;
+    }
+    setFormMessage({ type: 'success', text: result.message ?? 'Claim submitted for verification.' });
   };
 
   return (
@@ -230,12 +502,19 @@ export default function BusinessOnboardingScreen() {
               <>
                 <View style={styles.modeRow}>
                   <Pressable
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: !claimExisting }}
                     onPress={() => setClaimExisting(false)}
                     style={[styles.modeOption, !claimExisting && styles.modeOptionActive]}>
                     <Text style={[styles.modeText, !claimExisting && styles.modeTextActive]}>Add new</Text>
                   </Pressable>
                   <Pressable
-                    onPress={() => setClaimExisting(true)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: claimExisting }}
+                    onPress={() => {
+                      setClaimExisting(true);
+                      setSelectedClaimId(null);
+                    }}
                     style={[styles.modeOption, claimExisting && styles.modeOptionActive]}>
                     <Text style={[styles.modeText, claimExisting && styles.modeTextActive]}>Claim existing</Text>
                   </Pressable>
@@ -244,7 +523,7 @@ export default function BusinessOnboardingScreen() {
                 <View style={styles.field}>
                   <Text style={styles.label}>Business category *</Text>
                   <View style={styles.categoryList}>
-                    {categories.map((item) => {
+                    {visibleCategories.map((item) => {
                       const active = category === item.id;
                       return (
                         <Pressable
@@ -285,35 +564,131 @@ export default function BusinessOnboardingScreen() {
                   required
                   value={businessName}
                 />
-                <Input
-                  label="Cuisine or specialty"
-                  onChangeText={setCuisine}
-                  placeholder="Example: Sonoran tacos"
-                  required
-                  value={cuisine}
-                />
-                <Input
-                  keyboardType="email-address"
-                  label="Business email"
-                  onChangeText={setEmail}
-                  placeholder="owner@business.com"
-                  required
-                  value={email}
-                />
-                <Input
-                  keyboardType="phone-pad"
-                  label="Business phone"
-                  onChangeText={setPhone}
-                  placeholder="Used for private ownership checks"
-                  required
-                  value={phone}
-                />
-                <Input
-                  label="Website or social page"
-                  onChangeText={setWebsite}
-                  placeholder="Optional"
-                  value={website}
-                />
+                {claimExisting ? (
+                  <View style={styles.claimResults}>
+                    <Text style={styles.claimResultsLabel}>Choose the listing to claim</Text>
+                    {claimSearching ? (
+                      <View style={styles.claimSearchStatus}>
+                        <ActivityIndicator color={palette.accentDeep} size="small" />
+                        <Text style={styles.claimEmpty}>Searching verified directory…</Text>
+                      </View>
+                    ) : null}
+                    {claimMatches.map((place) => {
+                      const selected = place.id === selectedClaimId;
+                      return (
+                        <Pressable
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: selected }}
+                          key={place.id}
+                          onPress={() => {
+                            setSelectedClaimId(place.id);
+                            setBusinessName(place.name);
+                            setCategory(place.category);
+                            setCuisine(place.cuisines.join(', '));
+                          }}
+                          style={[styles.claimResult, selected && styles.claimResultSelected]}>
+                          <View style={styles.claimResultCopy}>
+                            <Text style={[styles.claimResultName, selected && styles.claimResultNameSelected]}>
+                              {place.name}
+                            </Text>
+                            <Text style={[styles.claimResultMeta, selected && styles.claimResultMetaSelected]}>
+                              {place.categoryLabel} · {place.city} · {place.address}
+                            </Text>
+                          </View>
+                          {selected ? (
+                            <FontAwesome6 color={palette.mint} name="circle-check" size={15} solid />
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                    {claimSearchError ? (
+                      <Text accessibilityRole="alert" style={styles.claimEmpty}>{claimSearchError}</Text>
+                    ) : businessName.trim().length >= 2 && !claimSearching && !claimMatches.length ? (
+                      <Text style={styles.claimEmpty}>
+                        No matching listing. Choose “Add new” to create it instead.
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
+                {!claimExisting ? (
+                  <>
+                    <Input
+                      label="Cuisine or specialty"
+                      onChangeText={setCuisine}
+                      placeholder="Example: Sonoran tacos"
+                      required
+                      value={cuisine}
+                    />
+                    <Input
+                      keyboardType="email-address"
+                      label="Business email"
+                      onChangeText={setEmail}
+                      placeholder="owner@business.com"
+                      required
+                      value={email}
+                    />
+                    <Input
+                      keyboardType="phone-pad"
+                      label="Business phone"
+                      onChangeText={setPhone}
+                      placeholder="Used for private ownership checks"
+                      required
+                      value={phone}
+                    />
+                    <Input
+                      label="Website or social page"
+                      onChangeText={setWebsite}
+                      placeholder="Optional"
+                      value={website}
+                    />
+                  </>
+                ) : selectedClaimId ? (
+                  <View style={styles.claimMethodPanel}>
+                    <Text style={styles.label}>Verification method</Text>
+                    <Text style={styles.fieldDetail}>
+                      This request is checked against contact information already associated with the listing. No
+                      challenge is sent until the production verification service is connected.
+                    </Text>
+                    {(
+                      [
+                        ['listed_phone', 'Listed business phone'],
+                        ['domain_email', 'Business-domain email'],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <Pressable
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: claimMethod === id }}
+                        key={id}
+                        onPress={() => setClaimMethod(id)}
+                        style={[styles.claimMethod, claimMethod === id && styles.claimMethodActive]}>
+                        <View style={[styles.radioCircle, claimMethod === id && styles.radioCircleActive]}>
+                          {claimMethod === id ? <View style={styles.radioDot} /> : null}
+                        </View>
+                        <Text
+                          style={[
+                            styles.claimMethodText,
+                            claimMethod === id && styles.claimMethodTextActive,
+                          ]}>
+                          {label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
+                {claimExisting ? (
+                  <Pressable
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: accuracyConfirmed }}
+                    onPress={() => setAccuracyConfirmed((current) => !current)}
+                    style={styles.confirmRow}>
+                    <View style={[styles.checkbox, accuracyConfirmed && styles.checkboxActive]}>
+                      {accuracyConfirmed ? <FontAwesome6 color="#FFFFFF" name="check" size={10} /> : null}
+                    </View>
+                    <Text style={styles.confirmText}>
+                      I’m authorized to represent the selected business and understand Spottr will verify this claim.
+                    </Text>
+                  </Pressable>
+                ) : null}
               </>
             ) : null}
 
@@ -335,7 +710,7 @@ export default function BusinessOnboardingScreen() {
                   label={category === 'home_kitchen' ? 'Public service area' : 'Street address / current stop'}
                   onChangeText={setAddress}
                   placeholder={category === 'home_kitchen' ? 'Example: Highland Park' : 'Address or named lot'}
-                  required={category !== 'food_truck' && category !== 'pop_up'}
+                  required={category === 'restaurant' || category === 'cafe_bakery'}
                   value={address}
                 />
                 <Input label="City" onChangeText={setCity} placeholder="City" required value={city} />
@@ -353,6 +728,18 @@ export default function BusinessOnboardingScreen() {
                     />
                   </View>
                 </View>
+
+                <Input
+                  autoCapitalize="none"
+                  label="Location time zone"
+                  onChangeText={setTimezone}
+                  placeholder="America/Los_Angeles"
+                  required
+                  value={timezone}
+                />
+                <Text style={styles.fieldDetail}>
+                  Used to calculate “open now” correctly. Use an IANA name such as America/Chicago.
+                </Text>
 
                 {category === 'home_kitchen' ? (
                   <Input
@@ -406,14 +793,34 @@ export default function BusinessOnboardingScreen() {
                     )}
                   </View>
                   <View style={styles.logoCopy}>
-                    <Text style={styles.label}>Business logo *</Text>
+                    <Text style={styles.label}>
+                      Business logo {!auth.isConfigured || featureFlags.mediaUploads ? '*' : '(optional for now)'}
+                    </Text>
                     <Text style={styles.logoRequirements}>
-                      Square PNG, JPEG, or WebP · 512–2048 px · up to 5 MB
+                      {auth.isConfigured && !featureFlags.mediaUploads
+                        ? 'Secure logo upload unlocks only when scanning and re-encoding are connected.'
+                        : 'Square PNG, JPEG, or WebP · 512–2048 px · up to 5 MB'}
                     </Text>
                     {logoMeta ? <Text style={styles.logoSuccess}>{logoMeta}</Text> : null}
-                    <Pressable onPress={pickLogo} style={styles.logoButton}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{
+                        disabled: auth.isConfigured && !featureFlags.mediaUploads,
+                      }}
+                      disabled={auth.isConfigured && !featureFlags.mediaUploads}
+                      onPress={pickLogo}
+                      style={[
+                        styles.logoButton,
+                        auth.isConfigured && !featureFlags.mediaUploads && styles.primaryButtonDisabled,
+                      ]}>
                       <FontAwesome6 color={palette.ink} name="upload" size={11} />
-                      <Text style={styles.logoButtonText}>{logoUri ? 'Choose another' : 'Choose logo'}</Text>
+                      <Text style={styles.logoButtonText}>
+                        {auth.isConfigured && !featureFlags.mediaUploads
+                          ? 'Upload unavailable'
+                          : logoUri
+                            ? 'Choose another'
+                            : 'Choose logo'}
+                      </Text>
                     </Pressable>
                   </View>
                 </View>
@@ -457,9 +864,15 @@ export default function BusinessOnboardingScreen() {
                     <Text style={styles.reviewLabel}>Payments</Text>
                     <Text style={styles.reviewValue}>{selectedPayments.length} selected</Text>
                   </View>
+                  <View style={styles.reviewRow}>
+                    <Text style={styles.reviewLabel}>Time zone</Text>
+                    <Text style={styles.reviewValue}>{timezone}</Text>
+                  </View>
                 </View>
 
                 <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: accuracyConfirmed }}
                   onPress={() => setAccuracyConfirmed((current) => !current)}
                   style={styles.confirmRow}>
                   <View style={[styles.checkbox, accuracyConfirmed && styles.checkboxActive]}>
@@ -471,6 +884,27 @@ export default function BusinessOnboardingScreen() {
                   </Text>
                 </Pressable>
               </>
+            ) : null}
+
+            {formMessage ? (
+              <View
+                accessibilityLiveRegion="polite"
+                accessibilityRole="alert"
+                style={[styles.formMessage, formMessage.type === 'success' && styles.formMessageSuccess]}>
+                <FontAwesome6
+                  color={formMessage.type === 'success' ? palette.success : palette.accentDeep}
+                  name={formMessage.type === 'success' ? 'circle-check' : 'triangle-exclamation'}
+                  size={13}
+                  solid
+                />
+                <Text
+                  style={[
+                    styles.formMessageText,
+                    formMessage.type === 'success' && styles.formMessageTextSuccess,
+                  ]}>
+                  {formMessage.text}
+                </Text>
+              </View>
             ) : null}
 
             <View style={styles.actions}>
@@ -485,9 +919,25 @@ export default function BusinessOnboardingScreen() {
                 </Pressable>
               )}
 
-              <Pressable onPress={step === 3 ? submit : next} style={styles.primaryButton}>
-                <Text style={styles.primaryButtonText}>{step === 3 ? 'Submit for verification' : 'Continue'}</Text>
-                <FontAwesome6 color="#FFFFFF" name="arrow-right" size={11} />
+              <Pressable
+                accessibilityRole="button"
+                disabled={submitting}
+                onPress={claimExisting && step === 1 ? submitClaim : step === 3 ? submit : next}
+                style={[styles.primaryButton, submitting && styles.primaryButtonDisabled]}>
+                {submitting ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <>
+                    <Text style={styles.primaryButtonText}>
+                      {claimExisting && step === 1
+                        ? 'Submit ownership claim'
+                        : step === 3
+                          ? 'Submit for verification'
+                          : 'Continue'}
+                    </Text>
+                    <FontAwesome6 color="#FFFFFF" name="arrow-right" size={11} />
+                  </>
+                )}
               </Pressable>
             </View>
           </View>
@@ -498,6 +948,52 @@ export default function BusinessOnboardingScreen() {
 }
 
 const styles = StyleSheet.create({
+  authGate: {
+    alignItems: 'center',
+    backgroundColor: palette.bg,
+    flex: 1,
+    gap: spacing.md,
+    justifyContent: 'center',
+    padding: spacing.xxl,
+  },
+  authGateIcon: {
+    alignItems: 'center',
+    backgroundColor: palette.accentSoft,
+    borderRadius: 999,
+    height: 54,
+    justifyContent: 'center',
+    marginTop: spacing.lg,
+    width: 54,
+  },
+  authGateTitle: {
+    color: palette.ink,
+    fontSize: 25,
+    fontWeight: '900',
+    letterSpacing: -0.7,
+    maxWidth: 420,
+    textAlign: 'center',
+  },
+  authGateDetail: {
+    color: palette.muted,
+    fontSize: 14,
+    lineHeight: 21,
+    maxWidth: 480,
+    textAlign: 'center',
+  },
+  authGateButton: {
+    alignItems: 'center',
+    backgroundColor: palette.accentDeep,
+    borderRadius: radii.pill,
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+    minHeight: 48,
+    paddingHorizontal: spacing.xl,
+  },
+  authGateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '900',
+  },
   keyboard: {
     backgroundColor: palette.bg,
     flex: 1,
@@ -589,6 +1085,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: radii.pill,
     flex: 1,
+    minHeight: 44,
     paddingVertical: 10,
   },
   modeOptionActive: {
@@ -604,6 +1101,104 @@ const styles = StyleSheet.create({
   },
   field: {
     gap: 8,
+  },
+  claimResults: {
+    gap: spacing.sm,
+  },
+  claimResultsLabel: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  claimSearchStatus: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  claimResult: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 58,
+    padding: spacing.md,
+  },
+  claimResultSelected: {
+    backgroundColor: palette.dark,
+    borderColor: palette.dark,
+  },
+  claimResultCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  claimResultName: {
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  claimResultNameSelected: {
+    color: '#FFFFFF',
+  },
+  claimResultMeta: {
+    color: palette.muted,
+    fontSize: 11,
+  },
+  claimResultMetaSelected: {
+    color: palette.darkMuted,
+  },
+  claimEmpty: {
+    color: palette.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  claimMethodPanel: {
+    backgroundColor: palette.bg,
+    borderRadius: radii.md,
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  claimMethod: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+  },
+  claimMethodActive: {
+    backgroundColor: palette.dark,
+    borderColor: palette.dark,
+  },
+  claimMethodText: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  claimMethodTextActive: {
+    color: '#FFFFFF',
+  },
+  radioCircle: {
+    alignItems: 'center',
+    borderColor: palette.mutedLight,
+    borderRadius: 999,
+    borderWidth: 2,
+    height: 20,
+    justifyContent: 'center',
+    width: 20,
+  },
+  radioCircleActive: {
+    borderColor: palette.mint,
+  },
+  radioDot: {
+    backgroundColor: palette.mint,
+    borderRadius: 999,
+    height: 8,
+    width: 8,
   },
   fieldHeader: {
     alignItems: 'center',
@@ -888,8 +1483,29 @@ const styles = StyleSheet.create({
   confirmText: {
     color: palette.muted,
     flex: 1,
-    fontSize: 9,
-    lineHeight: 15,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  formMessage: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  formMessageSuccess: {
+    backgroundColor: palette.successSoft,
+  },
+  formMessageText: {
+    color: palette.accentDeep,
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  formMessageTextSuccess: {
+    color: palette.success,
   },
   actions: {
     borderTopColor: palette.line,
@@ -906,6 +1522,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: 7,
+    minHeight: 48,
     paddingHorizontal: 16,
     paddingVertical: 11,
   },
@@ -916,10 +1533,13 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     alignItems: 'center',
-    backgroundColor: palette.accent,
+    backgroundColor: palette.accentDeep,
     borderRadius: radii.pill,
     flexDirection: 'row',
     gap: 8,
+    justifyContent: 'center',
+    minHeight: 48,
+    minWidth: 156,
     paddingHorizontal: 17,
     paddingVertical: 12,
   },
@@ -927,5 +1547,8 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '900',
+  },
+  primaryButtonDisabled: {
+    opacity: 0.58,
   },
 });

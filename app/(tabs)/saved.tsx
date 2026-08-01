@@ -1,22 +1,88 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { useMemo, useState } from 'react';
+import { router } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { BrandMark } from '@/components/brand-mark';
+import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { OwnerUpdate } from '@/components/owner-update';
 import { PageShell } from '@/components/page-shell';
 import { PlaceCard } from '@/components/place-card';
 import { SectionHeading } from '@/components/section-heading';
 import { palette, radii, spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
+import { featureFlags } from '@/lib/features';
+import {
+  fetchFollowAlertPreferences,
+  updateFollowAlertPreference,
+} from '@/lib/marketplace-api';
 
 type SavedFilter = 'all' | 'food_truck' | 'restaurant';
+type AlertPreference = 'live_nearby' | 'owner_update';
 
 export default function SavedScreen() {
   const { followedIds, places, toggleFollow } = useMarketplaceStore();
+  const auth = useAuth();
   const [filter, setFilter] = useState<SavedFilter>('all');
   const [nearbyAlerts, setNearbyAlerts] = useState(true);
   const [ownerUpdates, setOwnerUpdates] = useState(true);
+  const [preferenceBusy, setPreferenceBusy] = useState<AlertPreference | 'loading' | null>(null);
+  const [preferenceMessage, setPreferenceMessage] = useState('');
+
+  const followedKey = followedIds.join(',');
+
+  useEffect(() => {
+    if (!auth.isConfigured || auth.status !== 'authenticated' || !followedIds.length) return;
+    let active = true;
+    const timer = setTimeout(() => {
+      if (!active) return;
+      setPreferenceBusy('loading');
+      void fetchFollowAlertPreferences(followedIds).then((result) => {
+        if (!active) return;
+        if (result.ok && result.data) {
+          setNearbyAlerts(result.data.liveNearby);
+          setOwnerUpdates(result.data.ownerUpdates);
+        } else if (!result.ok) {
+          setPreferenceMessage(result.reason);
+        }
+        setPreferenceBusy(null);
+      });
+    }, 0);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+    // The stable key prevents a new request when only the array identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.isConfigured, auth.status, followedKey]);
+
+  const savePreference = async (field: AlertPreference, next: boolean) => {
+    if (auth.isConfigured && auth.status !== 'authenticated') {
+      router.push('/auth');
+      return;
+    }
+
+    const previous = field === 'live_nearby' ? nearbyAlerts : ownerUpdates;
+    if (field === 'live_nearby') setNearbyAlerts(next);
+    else setOwnerUpdates(next);
+    setPreferenceBusy(field);
+    setPreferenceMessage('');
+
+    const result = await updateFollowAlertPreference(followedIds, field, next);
+    if (!result.ok) {
+      if (field === 'live_nearby') setNearbyAlerts(previous);
+      else setOwnerUpdates(previous);
+      setPreferenceMessage(result.reason);
+    } else {
+      setPreferenceMessage(
+        featureFlags.pushNotifications
+          ? 'Alert preferences saved.'
+          : 'Preferences saved. Delivery activates when secure push notifications are connected.'
+      );
+    }
+    setPreferenceBusy(null);
+  };
 
   const followed = useMemo(
     () =>
@@ -35,7 +101,8 @@ export default function SavedScreen() {
     .slice(0, 3);
 
   return (
-    <ScrollView
+    <FocusAwareScreen>
+      <ScrollView
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       style={styles.screen}>
@@ -49,7 +116,9 @@ export default function SavedScreen() {
 
         <View style={styles.hero}>
           <Text style={styles.kicker}>Your food radar</Text>
-          <Text style={styles.title}>Saved places, live signals.</Text>
+          <Text accessibilityRole="header" style={styles.title}>
+            Saved places, live signals.
+          </Text>
           <Text style={styles.subtitle}>
             Follow the businesses you care about and choose exactly which updates deserve your attention.
           </Text>
@@ -67,7 +136,9 @@ export default function SavedScreen() {
                   <View key={place.id} style={styles.updateItem}>
                     <View style={styles.updateBusinessRow}>
                       <Text style={styles.updateBusiness}>{place.name}</Text>
-                      <Text style={styles.updateDistance}>{place.distanceMiles.toFixed(1)} mi</Text>
+                      {place.distanceMiles !== null ? (
+                        <Text style={styles.updateDistance}>{place.distanceMiles.toFixed(1)} mi</Text>
+                      ) : null}
                     </View>
                     <OwnerUpdate dark update={place.update} />
                   </View>
@@ -92,6 +163,8 @@ export default function SavedScreen() {
               ] as [SavedFilter, string][]
             ).map(([id, label]) => (
               <Pressable
+                accessibilityRole="radio"
+                accessibilityState={{ checked: filter === id }}
                 key={id}
                 onPress={() => setFilter(id)}
                 style={[styles.filterChip, filter === id && styles.filterChipActive]}>
@@ -116,6 +189,12 @@ export default function SavedScreen() {
               <FontAwesome6 color={palette.accent} name="heart" size={22} />
               <Text style={styles.emptyTitle}>Nothing saved in this category</Text>
               <Text style={styles.emptyBody}>Tap the heart on any listing to keep it here.</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push('/')}
+                style={styles.emptyAction}>
+                <Text style={styles.emptyActionText}>Browse nearby</Text>
+              </Pressable>
             </View>
           )}
         </View>
@@ -135,7 +214,9 @@ export default function SavedScreen() {
               <Text style={styles.preferenceDetail}>Only when a followed business is within 5 miles.</Text>
             </View>
             <Switch
-              onValueChange={setNearbyAlerts}
+              accessibilityLabel="Alert when followed businesses go live nearby"
+              disabled={preferenceBusy !== null || followedIds.length === 0}
+              onValueChange={(next) => void savePreference('live_nearby', next)}
               thumbColor="#FFFFFF"
               trackColor={{ false: palette.line, true: palette.success }}
               value={nearbyAlerts}
@@ -150,12 +231,25 @@ export default function SavedScreen() {
               <Text style={styles.preferenceDetail}>Location changes, sold-out items, and extended hours.</Text>
             </View>
             <Switch
-              onValueChange={setOwnerUpdates}
+              accessibilityLabel="Alert for updates from followed business owners"
+              disabled={preferenceBusy !== null || followedIds.length === 0}
+              onValueChange={(next) => void savePreference('owner_update', next)}
               thumbColor="#FFFFFF"
               trackColor={{ false: palette.line, true: palette.success }}
               value={ownerUpdates}
             />
           </View>
+          {preferenceBusy === 'loading' ? (
+            <Text accessibilityLiveRegion="polite" style={styles.preferenceStatus}>
+              Loading saved preferences…
+            </Text>
+          ) : preferenceMessage ? (
+            <Text accessibilityLiveRegion="polite" style={styles.preferenceStatus}>
+              {preferenceMessage}
+            </Text>
+          ) : followedIds.length === 0 ? (
+            <Text style={styles.preferenceStatus}>Follow a place to configure its alerts.</Text>
+          ) : null}
         </View>
 
         <View style={styles.section}>
@@ -177,7 +271,8 @@ export default function SavedScreen() {
           </View>
         </View>
       </PageShell>
-    </ScrollView>
+      </ScrollView>
+    </FocusAwareScreen>
   );
 }
 
@@ -326,6 +421,20 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 13,
   },
+  emptyAction: {
+    alignItems: 'center',
+    backgroundColor: palette.ink,
+    borderRadius: radii.pill,
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+    minHeight: 44,
+    paddingHorizontal: spacing.lg,
+  },
+  emptyActionText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
+  },
   preferencePanel: {
     backgroundColor: palette.surface,
     borderColor: palette.line,
@@ -365,5 +474,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 16,
   },
+  preferenceStatus: {
+    color: palette.muted,
+    fontSize: 11,
+    lineHeight: 17,
+  },
 });
-

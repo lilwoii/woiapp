@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { palette, spacing } from '@/constants/theme';
 
@@ -10,11 +10,13 @@ type Props = {
 };
 
 export function SectionHeading({ eyebrow, title, detail, action }: Props) {
+  const webHeadingLevel = Platform.OS === 'web' ? ({ 'aria-level': 2 } as const) : {};
+
   return (
     <View style={styles.row}>
       <View style={styles.copy}>
         {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
-        <Text style={styles.title}>{title}</Text>
+        <Text accessibilityRole="header" {...webHeadingLevel} style={styles.title}>{title}</Text>
         {detail ? <Text style={styles.detail}>{detail}</Text> : null}
       </View>
       {action}
@@ -54,4 +56,3 @@ const styles = StyleSheet.create({
     maxWidth: 620,
   },
 });
-

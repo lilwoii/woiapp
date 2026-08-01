@@ -2,15 +2,17 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import type { Href } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
+  ActivityIndicator,
   Image,
   ImageBackground,
   Linking,
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -24,52 +26,212 @@ import { Rating } from '@/components/rating';
 import { SectionHeading } from '@/components/section-heading';
 import { StatusPill } from '@/components/status-pill';
 import { palette, radii, spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
+import { featureFlags } from '@/lib/features';
+import { phoneHref, placeShareUrl, safeHttpsUrl } from '@/lib/links';
+import {
+  blockUser,
+  createMarketplaceIdempotencyKey,
+} from '@/lib/marketplace-api';
+import { confirmAction, showMessage } from '@/lib/platform-dialog';
+import { ReviewPhotoInput } from '@/types/marketplace';
+
+const currency = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
 
 export default function PlaceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { addReview, followedIds, places, toggleFollow } = useMarketplaceStore();
+  const auth = useAuth();
+  const {
+    addReview,
+    ensurePlace,
+    followedIds,
+    loadMoreReviews,
+    places,
+    toggleFollow,
+  } = useMarketplaceStore();
   const { width } = useWindowDimensions();
   const wide = width >= 920;
   const place = places.find((entry) => entry.id === id);
   const [rating, setRating] = useState(5);
   const [review, setReview] = useState('');
-  const [reviewPhotos, setReviewPhotos] = useState<string[]>([]);
+  const [reviewPhotos, setReviewPhotos] = useState<ReviewPhotoInput[]>([]);
+  const [blockedAuthorIds, setBlockedAuthorIds] = useState<string[]>([]);
   const [showAllHours, setShowAllHours] = useState(false);
   const [activeMenuSection, setActiveMenuSection] = useState(0);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [moreReviewsLoading, setMoreReviewsLoading] = useState(false);
+  const reviewIntent = useRef<{ fingerprint: string; key: string } | null>(null);
+  const [listingLoading, setListingLoading] = useState(
+    !place || (auth.isConfigured && !place.detailsLoaded)
+  );
+  const [listingError, setListingError] = useState<string | null>(null);
+  const [reviewMessage, setReviewMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
+    null
+  );
+
+  useEffect(() => {
+    let active = true;
+    const ready = Boolean(place && (!auth.isConfigured || place.detailsLoaded));
+    const timer = setTimeout(() => {
+      if (!active) return;
+      if (!id || ready) {
+        setListingLoading(false);
+        return;
+      }
+      setListingLoading(true);
+      setListingError(null);
+      void ensurePlace(id).then((result) => {
+        if (!active) return;
+        setListingLoading(false);
+        if (!result.ok) setListingError(result.reason);
+      });
+    }, 0);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [auth.isConfigured, ensurePlace, id, place]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined' || !place) return;
+    const previousTitle = document.title;
+    document.title = `${place.name} · ${place.categoryLabel} | Spottr`;
+    const values = [
+      ['meta[name="description"]', `${place.name}: ${place.description}`],
+      ['meta[property="og:title"]', `${place.name} | Spottr`],
+      ['meta[property="og:description"]', place.description],
+      ['meta[property="og:url"]', placeShareUrl(place.id)],
+    ] as const;
+    const previous = values.map(([selector, value]) => {
+      const element = document.querySelector<HTMLMetaElement>(selector);
+      const prior = element?.content;
+      if (element) element.content = value.slice(0, 300);
+      return [element, prior] as const;
+    });
+    return () => {
+      document.title = previousTitle;
+      for (const [element, value] of previous) {
+        if (element && value !== undefined) element.content = value;
+      }
+    };
+  }, [place]);
 
   if (!place) {
     return (
       <View style={styles.missing}>
-        <FontAwesome6 color={palette.accent} name="location-dot" size={24} />
-        <Text style={styles.missingTitle}>This listing is unavailable.</Text>
-        <Pressable onPress={() => router.back()} style={styles.missingButton}>
-          <Text style={styles.missingButtonText}>Go back</Text>
-        </Pressable>
+        {listingLoading ? (
+          <>
+            <ActivityIndicator color={palette.accentDeep} />
+            <Text accessibilityLiveRegion="polite" style={styles.missingTitle}>Loading this listing…</Text>
+          </>
+        ) : (
+          <>
+            <FontAwesome6 color={palette.accent} name="location-dot" size={24} />
+            <Text accessibilityRole="alert" style={styles.missingTitle}>
+              {listingError ?? 'This listing is unavailable.'}
+            </Text>
+            <Pressable accessibilityRole="button" onPress={() => router.replace('/')} style={styles.missingButton}>
+              <Text style={styles.missingButtonText}>Browse nearby food</Text>
+            </Pressable>
+          </>
+        )}
       </View>
     );
   }
 
   const followed = followedIds.includes(place.id);
   const selectedSection = place.menu[activeMenuSection] ?? place.menu[0];
+  const callablePhone = phoneHref(place.phone);
+  const safeWebsite = safeHttpsUrl(place.websiteUrl);
 
   const openDirections = () => {
     const url =
       Platform.OS === 'ios'
         ? `maps://?daddr=${place.latitude},${place.longitude}`
         : `https://www.google.com/maps/dir/?api=1&destination=${place.latitude},${place.longitude}`;
-    Linking.openURL(url);
+    void Linking.openURL(url);
+  };
+
+  const shareListing = async () => {
+    const url = placeShareUrl(place.id);
+    try {
+      await Share.share({
+        message: `${place.name} on Spottr — ${place.todayHours}\n${url}`,
+        title: place.name,
+        url,
+      });
+    } catch {
+      showMessage('Sharing unavailable', 'This listing could not be shared right now.');
+    }
+  };
+
+  const blockReviewer = async (authorId: string, displayName: string) => {
+    if (auth.isConfigured && auth.status !== 'authenticated') {
+      const continueToAuth = await confirmAction({
+        title: 'Sign in to block members',
+        message: 'Blocking is tied to your account so it applies across devices.',
+        confirmLabel: 'Sign in',
+      });
+      if (continueToAuth) router.push('/auth');
+      return;
+    }
+
+    const confirmed = await confirmAction({
+      title: `Block ${displayName}?`,
+      message: 'Their reviews and responses will be hidden from your Spottr experience.',
+      confirmLabel: 'Block member',
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    const result = await blockUser(authorId);
+    if (!result.ok) {
+      showMessage('Could not block member', result.reason);
+      return;
+    }
+    setBlockedAuthorIds((current) => [...new Set([...current, authorId])]);
+    showMessage('Member blocked', result.message ?? 'Their community content is now hidden.');
+  };
+
+  const handleFollow = async () => {
+    const result = await toggleFollow(place.id);
+    if (!result.ok) {
+      if (result.code === 'AUTH_REQUIRED') {
+        const confirmed = await confirmAction({
+          title: 'Sign in to follow',
+          message: result.reason,
+          confirmLabel: 'Sign in',
+        });
+        if (confirmed) router.push('/auth');
+      } else {
+        showMessage('Could not update this follow', result.reason);
+      }
+    }
   };
 
   const pickReviewPhoto = async () => {
     if (reviewPhotos.length >= 4) {
-      Alert.alert('Photo limit', 'Add up to four photos per review.');
+      showMessage('Photo limit', 'Add up to four photos per review.');
+      return;
+    }
+
+    if (auth.isConfigured && !featureFlags.mediaUploads) {
+      showMessage(
+        'Photo safety is not active',
+        'Photo uploads stay disabled until the private scanning and moderation service is connected.'
+      );
       return;
     }
 
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Photo access needed', 'Allow photo access to attach images to your review.');
+      showMessage('Photo access needed', 'Allow photo access to attach images to your review.');
       return;
     }
 
@@ -79,22 +241,88 @@ export default function PlaceDetailScreen() {
       quality: 0.8,
     });
 
-    if (!result.canceled && result.assets[0]?.uri) {
-      setReviewPhotos((current) => [...current, result.assets[0].uri]);
+    if (result.canceled || !result.assets[0]?.uri) return;
+    const asset = result.assets[0];
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (asset.mimeType && !allowedTypes.includes(asset.mimeType)) {
+      showMessage('Unsupported photo', 'Choose a JPEG, PNG, or WebP image.');
+      return;
     }
+    if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
+      showMessage('Photo is too large', 'Choose an image under 5 MB.');
+      return;
+    }
+    if ((asset.width ?? 0) > 8192 || (asset.height ?? 0) > 8192) {
+      showMessage('Photo dimensions are too large', 'Choose an image no larger than 8192 pixels per side.');
+      return;
+    }
+    setReviewPhotos((current) => [
+      ...current,
+      {
+        uri: asset.uri,
+        mimeType: asset.mimeType,
+        fileSize: asset.fileSize,
+      },
+    ]);
   };
 
-  const submitReview = () => {
-    const result = addReview(place.id, { rating, comment: review, photos: reviewPhotos });
+  const submitReview = async () => {
+    if (reviewSubmitting) return;
+    const fingerprint = JSON.stringify({
+      placeId: place.id,
+      rating,
+      review,
+      photos: reviewPhotos.map((photo) => [
+        photo.uri,
+        photo.mimeType ?? null,
+        photo.fileSize ?? null,
+      ]),
+    });
+    if (reviewIntent.current?.fingerprint !== fingerprint) {
+      reviewIntent.current = {
+        fingerprint,
+        key: createMarketplaceIdempotencyKey('review'),
+      };
+    }
+    setReviewSubmitting(true);
+    setReviewMessage(null);
+    const result = await addReview(place.id, {
+      rating,
+      comment: review,
+      photos: reviewPhotos.map((photo) => photo.uri),
+      photoUploads: reviewPhotos,
+      idempotencyKey: reviewIntent.current.key,
+    });
+    setReviewSubmitting(false);
     if (!result.ok) {
-      Alert.alert('Review needs attention', result.reason);
+      setReviewMessage({ type: 'error', text: result.reason });
+      if (result.code === 'AUTH_REQUIRED') {
+        const confirmed = await confirmAction({
+          title: 'Sign in to review',
+          message: result.reason,
+          confirmLabel: 'Sign in',
+        });
+        if (confirmed) router.push('/auth');
+      }
       return;
     }
 
     setReview('');
+    reviewIntent.current = null;
     setReviewPhotos([]);
     setRating(5);
-    Alert.alert('Review submitted', 'Your review is visible in this preview. Production reviews enter moderation first.');
+    setReviewMessage({
+      type: 'success',
+      text: result.message ?? 'Thanks — your review is now part of this preview.',
+    });
+  };
+
+  const showMoreReviews = async () => {
+    if (moreReviewsLoading) return;
+    setMoreReviewsLoading(true);
+    const result = await loadMoreReviews(place.id);
+    setMoreReviewsLoading(false);
+    if (!result.ok) showMessage('Reviews could not load', result.reason);
   };
 
   return (
@@ -104,19 +332,31 @@ export default function PlaceDetailScreen() {
       showsVerticalScrollIndicator={false}
       style={styles.screen}>
       <PageShell>
-        <ImageBackground imageStyle={styles.heroImage} source={{ uri: place.coverImageUrl }} style={styles.hero}>
+        <ImageBackground
+          imageStyle={styles.heroImage}
+          source={
+            place.coverImageUrl
+              ? { uri: place.coverImageUrl }
+              : require('../../assets/images/spottr-icon.png')
+          }
+          style={styles.hero}>
           <View style={styles.heroShade} />
           <View style={styles.heroTop}>
             <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.heroButton}>
               <FontAwesome6 color="#FFFFFF" name="arrow-left" size={14} />
             </Pressable>
             <View style={styles.heroActions}>
-              <Pressable accessibilityLabel="Share listing" style={styles.heroButton}>
+              <Pressable
+                accessibilityLabel="Share listing"
+                accessibilityRole="button"
+                onPress={shareListing}
+                style={styles.heroButton}>
                 <FontAwesome6 color="#FFFFFF" name="arrow-up-from-bracket" size={14} />
               </Pressable>
               <Pressable
                 accessibilityLabel={followed ? `Unfollow ${place.name}` : `Follow ${place.name}`}
-                onPress={() => toggleFollow(place.id)}
+                accessibilityState={{ selected: followed }}
+                onPress={handleFollow}
                 style={[styles.heroButton, followed && styles.heroButtonActive]}>
                 <FontAwesome6 color="#FFFFFF" name="heart" size={14} solid={followed} />
               </Pressable>
@@ -127,7 +367,12 @@ export default function PlaceDetailScreen() {
             <View style={styles.heroBadgeRow}>
               <StatusPill status={place.status} />
               <View style={styles.verifiedBadge}>
-                <FontAwesome6 color="#FFFFFF" name="circle-check" size={12} solid />
+                <FontAwesome6
+                  color="#FFFFFF"
+                  name={place.verified ? 'circle-check' : 'circle-info'}
+                  size={12}
+                  solid
+                />
                 <Text style={styles.verifiedText}>{place.sourceLabel}</Text>
               </View>
             </View>
@@ -138,28 +383,64 @@ export default function PlaceDetailScreen() {
             <View style={styles.heroMeta}>
               <Rating count={place.reviewCount} light rating={place.rating} />
               <Text style={styles.heroMetaDot}>·</Text>
-              <Text style={styles.heroMetaText}>{place.distanceMiles.toFixed(1)} mi away</Text>
+              {place.distanceMiles !== null ? (
+                <Text style={styles.heroMetaText}>{place.distanceMiles.toFixed(1)} mi away</Text>
+              ) : null}
               <Text style={styles.heroMetaDot}>·</Text>
-              <Text style={styles.heroMetaText}>Confirmed {place.lastConfirmedAt}</Text>
+              <Text style={styles.heroMetaText}>
+                {place.verified ? 'Confirmed' : 'Updated'} {place.lastConfirmedAt}
+              </Text>
             </View>
           </View>
         </ImageBackground>
 
         <View style={styles.actionBar}>
-          <Pressable onPress={openDirections} style={styles.primaryAction}>
+          {place.pickup?.enabled && place.pickup.orderingMode === 'spottr' ? (
+            <Pressable
+              accessibilityLabel="Pickup preview"
+              accessibilityRole="button"
+              onPress={() =>
+                router.push(
+                  {
+                    pathname: '/order/[id]',
+                    params: { id: place.id },
+                  } as unknown as Href
+                )
+              }
+              style={styles.primaryAction}>
+              <FontAwesome6 color="#FFFFFF" name="bag-shopping" size={14} />
+              <Text style={styles.primaryActionText}>Pickup preview</Text>
+            </Pressable>
+          ) : null}
+          <Pressable accessibilityLabel="Directions" accessibilityRole="button" onPress={openDirections} style={styles.primaryAction}>
             <FontAwesome6 color="#FFFFFF" name="diamond-turn-right" size={14} />
             <Text style={styles.primaryActionText}>Directions</Text>
           </Pressable>
-          <Pressable style={styles.secondaryAction}>
-            <FontAwesome6 color={palette.ink} name="phone" size={13} />
-            <Text style={styles.secondaryActionText}>Call</Text>
-          </Pressable>
-          <Pressable style={styles.secondaryAction}>
-            <FontAwesome6 color={palette.ink} name="globe" size={13} />
-            <Text style={styles.secondaryActionText}>Website</Text>
-          </Pressable>
+          {callablePhone ? (
+            <Pressable
+              accessibilityLabel="Call business"
+              accessibilityRole="link"
+              onPress={() => void Linking.openURL(callablePhone)}
+              style={styles.secondaryAction}>
+              <FontAwesome6 color={palette.ink} name="phone" size={13} />
+              <Text style={styles.secondaryActionText}>Call</Text>
+            </Pressable>
+          ) : null}
+          {safeWebsite ? (
+            <Pressable
+              accessibilityLabel="Open business website"
+              accessibilityRole="link"
+              onPress={() => void Linking.openURL(safeWebsite)}
+              style={styles.secondaryAction}>
+              <FontAwesome6 color={palette.ink} name="globe" size={13} />
+              <Text style={styles.secondaryActionText}>Website</Text>
+            </Pressable>
+          ) : null}
           <Pressable
-            onPress={() => toggleFollow(place.id)}
+            accessibilityLabel={followed ? `Unfollow ${place.name}` : `Follow ${place.name}`}
+            accessibilityRole="button"
+            accessibilityState={{ selected: followed }}
+            onPress={handleFollow}
             style={[styles.secondaryAction, followed && styles.followAction]}>
             <FontAwesome6 color={followed ? palette.accent : palette.ink} name="heart" size={13} solid={followed} />
             <Text style={[styles.secondaryActionText, followed && styles.followActionText]}>
@@ -172,7 +453,18 @@ export default function PlaceDetailScreen() {
           <View style={[styles.mainColumn, wide && styles.mainColumnWide]}>
             {place.update ? (
               <View style={styles.section}>
-                <OwnerUpdate update={place.update} />
+                <OwnerUpdate
+                  onReport={() =>
+                    router.push({
+                      pathname: '/report',
+                      params: {
+                        targetId: place.update!.id,
+                        targetType: 'update',
+                      },
+                    } as never)
+                  }
+                  update={place.update}
+                />
               </View>
             ) : null}
 
@@ -225,25 +517,65 @@ export default function PlaceDetailScreen() {
                         <Text style={styles.dietary}>{item.dietary.join(' · ')}</Text>
                       ) : null}
                     </View>
-                    <Text style={styles.menuPrice}>${item.price.toFixed(0)}</Text>
+                    <Text accessibilityLabel={`${currency.format(item.price)}${item.soldOut ? ', sold out' : ''}`} style={styles.menuPrice}>
+                      {currency.format(item.price)}
+                    </Text>
                     {item.photoUrl ? <Image source={{ uri: item.photoUrl }} style={styles.menuImage} /> : null}
                   </View>
                 ))}
+                {!selectedSection?.items.length ? (
+                  <View style={styles.inlineEmpty}>
+                    <FontAwesome6 color={palette.muted} name="receipt" size={16} />
+                    <Text style={styles.inlineEmptyText}>This business has not published a menu yet.</Text>
+                  </View>
+                ) : null}
               </View>
-              <Text style={styles.menuFreshness}>Menu confirmed by owner · Prices include no service fees</Text>
+              {selectedSection?.items.length ? (
+                <Text style={styles.menuFreshness}>
+                  {place.sourceLabel === 'Owner verified' || place.sourceLabel === 'Owner provided'
+                    ? 'Owner-provided menu'
+                    : `${place.sourceLabel} menu`}
+                  {' · '}Prices are shown as listed; confirm changes with the business.
+                </Text>
+              ) : null}
             </View>
 
-            <View style={styles.section}>
-              <SectionHeading eyebrow="Photos" title="From the counter & community" />
-              <ScrollView
-                contentContainerStyle={styles.galleryRow}
-                horizontal
-                showsHorizontalScrollIndicator={false}>
-                {place.gallery.map((photo, index) => (
-                  <Image key={`${photo}-${index}`} source={{ uri: photo }} style={styles.galleryImage} />
-                ))}
-              </ScrollView>
-            </View>
+            {place.gallery.length ? (
+              <View style={styles.section}>
+                <SectionHeading eyebrow="Photos" title="From the counter & community" />
+                <ScrollView
+                  contentContainerStyle={styles.galleryRow}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}>
+                  {place.gallery.map((photo, index) => (
+                    <View key={`${photo}-${index}`} style={styles.galleryImageWrap}>
+                      <Image
+                        accessibilityLabel={`${place.name} gallery photo ${index + 1}`}
+                        source={{ uri: photo }}
+                        style={styles.galleryImage}
+                      />
+                      {place.galleryMediaIds?.[index] ? (
+                        <Pressable
+                          accessibilityLabel={`Report gallery photo ${index + 1}`}
+                          accessibilityRole="button"
+                          onPress={() =>
+                            router.push({
+                              pathname: '/report',
+                              params: {
+                                targetId: place.galleryMediaIds![index],
+                                targetType: 'media',
+                              },
+                            } as never)
+                          }
+                          style={styles.mediaReportButton}>
+                          <FontAwesome6 color="#FFFFFF" name="flag" size={11} />
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
 
             <View style={styles.section}>
               <SectionHeading
@@ -266,12 +598,14 @@ export default function PlaceDetailScreen() {
                   </View>
                 </View>
                 <View style={styles.reliability}>
-                  <Text style={styles.reliabilityValue}>{place.reliabilityScore}%</Text>
-                  <Text style={styles.reliabilityLabel}>location reliability</Text>
+                  <Text style={styles.reliabilityValue}>{place.verified ? 'Verified' : 'Listed'}</Text>
+                  <Text style={styles.reliabilityLabel}>Updated {place.lastConfirmedAt.toLowerCase()}</Text>
                 </View>
               </View>
               <View style={styles.reviewList}>
-                {place.reviews.map((item) => (
+                {place.reviews
+                  .filter((item) => !item.authorId || !blockedAuthorIds.includes(item.authorId))
+                  .map((item) => (
                   <View key={item.id} style={styles.reviewCard}>
                     <View style={styles.reviewTop}>
                       <View style={styles.reviewerAvatar}>
@@ -290,7 +624,26 @@ export default function PlaceDetailScreen() {
                       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                         <View style={styles.reviewPhotos}>
                           {item.photos.map((photo, index) => (
-                            <Image key={`${photo}-${index}`} source={{ uri: photo }} style={styles.reviewPhoto} />
+                            <View key={`${photo}-${index}`} style={styles.reviewPhotoWrap}>
+                              <Image source={{ uri: photo }} style={styles.reviewPhoto} />
+                              {item.photoMediaIds?.[index] ? (
+                                <Pressable
+                                  accessibilityLabel={`Report review photo ${index + 1}`}
+                                  accessibilityRole="button"
+                                  onPress={() =>
+                                    router.push({
+                                      pathname: '/report',
+                                      params: {
+                                        targetId: item.photoMediaIds![index],
+                                        targetType: 'media',
+                                      },
+                                    } as never)
+                                  }
+                                  style={styles.mediaReportButton}>
+                                  <FontAwesome6 color="#FFFFFF" name="flag" size={11} />
+                                </Pressable>
+                              ) : null}
+                            </View>
                           ))}
                         </View>
                       </ScrollView>
@@ -298,15 +651,79 @@ export default function PlaceDetailScreen() {
                     <View style={styles.reviewFooter}>
                       <FontAwesome6 color={palette.muted} name="thumbs-up" size={11} />
                       <Text style={styles.reviewHelpful}>Helpful · {item.helpfulCount}</Text>
+                      <Pressable
+                        accessibilityLabel={`Report review by ${item.displayName}`}
+                        accessibilityRole="button"
+                        onPress={() =>
+                          router.push({
+                            pathname: '/report',
+                            params: { targetId: item.id, targetType: 'review' },
+                          } as never)
+                        }
+                        style={styles.reportButton}>
+                        <FontAwesome6 color={palette.muted} name="flag" size={10} />
+                        <Text style={styles.reportButtonText}>Report</Text>
+                      </Pressable>
+                      {item.authorId ? (
+                        <Pressable
+                          accessibilityLabel={`Block ${item.displayName}`}
+                          accessibilityRole="button"
+                          onPress={() => void blockReviewer(item.authorId!, item.displayName)}
+                          style={styles.blockButton}>
+                          <FontAwesome6 color={palette.muted} name="user-slash" size={10} />
+                          <Text style={styles.reportButtonText}>Block</Text>
+                        </Pressable>
+                      ) : null}
                     </View>
                     {item.ownerResponse ? (
                       <View style={styles.ownerResponse}>
                         <Text style={styles.ownerResponseLabel}>Response from {place.name}</Text>
                         <Text style={styles.ownerResponseBody}>{item.ownerResponse}</Text>
+                        {item.ownerResponseId ? (
+                          <Pressable
+                            accessibilityLabel={`Report response from ${place.name}`}
+                            accessibilityRole="button"
+                            onPress={() =>
+                              router.push({
+                                pathname: '/report',
+                                params: {
+                                  targetId: item.ownerResponseId,
+                                  targetType: 'response',
+                                },
+                              } as never)
+                            }
+                            style={styles.responseReportButton}>
+                            <FontAwesome6 color={palette.muted} name="flag" size={10} />
+                            <Text style={styles.reportButtonText}>Report response</Text>
+                          </Pressable>
+                        ) : null}
                       </View>
                     ) : null}
                   </View>
                 ))}
+                {place.hasMoreReviews ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: moreReviewsLoading }}
+                    disabled={moreReviewsLoading}
+                    onPress={() => void showMoreReviews()}
+                    style={styles.moreReviewsButton}>
+                    {moreReviewsLoading ? (
+                      <ActivityIndicator color={palette.accentDeep} size="small" />
+                    ) : (
+                      <FontAwesome6 color={palette.accentDeep} name="comments" size={12} />
+                    )}
+                    <Text style={styles.moreReviewsText}>
+                      {moreReviewsLoading ? 'Loading reviews…' : 'Show more reviews'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {!place.reviews.length ? (
+                  <View style={styles.inlineEmpty}>
+                    <FontAwesome6 color={palette.muted} name="comment" size={16} />
+                    <Text style={styles.inlineEmptyText}>No approved reviews yet. Be the first to share a visit.</Text>
+                  </View>
+                ) : null}
               </View>
             </View>
 
@@ -316,18 +733,22 @@ export default function PlaceDetailScreen() {
                 eyebrow="Share your visit"
                 title="Write a review"
               />
-              <View style={styles.ratingPicker}>
+              <View accessibilityLabel="Review rating" accessibilityRole="radiogroup" style={styles.ratingPicker}>
                 {[1, 2, 3, 4, 5].map((value) => (
                   <Pressable
                     accessibilityLabel={`${value} star${value === 1 ? '' : 's'}`}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: value === rating }}
                     key={value}
-                    onPress={() => setRating(value)}>
+                    onPress={() => setRating(value)}
+                    style={styles.ratingOption}>
                     <FontAwesome color={value <= rating ? palette.sun : palette.line} name="star" size={25} />
                   </Pressable>
                 ))}
                 <Text style={styles.ratingPickerText}>{rating}.0</Text>
               </View>
               <TextInput
+                accessibilityLabel="Review"
                 maxLength={500}
                 multiline
                 onChangeText={setReview}
@@ -340,10 +761,12 @@ export default function PlaceDetailScreen() {
               {reviewPhotos.length ? (
                 <View style={styles.pendingPhotos}>
                   {reviewPhotos.map((photo, index) => (
-                    <View key={`${photo}-${index}`} style={styles.pendingPhotoWrap}>
-                      <Image source={{ uri: photo }} style={styles.pendingPhoto} />
+                    <View key={`${photo.uri}-${index}`} style={styles.pendingPhotoWrap}>
+                      <Image source={{ uri: photo.uri }} style={styles.pendingPhoto} />
                       <Pressable
                         accessibilityLabel="Remove photo"
+                        accessibilityRole="button"
+                        hitSlop={12}
                         onPress={() => setReviewPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index))}
                         style={styles.removePhoto}>
                         <FontAwesome6 color="#FFFFFF" name="xmark" size={10} />
@@ -352,13 +775,44 @@ export default function PlaceDetailScreen() {
                   ))}
                 </View>
               ) : null}
+              {reviewMessage ? (
+                <View
+                  accessibilityLiveRegion="polite"
+                  accessibilityRole="alert"
+                  style={[
+                    styles.reviewMessage,
+                    reviewMessage.type === 'success' && styles.reviewMessageSuccess,
+                  ]}>
+                  <FontAwesome6
+                    color={reviewMessage.type === 'success' ? palette.success : palette.accentDeep}
+                    name={reviewMessage.type === 'success' ? 'circle-check' : 'triangle-exclamation'}
+                    size={12}
+                    solid
+                  />
+                  <Text
+                    style={[
+                      styles.reviewMessageText,
+                      reviewMessage.type === 'success' && styles.reviewMessageTextSuccess,
+                    ]}>
+                    {reviewMessage.text}
+                  </Text>
+                </View>
+              ) : null}
               <View style={styles.composerActions}>
-                <Pressable onPress={pickReviewPhoto} style={styles.photoButton}>
+                <Pressable accessibilityRole="button" onPress={pickReviewPhoto} style={styles.photoButton}>
                   <FontAwesome6 color={palette.ink} name="camera" size={13} />
                   <Text style={styles.photoButtonText}>Add photos</Text>
                 </Pressable>
-                <Pressable onPress={submitReview} style={styles.submitButton}>
-                  <Text style={styles.submitButtonText}>Submit review</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={reviewSubmitting}
+                  onPress={submitReview}
+                  style={[styles.submitButton, reviewSubmitting && styles.buttonDisabled]}>
+                  {reviewSubmitting ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.submitButtonText}>Submit review</Text>
+                  )}
                 </Pressable>
               </View>
             </View>
@@ -379,7 +833,7 @@ export default function PlaceDetailScreen() {
                   <Text style={styles.infoSecondary}>
                     {place.category === 'home_kitchen'
                       ? place.serviceArea
-                      : `${place.city}, CA ${place.postalCode}`}
+                      : [place.city, place.region, place.postalCode].filter(Boolean).join(', ')}
                   </Text>
                 </View>
               </View>
@@ -416,7 +870,9 @@ export default function PlaceDetailScreen() {
               {place.category === 'home_kitchen' ? (
                 <View style={styles.privacyNote}>
                   <FontAwesome6 color={palette.success} name="user-shield" size={13} />
-                  <Text style={styles.privacyText}>Residence address is hidden. Exact pickup details are shared privately.</Text>
+                  <Text style={styles.privacyText}>
+                    Residence address is hidden. Follow only the pickup instructions the verified business publishes.
+                  </Text>
                 </View>
               ) : null}
             </View>
@@ -431,19 +887,42 @@ export default function PlaceDetailScreen() {
                   </View>
                 ))}
               </View>
-              <Text style={styles.paymentCaveat}>Payment details confirmed by the business.</Text>
+              <Text style={styles.paymentCaveat}>
+                {place.verified
+                  ? 'Payment details confirmed by the verified business.'
+                  : 'Payment details come from the listing source; confirm before ordering.'}
+              </Text>
             </View>
 
             <View style={styles.sourcePanel}>
               <View style={styles.sourceIcon}>
-                <FontAwesome6 color={palette.success} name="badge-check" size={18} />
+                <FontAwesome6 color={palette.success} name="circle-check" size={18} solid />
               </View>
               <View style={styles.sourceCopy}>
                 <Text style={styles.sourceTitle}>{place.sourceLabel}</Text>
                 <Text style={styles.sourceBody}>
-                  Hours, menu, payment methods, and live updates come directly from the business.
+                  {place.sourceLabel === 'Owner verified'
+                    ? 'The verified business manages its hours, menu, payments, and live updates.'
+                    : place.sourceLabel === 'Licensed provider'
+                      ? 'Core listing details come from a licensed data provider and are refreshed on a recorded schedule.'
+                      : place.sourceLabel === 'Community added'
+                        ? 'Community-provided details remain subject to verification and correction.'
+                        : 'The owner supplied these details; identity verification is still pending.'}
                 </Text>
               </View>
+              <Pressable
+                accessibilityLabel={`Report listing for ${place.name}`}
+                accessibilityRole="button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/report',
+                    params: { targetId: place.id, targetType: 'business' },
+                  } as never)
+                }
+                style={styles.sourceReport}>
+                <FontAwesome6 color={palette.muted} name="flag" size={11} />
+                <Text style={styles.sourceReportText}>Report listing</Text>
+              </Pressable>
             </View>
           </View>
         </View>
@@ -470,7 +949,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.dark,
   },
   heroShade: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(8, 15, 13, 0.52)',
   },
   heroTop: {
@@ -487,9 +966,9 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.26)',
     borderRadius: 999,
     borderWidth: 1,
-    height: 42,
+    height: 48,
     justifyContent: 'center',
-    width: 42,
+    width: 48,
   },
   heroButtonActive: {
     backgroundColor: palette.accent,
@@ -567,6 +1046,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     flexDirection: 'row',
     gap: 8,
+    minHeight: 48,
     paddingHorizontal: 16,
     paddingVertical: 11,
   },
@@ -582,6 +1062,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: 7,
+    minHeight: 48,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
@@ -670,6 +1151,18 @@ const styles = StyleSheet.create({
     borderTopColor: palette.line,
     borderTopWidth: 1,
   },
+  inlineEmpty: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingVertical: spacing.xl,
+  },
+  inlineEmptyText: {
+    color: palette.muted,
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+  },
   menuItem: {
     alignItems: 'center',
     borderBottomColor: palette.line,
@@ -732,6 +1225,11 @@ const styles = StyleSheet.create({
   galleryRow: {
     gap: spacing.md,
   },
+  galleryImageWrap: {
+    borderRadius: radii.lg,
+    overflow: 'hidden',
+    position: 'relative',
+  },
   galleryImage: {
     backgroundColor: palette.line,
     borderRadius: radii.lg,
@@ -773,6 +1271,22 @@ const styles = StyleSheet.create({
   },
   reviewList: {
     gap: spacing.md,
+  },
+  moreReviewsButton: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 44,
+    paddingHorizontal: spacing.lg,
+  },
+  moreReviewsText: {
+    color: palette.accentDeep,
+    fontSize: 12,
+    fontWeight: '800',
   },
   reviewCard: {
     backgroundColor: palette.surface,
@@ -822,15 +1336,51 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
   },
+  reviewPhotoWrap: {
+    borderRadius: radii.md,
+    overflow: 'hidden',
+    position: 'relative',
+  },
   reviewPhoto: {
     borderRadius: radii.md,
     height: 130,
     width: 170,
   },
+  mediaReportButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(20, 31, 29, 0.78)',
+    borderBottomLeftRadius: radii.md,
+    height: 44,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: 44,
+  },
   reviewFooter: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 6,
+  },
+  reportButton: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 5,
+    marginLeft: 'auto',
+    minHeight: 44,
+    paddingHorizontal: 8,
+  },
+  blockButton: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 5,
+    minHeight: 44,
+    paddingHorizontal: 8,
+  },
+  reportButtonText: {
+    color: palette.muted,
+    fontSize: 11,
+    fontWeight: '700',
   },
   reviewHelpful: {
     color: palette.muted,
@@ -853,6 +1403,14 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 17,
   },
+  responseReportButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    gap: 5,
+    minHeight: 44,
+    paddingRight: spacing.sm,
+  },
   reviewComposer: {
     backgroundColor: palette.surface,
     borderColor: palette.line,
@@ -865,6 +1423,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: 6,
+  },
+  ratingOption: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
   ratingPickerText: {
     color: palette.ink,
@@ -914,6 +1478,27 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     justifyContent: 'space-between',
   },
+  reviewMessage: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  reviewMessageSuccess: {
+    backgroundColor: palette.successSoft,
+  },
+  reviewMessageText: {
+    color: palette.accentDeep,
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  reviewMessageTextSuccess: {
+    color: palette.success,
+  },
   photoButton: {
     alignItems: 'center',
     borderColor: palette.line,
@@ -921,6 +1506,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: 8,
+    minHeight: 48,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
@@ -930,8 +1516,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   submitButton: {
+    alignItems: 'center',
     backgroundColor: palette.accent,
     borderRadius: radii.pill,
+    justifyContent: 'center',
+    minHeight: 48,
+    minWidth: 132,
     paddingHorizontal: 18,
     paddingVertical: 12,
   },
@@ -939,6 +1529,9 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '900',
+  },
+  buttonDisabled: {
+    opacity: 0.62,
   },
   infoPanel: {
     backgroundColor: palette.surface,
@@ -1082,6 +1675,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.successSoft,
     borderRadius: radii.lg,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.md,
     padding: spacing.lg,
   },
@@ -1106,6 +1700,22 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 10,
     lineHeight: 15,
+  },
+  sourceReport: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 11,
+  },
+  sourceReportText: {
+    color: palette.muted,
+    fontSize: 10,
+    fontWeight: '800',
   },
   missing: {
     alignItems: 'center',

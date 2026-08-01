@@ -1,5 +1,16 @@
 import { ScrollViewStyleReset } from 'expo-router/html';
 
+const publicOrigin = (() => {
+  const candidate = process.env.EXPO_PUBLIC_APP_URL?.trim().replace(/\/+$/, '');
+  if (!candidate) return null;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === 'https:' ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+})();
+
 export default function Root({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
@@ -13,15 +24,40 @@ export default function Root({ children }: { children: React.ReactNode }) {
           content="Find nearby food trucks, restaurants, pop-ups, bakeries, and verified local kitchens with live locations, menus, payments, reviews, and owner updates."
         />
         <meta name="theme-color" content="#F6F3EC" />
+        <meta name="color-scheme" content="light" />
+        <meta name="application-name" content="Spottr" />
+        <meta name="apple-mobile-web-app-title" content="Spottr" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        {publicOrigin ? <link rel="canonical" href={publicOrigin} /> : null}
+        <link rel="manifest" href="/manifest.webmanifest" />
+        <link rel="apple-touch-icon" href="/spottr-icon.png" />
+        <script defer src="/register-sw.js" />
         <meta property="og:title" content="Spottr · Live local food, mapped" />
         <meta
           property="og:description"
           content="Know what is serving, where it is, what it costs, and how you can pay—before you go."
         />
         <meta property="og:type" content="website" />
-        <meta property="og:image" content="/og.png" />
+        {publicOrigin ? <meta property="og:url" content={publicOrigin} /> : null}
+        <meta
+          property="og:image"
+          content={
+            publicOrigin
+              ? `${publicOrigin}/spottr-social-card.png`
+              : '/spottr-social-card.png'
+          }
+        />
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:image" content="/og.png" />
+        <meta
+          name="twitter:image"
+          content={
+            publicOrigin
+              ? `${publicOrigin}/spottr-social-card.png`
+              : '/spottr-social-card.png'
+          }
+        />
         <ScrollViewStyleReset />
         <style dangerouslySetInnerHTML={{ __html: responsiveBackground }} />
       </head>
@@ -47,7 +83,15 @@ button, input, textarea {
   font: inherit;
 }
 :focus-visible {
-  outline: 3px solid rgba(241, 90, 58, 0.38);
-  outline-offset: 2px;
+  outline: 3px solid #9E2718;
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 `;

@@ -2,89 +2,133 @@
 
 ## Position
 
-Spottr is not another generic restaurant directory. Its wedge is the trusted live-status network for mobile and independent food businesses:
+Spottr's wedge is reliable, live local-food discovery:
 
-> Know what is open, where it is, what it serves, what it costs, and how you can pay—before you go.
+> Know what is open, where it is, what it serves, what it costs, and how you can
+> pay before you go.
 
-Food trucks remain first in navigation, pins, ranking, and editorial shelves. Restaurants expand usefulness without erasing the differentiator.
+Food trucks remain first in category order, map treatment, and nearby results.
+Restaurants, pop-ups, cafes, and bakeries broaden daily usefulness without
+erasing that focus.
 
-## Discovery system
+## Implemented product model
 
 Venue types:
 
 1. Food trucks
 2. Restaurants
 3. Pop-ups and market vendors
-4. Cafés and bakeries
-5. Home kitchens, visible only in legally enabled jurisdictions and only after verification
+4. Cafes and bakeries
+5. Home kitchens, hidden unless a server-controlled jurisdiction is legally
+   approved and the business has a current verified permit
 
-Cuisine, diet, price, payment, distance, and Open now are filters rather than competing venue types.
+The universal client currently supports:
 
-Core shelves:
+- foreground-location and city/ZIP/business/cuisine discovery;
+- map/list results with visually distinct truck markers;
+- open-only, venue, cuisine, dietary, payment, price, distance, rating, pickup,
+  Nearby, Popular, Trending, and Top rated controls;
+- timezone-aware weekly and special hours, mobile stops, expiring status
+  overrides, and short owner updates;
+- published menus with integer minor-unit prices, availability, dietary tags,
+  and payment methods;
+- follows, saved places, alert preferences, reviews, reports, and blocks;
+- customer workflows plus AAL2-protected business draft, claim, and scheduling
+  workflows in one account;
+- draft business setup, claims, staged published-listing revisions, and mobile
+  stop scheduling.
+- AAL2-protected business identity/contact/logo editing and a restricted,
+  concurrency-safe staff moderation workspace.
 
-- Trucks Near You
-- Open Now
-- Trending This Week
-- Popular Nearby
-- New & Noteworthy
-- Hidden Gems
-- Late Night
-- Following Updates
+The disconnected preview also demonstrates a separately labelled
+`Sponsored ad` lane. It does not alter the organic list. Production campaign
+serving, charging, reporting, and native purchase controls remain disabled
+until the server ledger, fraud, legal, payment, and store-policy gates in
+[MONETIZATION.md](MONETIZATION.md) are complete.
 
-Organic ranking must stay explainable:
+In live mode, nearby distance and safe coordinates come from PostGIS. Effective
+open status comes from the server. The client does not substitute a default city
+when the user has not selected an area.
 
-- **Nearby:** current/open status, travel time, and location-confirmation freshness.
-- **Popular:** Bayesian-adjusted first-party rating plus saves, directions, and verified engagement over 90 days.
-- **Trending:** seven-day engagement acceleration versus the listing’s normal baseline, normalized for exposure and protected by fraud controls.
-- **Reliable:** accurate hours, recent owner check-ins, and few validated correction reports.
-- **Hidden Gems:** strong quality and reliability with lower historical exposure.
-- **For You:** explicit cuisine, dietary, payment, distance, and follow preferences.
-
-Paid placement must be clearly labeled and separated from organic ranking.
-
-## Launch sequence
-
-### P0 — defensible city launch
-
-- Guest browsing
-- Email/password accounts and unique usernames
-- Manually curated trucks and restaurants
-- PostGIS nearby search and city/ZIP geocoding
-- Recurring truck stops, weekly/special hours, payment methods, and menus
-- Follows and in-app inbox
-- Short expiring owner updates
-- Text reviews
-- Manual business claims and moderation
-- Report/block controls
-
-Home kitchens and third-party restaurant overlays stay disabled until legal/licensing approval.
-
-### P1 — media and reach
-
-- Moderated review/business photos
-- Push notifications
-- Licensed Google Places overlay with required attribution
-- Owner-authorized menu PDF/photo OCR into a review-before-publish draft
-- Sign in with Apple and Google
-
-### P2 — scale
-
-- Licensed bulk inventory where terms permit retention
-- Verified-visit signals and richer anti-fraud models
-- Multi-region read/cache strategy
-- Jurisdiction-by-jurisdiction home-kitchen enablement
-- Business analytics, multi-location organizations, and staff audit tooling
+Popular and Trending are presently transparent heuristics over the safe
+first-party aggregate projection (rating, review counts, recent reviews,
+followers, and active owner updates). They are product navigation aids, not a
+fraud-resistant recommendation system. Scale launch requires event-quality
+validation, exposure normalization, anti-manipulation monitoring, and documented
+ranking changes. Paid placement must be clearly labelled and separate from
+organic results.
 
 ## Data integrity rules
 
-- Open now is derived server-side from timezone, weekly/special hours, current stop, and an expiring override.
-- Distance is calculated from PostGIS geography; it is never stored as display text.
+- Only published, eligible listings appear in anonymous directory projections.
+- Public status is computed from the listing timezone, special/weekly schedule,
+  current mobile stop, and an unexpired manual override.
+- Distance is computed from PostGIS geography and is not stored as display
+  text.
 - Ratings aggregate only visible first-party Spottr reviews.
-- Provider ratings, when licensed, stay separately labeled and are never merged into Spottr ratings.
-- Owner-entered and verified fields have independent provenance and can override provider display fields without overwriting provider records.
-- A menu import is always a draft until the owner approves every item and price.
-- Food-truck locations are deliberate public business stops, not continuous owner-device tracking.
+- Provider ratings, if licensed later, remain separately labelled and are never
+  merged into Spottr ratings.
+- Provider, owner, and community provenance remain distinct.
+- Imported menus must enter an owner-reviewed draft with source and freshness
+  metadata; they are never silently published.
+- Published listing changes are staged and audited instead of directly changing
+  the live directory.
+- Food-truck locations are deliberate public business stops, not background
+  tracking.
+- Home-kitchen public coordinates are approximate and street/postal details are
+  withheld.
 
-## Name diligence
+## Launch boundary
 
-Spottr works as the current internal/preview name, but it has a serious launch-clearance risk: multiple active mobile apps already use Spottr, including a registered U.S. SPOTTR mark covering downloadable location-based social software. Before store submission, obtain trademark counsel review and either secure a defensible food-specific mark or select a clear replacement.
+### Candidate city launch
+
+- Curated, owner-submitted trucks and restaurants
+- Guest browsing and verified email/password accounts
+- Unique usernames and TOTP-protected business tools
+- Nearby/search, hours/stops, payments, menus, follows, and text reviews
+- Manual claims, listing publication, correction review, and UGC moderation
+- Report/block controls and staffed safety escalation
+- In-app account export and deletion
+
+This phase does **not** include automated restaurant ingestion, ordering,
+payments, delivery, customer background tracking, home kitchens, photo uploads,
+or push delivery unless their separate gates are complete.
+
+### Gated expansion
+
+- Moderated review, logo, menu, and gallery photos after scanner/operations
+  acceptance
+- Push notifications after consent, delivery, quiet-hours, unsubscribe, and
+  credential evidence
+- Licensed provider inventory with contractual attribution, field-level
+  provenance, refresh, correction, caching, and deletion rules
+- Owner-authorized menu OCR into review-before-publish drafts
+- Federated sign-in only after platform-specific account-linking and deletion
+  behavior is verified
+- Home kitchens one jurisdiction at a time after legal, permit, privacy, and
+  incident review
+
+Ordering, payments, delivery, tax, insurance, and marketplace-liability
+features require a separate product and legal program; they are not implied by
+the listing application.
+
+[ORDERING_ARCHITECTURE.md](ORDERING_ARCHITECTURE.md) defines the versioned
+catalog, quote, order, payment, refund, capacity, fraud, and future-delivery
+boundaries for that gated program. Pure client-domain code or a preview cart is
+not evidence that production ordering is enabled.
+
+## External product blockers
+
+- No licensed restaurant/provider feed or agreement is included in this
+  repository. Do not scrape Yelp, Google, DoorDash, Facebook Marketplace, or
+  restaurant sites.
+- No production scanner, moderation staffing contract, APNs/FCM setup, or
+  provider credential is proved by the source tree.
+- Production privacy/terms/safety copy needs a real legal entity, effective
+  date, retention schedule, and reachable support/privacy/security contacts.
+- Store submissions need signed binaries, store metadata, reviewer access,
+  privacy declarations, and owner-controlled Apple/Google accounts.
+- Spottr is a working name pending trademark, domain, and store-name clearance.
+
+See [RELEASE.md](RELEASE.md) for the evidence checklist and
+[SECURITY.md](SECURITY.md) for trust boundaries.

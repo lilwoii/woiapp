@@ -6,12 +6,18 @@ import { palette } from '@/constants/theme';
 
 export default function TabLayout() {
   const { width } = useWindowDimensions();
-  const wideWeb = Platform.OS === 'web' && width >= 900;
+  // React Navigation reserves a full material sidebar column for left tabs.
+  // Keep the compact bottom rail until the viewport can hold that column plus
+  // Spottr's 1,240 px workspace without squeezing the map.
+  const wideWeb = Platform.OS === 'web' && width >= 1600;
 
   return (
     <Tabs
+      detachInactiveScreens
       screenOptions={{
+        lazy: true,
         headerShown: false,
+        tabBarPosition: wideWeb ? 'left' : 'bottom',
         tabBarActiveTintColor: palette.accent,
         tabBarInactiveTintColor: palette.muted,
         tabBarLabelStyle: {
@@ -22,32 +28,34 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: 'rgba(255, 253, 248, 0.98)',
           borderColor: palette.line,
-          borderRadius: wideWeb ? 24 : 0,
+          borderRadius: 0,
+          borderRightColor: wideWeb ? palette.line : undefined,
+          borderRightWidth: wideWeb ? 1 : 0,
           borderTopColor: palette.line,
-          borderWidth: wideWeb ? 1 : 0,
+          borderWidth: 0,
           borderTopWidth: 1,
-          bottom: wideWeb ? 18 : 0,
           elevation: 8,
-          height: wideWeb ? 72 : 84,
-          left: wideWeb ? '50%' : 0,
-          marginLeft: wideWeb ? -340 : 0,
-          paddingBottom: wideWeb ? 8 : 18,
-          paddingTop: 9,
-          position: 'absolute',
-          right: wideWeb ? undefined : 0,
-          shadowColor: '#18211D',
-          shadowOffset: { width: 0, height: 7 },
-          shadowOpacity: wideWeb ? 0.12 : 0,
-          shadowRadius: 16,
-          width: wideWeb ? 680 : undefined,
+          height: wideWeb ? undefined : 84,
+          paddingBottom: wideWeb ? 18 : 18,
+          paddingHorizontal: wideWeb ? 10 : 0,
+          paddingTop: wideWeb ? 18 : 9,
+          width: wideWeb ? 112 : undefined,
         },
       }}>
       <Tabs.Screen
         name="index"
         options={{
           title: 'Discover',
+          tabBarAccessibilityLabel: 'Discover nearby food',
           tabBarIcon: ({ color, focused }) => (
-            <FontAwesome6 color={color} name="location-dot" size={focused ? 21 : 19} solid={focused} />
+            <FontAwesome6
+              accessibilityElementsHidden
+              color={color}
+              importantForAccessibility="no-hide-descendants"
+              name="location-dot"
+              size={focused ? 21 : 19}
+              solid={focused}
+            />
           ),
         }}
       />
@@ -55,8 +63,9 @@ export default function TabLayout() {
         name="saved"
         options={{
           title: 'Saved',
+          tabBarAccessibilityLabel: 'Saved places',
           tabBarIcon: ({ color, focused }) => (
-            <FontAwesome6 color={color} name="heart" size={focused ? 20 : 18} solid={focused} />
+            <FontAwesome6 accessibilityElementsHidden color={color} name="heart" size={focused ? 20 : 18} solid={focused} />
           ),
         }}
       />
@@ -64,6 +73,7 @@ export default function TabLayout() {
         name="studio"
         options={{
           title: 'Business',
+          tabBarAccessibilityLabel: 'Business studio',
           tabBarIcon: ({ color, focused }) => (
             <FontAwesome6 color={color} name="store" size={focused ? 20 : 18} solid={focused} />
           ),
@@ -73,6 +83,7 @@ export default function TabLayout() {
         name="profile"
         options={{
           title: 'Profile',
+          tabBarAccessibilityLabel: 'Profile and settings',
           tabBarIcon: ({ color, focused }) => (
             <FontAwesome6 color={color} name="circle-user" size={focused ? 21 : 19} solid={focused} />
           ),
@@ -81,4 +92,3 @@ export default function TabLayout() {
     </Tabs>
   );
 }
-

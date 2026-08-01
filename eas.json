@@ -12,7 +12,12 @@
       "distribution": "internal"
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "channel": "production",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "production"
+      }
     }
   },
   "submit": {

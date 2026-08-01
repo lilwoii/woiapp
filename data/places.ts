@@ -111,6 +111,12 @@ export const seedPlaces: Place[] = [
     trendingScore: 96,
     popularityScore: 92,
     reliabilityScore: 98,
+    pickup: { enabled: true, orderingMode: 'spottr', estimatedMinutes: 18 },
+    sponsoredPlacement: {
+      id: 'preview-sponsored-copper-coyote',
+      disclosure: 'Sponsored ad',
+      reason: 'This food truck paid for a clearly separated preview placement relevant to nearby food discovery.',
+    },
     sourceLabel: 'Owner verified',
   },
   {
@@ -203,6 +209,7 @@ export const seedPlaces: Place[] = [
     trendingScore: 91,
     popularityScore: 86,
     reliabilityScore: 97,
+    pickup: { enabled: true, orderingMode: 'spottr', estimatedMinutes: 22 },
     sourceLabel: 'Owner verified',
   },
   {
@@ -275,6 +282,7 @@ export const seedPlaces: Place[] = [
     trendingScore: 79,
     popularityScore: 81,
     reliabilityScore: 91,
+    pickup: { enabled: true, orderingMode: 'phone', estimatedMinutes: 20 },
     sourceLabel: 'Owner verified',
   },
   {
@@ -346,6 +354,7 @@ export const seedPlaces: Place[] = [
     trendingScore: 83,
     popularityScore: 95,
     reliabilityScore: 94,
+    pickup: { enabled: true, orderingMode: 'external', estimatedMinutes: 25 },
     sourceLabel: 'Owner verified',
   },
   {
@@ -418,6 +427,7 @@ export const seedPlaces: Place[] = [
     trendingScore: 88,
     popularityScore: 76,
     reliabilityScore: 93,
+    pickup: { enabled: true, orderingMode: 'spottr', estimatedMinutes: 30 },
     sourceLabel: 'Owner verified',
   },
   {
@@ -493,4 +503,3 @@ export const seedPlaces: Place[] = [
     sourceLabel: 'Owner verified',
   },
 ];
-

@@ -1,0 +1,88 @@
+{
+  "expo": {
+    "name": "Spottr",
+    "description": "Live local food discovery for trucks, restaurants, pop-ups, and verified neighborhood businesses.",
+    "slug": "spottr-food",
+    "version": "0.2.0",
+    "orientation": "default",
+    "icon": "./assets/images/spottr-icon.png",
+    "scheme": "spottr",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/spottr-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F6F3EC"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.spottr.food",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocationWhenInUseUsageDescription": "Spottr uses your location while the app is open to show nearby food trucks and restaurants. Your precise location is not saved to your profile.",
+        "NSPhotoLibraryUsageDescription": "Spottr uses photo access only when you choose a business logo or attach a photo to a review."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/spottr-adaptive-foreground.png",
+        "backgroundColor": "#F6F3EC"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": true,
+      "package": "com.spottr.food",
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
+      "blockedPermissions": [
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/spottr-icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-splash-screen",
+      "expo-status-bar",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Spottr uses photo access only when you choose a business logo or attach a photo to a review.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Spottr uses your location while the app is open to show nearby food trucks and restaurants. Your precise location is not saved to your profile.",
+          "locationAlwaysPermission": false,
+          "locationAlwaysAndWhenInUsePermission": false,
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
+        }
+      ],
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-web-browser"
+    ],
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

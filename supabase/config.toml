@@ -1,0 +1,16 @@
+project_id = "spottr"
+
+[functions.export-account]
+verify_jwt = true
+
+[functions.delete-account]
+verify_jwt = true
+
+[functions.media-stage]
+verify_jwt = true
+
+[functions.media-scan]
+verify_jwt = false
+
+[functions.media-cleanup]
+verify_jwt = false

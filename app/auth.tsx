@@ -1,8 +1,8 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -16,7 +16,8 @@ import {
 import { BrandMark } from '@/components/brand-mark';
 import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
-import { validateUsername } from '@/lib/moderation';
+import { useAuth } from '@/context/auth-context';
+import { validatePassword, validateUsername } from '@/lib/moderation';
 import { AccountRole } from '@/types/marketplace';
 
 type Mode = 'signup' | 'signin';
@@ -33,6 +34,9 @@ function Field({
   autoCapitalize = 'none',
   hint,
   error,
+  accessibilityHint,
+  autoComplete,
+  onToggleSecure,
 }: {
   label: string;
   value: string;
@@ -43,6 +47,9 @@ function Field({
   autoCapitalize?: 'none' | 'words';
   hint?: string;
   error?: string | null;
+  accessibilityHint?: string;
+  autoComplete?: 'email' | 'name' | 'new-password' | 'current-password' | 'username';
+  onToggleSecure?: () => void;
 }) {
   return (
     <View style={styles.field}>
@@ -50,23 +57,45 @@ function Field({
         <Text style={styles.label}>{label}</Text>
         {hint ? <Text style={styles.hint}>{hint}</Text> : null}
       </View>
-      <TextInput
-        autoCapitalize={autoCapitalize}
-        autoCorrect={false}
-        keyboardType={keyboardType}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={palette.mutedLight}
-        secureTextEntry={secureTextEntry}
-        style={[styles.input, error ? styles.inputError : null]}
-        value={value}
-      />
+      <View style={styles.inputWrap}>
+        <TextInput
+          accessibilityHint={accessibilityHint}
+          accessibilityLabel={label}
+          autoCapitalize={autoCapitalize}
+          autoComplete={autoComplete}
+          autoCorrect={false}
+          keyboardType={keyboardType}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={palette.mutedLight}
+          secureTextEntry={secureTextEntry}
+          style={[styles.input, onToggleSecure && styles.inputWithAction, error ? styles.inputError : null]}
+          value={value}
+        />
+        {onToggleSecure ? (
+          <Pressable
+            accessibilityLabel={secureTextEntry ? 'Show password' : 'Hide password'}
+            accessibilityRole="button"
+            onPress={onToggleSecure}
+            style={styles.inputAction}>
+            <FontAwesome6 color={palette.muted} name={secureTextEntry ? 'eye' : 'eye-slash'} size={14} />
+          </Pressable>
+        ) : null}
+      </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
 }
 
 export default function AuthScreen() {
+  const auth = useAuth();
+  const { error_description: callbackError, next, verified } = useLocalSearchParams<{
+    error_description?: string;
+    next?: string;
+    verified?: string;
+  }>();
+  const checkUsername = auth.checkUsername;
+  const handledVerification = useRef(false);
   const [mode, setMode] = useState<Mode>('signup');
   const [role, setRole] = useState<AccountRole>('customer');
   const [displayName, setDisplayName] = useState('');
@@ -75,6 +104,13 @@ export default function AuthScreen() {
   const [password, setPassword] = useState('');
   const [accepted, setAccepted] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [formMessage, setFormMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
+    null
+  );
+  const [usernameAvailability, setUsernameAvailability] = useState<
+    'idle' | 'checking' | 'available' | 'unavailable'
+  >('idle');
 
   const usernameError = useMemo(
     () => (mode === 'signup' && username ? validateUsername(username, existingUsernames) : null),
@@ -84,11 +120,59 @@ export default function AuthScreen() {
   const emailError =
     submitted && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ? 'Enter a valid email address.' : null;
   const passwordError =
-    submitted && password.length < 12 ? 'Use at least 12 characters for a stronger password.' : null;
+    submitted && mode === 'signup'
+      ? password
+        ? validatePassword(password)
+        : 'Enter your password.'
+      : submitted && !password
+        ? 'Enter your password.'
+        : null;
   const displayNameError = submitted && mode === 'signup' && !displayName.trim() ? 'Add your display name.' : null;
 
-  const submit = () => {
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (typeof callbackError === 'string' && callbackError) {
+      timer = setTimeout(() => {
+        setFormMessage({
+          type: 'error',
+          text: 'This verification link is invalid or expired. Sign in or request a new email.',
+        });
+      }, 0);
+    } else if (verified === '1' && !handledVerification.current && auth.status === 'authenticated') {
+      handledVerification.current = true;
+      router.replace(next === 'business-onboarding' ? '/business-onboarding' : '/');
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [auth.status, callbackError, next, verified]);
+
+  useEffect(() => {
+    let active = true;
+    const invalid = mode !== 'signup' || !username || Boolean(validateUsername(username, []));
+    const timer = setTimeout(() => {
+      if (invalid) {
+        setUsernameAvailability('idle');
+        return;
+      }
+      setUsernameAvailability('checking');
+      void checkUsername(username).then((result) => {
+        if (!active) return;
+        setUsernameAvailability(
+          result.ok && result.data?.available ? 'available' : result.ok ? 'unavailable' : 'idle'
+        );
+      });
+    }, invalid ? 0 : 450);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [checkUsername, mode, username]);
+
+  const submit = async () => {
     setSubmitted(true);
+    setFormMessage(null);
 
     if (mode === 'signup') {
       const usernameValidation = validateUsername(username, existingUsernames);
@@ -96,31 +180,62 @@ export default function AuthScreen() {
         usernameValidation ||
         !displayName.trim() ||
         !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ||
-        password.length < 12 ||
+        validatePassword(password) ||
         !accepted
       ) {
-        if (!accepted) Alert.alert('Terms required', 'Review and accept the Terms and Privacy Policy to continue.');
+        if (!accepted) {
+          setFormMessage({
+            type: 'error',
+            text: 'Review and accept the Terms and Privacy Policy to continue.',
+          });
+        }
         return;
       }
 
-      Alert.alert(
-        'Secure account flow ready',
-        role === 'business'
-          ? 'Email verification comes first, then business setup and ownership checks.'
-          : 'Email verification comes first. The password is never stored in the app.'
-      );
+      const result = await auth.signUp({
+        acceptedTerms: accepted,
+        displayName,
+        email,
+        password,
+        role,
+        username,
+      });
+      if (!result.ok) {
+        setFormMessage({ type: 'error', text: result.reason });
+        return;
+      }
 
-      if (role === 'business') {
-        router.replace('/business-onboarding');
-      } else {
-        router.back();
+      const text = result.message ?? 'Your Spottr account is ready.';
+      setFormMessage({ type: 'success', text });
+      if (!result.data?.requiresEmailVerification) {
+        router.replace(role === 'business' ? '/business-onboarding' : '/');
       }
       return;
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || !password) return;
-    Alert.alert('Signed-in preview', 'Production sign-in uses secure Supabase sessions and verified email.');
-    router.back();
+    const result = await auth.signIn(email, password);
+    if (!result.ok) {
+      setFormMessage({ type: 'error', text: result.reason });
+      return;
+    }
+    router.replace(result.data?.requiresMfa ? '/security' : '/');
+  };
+
+  const recoverPassword = async () => {
+    setSubmitted(true);
+    setFormMessage(null);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setFormMessage({ type: 'error', text: 'Enter your email first.' });
+      return;
+    }
+    const result = await auth.requestPasswordReset(email);
+    setFormMessage({
+      type: result.ok ? 'success' : 'error',
+      text: result.ok
+        ? result.message ?? 'If that account exists, a recovery link is on the way.'
+        : result.reason,
+    });
   };
 
   return (
@@ -135,7 +250,11 @@ export default function AuthScreen() {
         style={styles.screen}>
         <PageShell narrow>
           <View style={styles.topbar}>
-            <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.backButton}>
+            <Pressable
+              accessibilityLabel="Go back"
+              accessibilityRole="button"
+              onPress={() => router.back()}
+              style={styles.backButton}>
               <FontAwesome6 color={palette.ink} name="arrow-left" size={14} />
             </Pressable>
             <BrandMark />
@@ -153,6 +272,15 @@ export default function AuthScreen() {
               </Text>
             </View>
 
+            {!auth.isConfigured ? (
+              <View accessibilityRole="alert" style={styles.previewNotice}>
+                <FontAwesome6 color={palette.accentDeep} name="circle-info" size={14} />
+                <Text style={styles.previewNoticeText}>
+                  This published preview does not accept real credentials. Connect the secured backend to enable accounts.
+                </Text>
+              </View>
+            ) : null}
+
             <View style={styles.modeSwitch}>
               {(
                 [
@@ -161,6 +289,8 @@ export default function AuthScreen() {
                 ] as [Mode, string][]
               ).map(([id, label]) => (
                 <Pressable
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: mode === id }}
                   key={id}
                   onPress={() => {
                     setMode(id);
@@ -186,6 +316,8 @@ export default function AuthScreen() {
                       const active = role === id;
                       return (
                         <Pressable
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: active }}
                           key={id}
                           onPress={() => setRole(id)}
                           style={[styles.roleOption, active && styles.roleOptionActive]}>
@@ -205,6 +337,7 @@ export default function AuthScreen() {
 
                 <Field
                   autoCapitalize="words"
+                  autoComplete="name"
                   error={displayNameError}
                   label="Display name"
                   onChangeText={setDisplayName}
@@ -212,8 +345,17 @@ export default function AuthScreen() {
                   value={displayName}
                 />
                 <Field
+                  autoComplete="username"
                   error={submitted || username ? usernameError : null}
-                  hint="1–24 characters · unique"
+                  hint={
+                    usernameAvailability === 'checking'
+                      ? 'Checking availability…'
+                      : usernameAvailability === 'available'
+                        ? 'Available'
+                        : usernameAvailability === 'unavailable'
+                          ? 'Already taken'
+                          : '1–24 characters · unique'
+                  }
                   label="Username"
                   onChangeText={setUsername}
                   placeholder="yourname"
@@ -223,6 +365,7 @@ export default function AuthScreen() {
             ) : null}
 
             <Field
+              autoComplete="email"
               error={emailError}
               keyboardType="email-address"
               label="Email"
@@ -231,21 +374,31 @@ export default function AuthScreen() {
               value={email}
             />
             <Field
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
               error={passwordError}
               hint={mode === 'signup' ? '12+ characters' : undefined}
               label="Password"
               onChangeText={setPassword}
               placeholder={mode === 'signup' ? 'Create a strong password' : 'Enter your password'}
-              secureTextEntry
+              onToggleSecure={() => setPasswordVisible((current) => !current)}
+              secureTextEntry={!passwordVisible}
               value={password}
             />
 
             {mode === 'signin' ? (
-              <Pressable style={styles.forgotButton}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.isBusy}
+                onPress={recoverPassword}
+                style={styles.forgotButton}>
                 <Text style={styles.forgotText}>Forgot password?</Text>
               </Pressable>
             ) : (
-              <Pressable onPress={() => setAccepted((current) => !current)} style={styles.termsRow}>
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: accepted }}
+                onPress={() => setAccepted((current) => !current)}
+                style={styles.termsRow}>
                 <View style={[styles.checkbox, accepted && styles.checkboxActive]}>
                   {accepted ? <FontAwesome6 color="#FFFFFF" name="check" size={10} /> : null}
                 </View>
@@ -255,16 +408,76 @@ export default function AuthScreen() {
               </Pressable>
             )}
 
-            <Pressable onPress={submit} style={styles.submitButton}>
-              <Text style={styles.submitText}>{mode === 'signup' ? 'Create secure account' : 'Sign in'}</Text>
-              <FontAwesome6 color="#FFFFFF" name="arrow-right" size={13} />
+            {mode === 'signup' ? (
+              <View style={styles.legalLinks}>
+                <Pressable
+                  accessibilityRole="link"
+                  onPress={() => router.push({ pathname: '/legal', params: { document: 'terms' } })}
+                  style={styles.legalLink}>
+                  <Text style={styles.legalLinkText}>Terms</Text>
+                </Pressable>
+                <Text style={styles.legalLinkDot}>·</Text>
+                <Pressable
+                  accessibilityRole="link"
+                  onPress={() => router.push({ pathname: '/legal', params: { document: 'privacy' } })}
+                  style={styles.legalLink}>
+                  <Text style={styles.legalLinkText}>Privacy</Text>
+                </Pressable>
+                <Text style={styles.legalLinkDot}>·</Text>
+                <Pressable
+                  accessibilityRole="link"
+                  onPress={() => router.push({ pathname: '/legal', params: { document: 'community' } })}
+                  style={styles.legalLink}>
+                  <Text style={styles.legalLinkText}>Community rules</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {formMessage ? (
+              <View
+                accessibilityLiveRegion="polite"
+                accessibilityRole="alert"
+                style={[styles.formMessage, formMessage.type === 'success' && styles.formMessageSuccess]}>
+                <FontAwesome6
+                  color={formMessage.type === 'success' ? palette.success : palette.accentDeep}
+                  name={formMessage.type === 'success' ? 'circle-check' : 'triangle-exclamation'}
+                  size={13}
+                  solid
+                />
+                <Text
+                  style={[
+                    styles.formMessageText,
+                    formMessage.type === 'success' && styles.formMessageTextSuccess,
+                  ]}>
+                  {formMessage.text}
+                </Text>
+              </View>
+            ) : null}
+
+            <Pressable
+              accessibilityRole="button"
+              disabled={auth.isBusy}
+              onPress={submit}
+              style={({ pressed }) => [
+                styles.submitButton,
+                pressed && styles.submitButtonPressed,
+                auth.isBusy && styles.submitButtonDisabled,
+              ]}>
+              {auth.isBusy ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <>
+                  <Text style={styles.submitText}>{mode === 'signup' ? 'Create secure account' : 'Sign in'}</Text>
+                  <FontAwesome6 color="#FFFFFF" name="arrow-right" size={13} />
+                </>
+              )}
             </Pressable>
 
             <View style={styles.securityNote}>
               <FontAwesome6 color={palette.success} name="shield-halved" size={15} />
               <Text style={styles.securityText}>
                 Passwords are handled by the authentication provider, never stored in app tables. Business access requires
-                verified ownership and stronger sign-in protection.
+                verified ownership and authenticator protection.
               </Text>
             </View>
           </View>
@@ -297,12 +510,12 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     borderRadius: 999,
     borderWidth: 1,
-    height: 40,
+    height: 44,
     justifyContent: 'center',
-    width: 40,
+    width: 44,
   },
   backSpacer: {
-    width: 40,
+    width: 44,
   },
   authCard: {
     alignSelf: 'center',
@@ -338,6 +551,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
   },
+  previewNotice: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  previewNoticeText: {
+    color: palette.accentDeep,
+    flex: 1,
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
   modeSwitch: {
     backgroundColor: palette.bg,
     borderRadius: radii.pill,
@@ -348,6 +576,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: radii.pill,
     flex: 1,
+    justifyContent: 'center',
+    minHeight: 44,
     paddingVertical: 10,
   },
   modeOptionActive: {
@@ -427,6 +657,9 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 9,
   },
+  inputWrap: {
+    position: 'relative',
+  },
   input: {
     backgroundColor: palette.card,
     borderColor: palette.line,
@@ -436,6 +669,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     paddingHorizontal: spacing.md,
     paddingVertical: 14,
+  },
+  inputWithAction: {
+    paddingRight: 54,
+  },
+  inputAction: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 5,
+    top: 3,
+    width: 44,
   },
   inputError: {
     borderColor: palette.accent,
@@ -447,6 +692,9 @@ const styles = StyleSheet.create({
   },
   forgotButton: {
     alignSelf: 'flex-end',
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 4,
   },
   forgotText: {
     color: palette.accentDeep,
@@ -477,6 +725,45 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 16,
   },
+  legalLinks: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  legalLink: {
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  legalLinkText: {
+    color: palette.accentDeep,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  legalLinkDot: {
+    color: palette.mutedLight,
+  },
+  formMessage: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  formMessageSuccess: {
+    backgroundColor: palette.successSoft,
+  },
+  formMessageText: {
+    color: palette.accentDeep,
+    flex: 1,
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  formMessageTextSuccess: {
+    color: palette.success,
+  },
   submitButton: {
     alignItems: 'center',
     backgroundColor: palette.accent,
@@ -485,6 +772,13 @@ const styles = StyleSheet.create({
     gap: 9,
     justifyContent: 'center',
     paddingVertical: 14,
+  },
+  submitButtonPressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.995 }],
+  },
+  submitButtonDisabled: {
+    opacity: 0.62,
   },
   submitText: {
     color: '#FFFFFF',

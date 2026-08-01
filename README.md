@@ -2,65 +2,118 @@
 
 **Live local food, mapped.**
 
-Spottr is a universal Expo app for iOS, Android, and web. Food trucks lead discovery, while restaurants, pop-ups, cafés, bakeries, and legally enabled home kitchens share one trusted local-food network.
+Spottr is a universal Expo application for iOS, Android, and web. Food trucks
+lead discovery, while restaurants, pop-ups, cafes, and bakeries share the same
+directory.
 
-## What is included
+This repository is prelaunch source, not evidence of a live production
+marketplace. When Supabase credentials are absent, the app enters an explicitly
+labelled preview mode with seeded data; it does not accept real credentials or
+pretend that preview listings are live.
 
-- Nearby-first discovery with city, ZIP, business, and cuisine search
-- Food-truck-first category ordering and visually distinct map markers
-- Nearby, Popular, and Trending ranking views
-- Live/open/moving/closed status and location freshness
-- Short expiring owner updates with professional-language checks
-- Menus with real numeric prices, sold-out state, dietary tags, and photos
-- Accepted payment methods shown before a customer travels
-- Rich listings with photos, hours, future stops, reviews, owner responses, and location reliability
-- Follows, saved places, and granular alert preferences
-- Customer and business modes in one account
-- Email/password account UX, unique username validation, and in-app deletion controls
-- Business add/claim flow with logo validation, role/ownership verification, and legal gating
-- Review photo picker and four-photo limit
-- Secure Supabase/PostGIS schema with least-privilege row-level security
-- EAS build profiles for iOS and Android
+## Current product surface
 
-The app uses polished seeded data when credentials are absent. That preview mode is intentional: it makes every product flow testable without pretending external provider data or production authentication is connected.
+- Foreground-location or city/ZIP discovery, with no fabricated live-area
+  fallback
+- Food-truck-first categories, map markers, and nearby ordering
+- Nearby, Popular, and Trending views
+- Server-computed effective status from timezone-aware hours, special hours,
+  mobile stops, and expiring owner overrides
+- Listing details with published locations, hours, menus, prices, payment
+  methods, short owner updates, first-party ratings, and reviews
+- Follows, saved places, and per-business alert preferences
+- Customer and business modes in one application
+- Email/password accounts, case-insensitive unique usernames, PKCE recovery,
+  TOTP enrollment/challenge, and global sign-out
+- AAL2-gated business onboarding, draft configuration, claims, mobile-stop
+  scheduling, account export, and account deletion
+- Safe public database projections for directory, contact, location, review,
+  aggregate, status, update, and approved-media reads
+- Report and block flows, server-controlled moderation states, rate limits,
+  deterministic professional-language checks, and staffed escalation paths
 
-## Run
+Public media reads and a quarantine/scanner adapter exist, but customer and
+business uploads remain disabled by default. They must stay disabled until a
+real malware/content-safety scanner and staffed moderation operation pass the
+acceptance drills in [RELEASE.md](docs/RELEASE.md).
+
+## Toolchain
+
+- Node.js 22.13.0 or newer
+- Expo SDK 57
+- React Native 0.86
+- React 19.2
+
+Install and run:
 
 ```bash
-npm install
+npm ci
 npm run web
 ```
 
-For native development:
+Native development:
 
 ```bash
 npm run ios
 npm run android
 ```
 
-Validation:
+Repository validation:
 
 ```bash
-npm run typecheck
-npm run export:web
+npm run validate
 ```
+
+`npm run validate` type-checks, lints, runs coverage-gated tests, verifies that
+production configuration fails closed, checks Expo dependency health, and
+builds the Sites web artifact. Native Metro export checks are separate:
+
+```bash
+npx expo export --platform ios
+npx expo export --platform android
+```
+
+These exports are not signed applications and do not prove App Store or Play
+Store readiness.
 
 ## Production configuration
 
-Copy `.env.example` to `.env` and set:
+Copy [.env.example](.env.example) to an ignored `.env` for local work. The
+production build gate requires real Supabase, public application URL, EAS,
+Android Maps, and licensed web-map style/attribution values. Feature flags for
+home kitchens, uploads, and push are false by default.
 
-- `EXPO_PUBLIC_SUPABASE_URL`
-- `EXPO_PUBLIC_SUPABASE_ANON_KEY`
-- platform-restricted Google Maps SDK keys
+Only publishable client values belong in `EXPO_PUBLIC_*`. Supabase service-role
+keys, scanner credentials, moderation secrets, provider web-service keys, and
+push credentials are server-side values. See
+[the Edge Function environment template](supabase/functions/.env.example).
 
-Never place a Supabase service-role key, Places web-service key, moderation secret, or push credential in an `EXPO_PUBLIC_*` variable. Those belong only in server-side functions.
+Apply [supabase/schema.sql](supabase/schema.sql) only through a reviewed staging
+and production database-change process. Deploy and test the account and media
+Edge Functions separately; a schema file in source control is not proof that a
+production project has received it.
 
-Apply `supabase/schema.sql` to a **new** reviewed Supabase project. The replacement schema intentionally provides no anonymous write access and no generic client path for publishing, ownership transfers, permit approval, or moderation decisions.
+## Deliberate launch gates
 
-## Credential-gated work
+- Restaurant inventory must be owner-submitted or supplied under a licensed
+  provider agreement. Spottr must not scrape or clone Yelp, Google, DoorDash,
+  Facebook Marketplace, or restaurant sites.
+- Home kitchens remain disabled until each jurisdiction has documented legal
+  approval, permit operations, privacy review, and incident ownership.
+- Photo uploads remain disabled until scanning, re-encoding, moderation,
+  retention, appeals, and deletion are operational.
+- Push remains disabled until APNs/FCM credentials, consent, preference
+  enforcement, and delivery/opt-out evidence exist.
+- Production legal, privacy, safety, and support contacts must be supplied and
+  reviewed; the repository does not invent them.
+- Signed iOS/Android builds, store metadata, privacy declarations, reviewer
+  accounts, and submission evidence require the owner's Apple/Google accounts
+  and signing access.
+- Spottr is a working name until trademark, domain, and store-name clearance is
+  completed.
 
-Real accounts, persistence, claims, follows, reviews, storage, and realtime require a Supabase project. Android/web maps and geocoding require properly restricted map keys. Push notifications require APNs/FCM/VAPID credentials. Store releases require Apple and Google developer accounts and signing.
-
-Restaurant inventory must come from owner submissions or a licensed provider integration. Do not scrape Yelp, DoorDash, Google, or restaurant sites. Imported menus should enter as owner-reviewed drafts with source and freshness metadata.
-
-See [PRODUCT.md](docs/PRODUCT.md) and [SECURITY.md](docs/SECURITY.md) for the launch strategy and production guardrails.
+The connected web project is identified by
+[.openai/hosting.json](.openai/hosting.json). Reuse that project through the
+Sites workflow; do not create a duplicate project. See [RELEASE.md](docs/RELEASE.md)
+for the exact evidence and deployment checklist, [PRODUCT.md](docs/PRODUCT.md)
+for scope, and [SECURITY.md](docs/SECURITY.md) for security boundaries.

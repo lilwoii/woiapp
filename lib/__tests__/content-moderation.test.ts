@@ -1,0 +1,50 @@
+import { mapModerationQueuePage } from '../content-moderation';
+
+const targetId = 'a418d851-2f2a-4ed8-8df8-52a1293c6211';
+const businessId = 'cf844b56-696c-48cf-9f72-715d823776f3';
+
+describe('content moderation queue contracts', () => {
+  it('maps only public operator-safe fields and pagination state', () => {
+    const page = mapModerationQueuePage([
+      {
+        target_type: 'review',
+        target_id: targetId,
+        business_id: businessId,
+        business_name: 'Copper Coyote',
+        author_public_id: null,
+        author_display_name: null,
+        body: 'Carefully written review.',
+        rating: 5,
+        context: { media_count: 0, all_media_clean: true },
+        submitted_at: '2026-08-01T10:00:00.000Z',
+        updated_at: '2026-08-01T10:00:00.000Z',
+        has_more: true,
+        author_id: 'private-auth-id',
+      },
+    ], 30);
+    expect(page).toMatchObject({ hasMore: true, nextOffset: 31 });
+    expect(page.items[0]).toMatchObject({ authorDisplayName: 'Deleted account', rating: 5 });
+    expect(page.items[0]).not.toHaveProperty('authorId');
+  });
+
+  it('rejects malformed identifiers, dates, target types, and ratings', () => {
+    const valid = {
+      target_type: 'review',
+      target_id: targetId,
+      business_id: businessId,
+      business_name: 'Copper Coyote',
+      author_public_id: null,
+      author_display_name: 'Member',
+      body: 'Review',
+      rating: 5,
+      context: {},
+      submitted_at: '2026-08-01T10:00:00.000Z',
+      updated_at: '2026-08-01T10:00:00.000Z',
+      has_more: false,
+    };
+    expect(() => mapModerationQueuePage([{ ...valid, target_id: 'bad' }])).toThrow();
+    expect(() => mapModerationQueuePage([{ ...valid, target_type: 'listing' }])).toThrow();
+    expect(() => mapModerationQueuePage([{ ...valid, rating: 6 }])).toThrow();
+    expect(() => mapModerationQueuePage([{ ...valid, updated_at: 'never' }])).toThrow();
+  });
+});

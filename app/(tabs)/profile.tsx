@@ -1,13 +1,24 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { Link } from 'expo-router';
+import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { BrandMark } from '@/components/brand-mark';
+import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { PageShell } from '@/components/page-shell';
 import { SectionHeading } from '@/components/section-heading';
 import { palette, radii, spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
+import { confirmAction, showMessage } from '@/lib/platform-dialog';
 import { AccountRole } from '@/types/marketplace';
 
 type SettingsRowProps = {
@@ -15,11 +26,16 @@ type SettingsRowProps = {
   title: string;
   detail: string;
   danger?: boolean;
+  onPress: () => void;
 };
 
-function SettingsRow({ icon, title, detail, danger = false }: SettingsRowProps) {
+function SettingsRow({ icon, title, detail, danger = false, onPress }: SettingsRowProps) {
   return (
-    <Pressable style={styles.settingsRow}>
+    <Pressable
+      accessibilityLabel={`${title}. ${detail}`}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={styles.settingsRow}>
       <View style={[styles.settingsIcon, danger && styles.dangerIcon]}>
         <FontAwesome6 color={danger ? palette.accentDeep : palette.ink} name={icon} size={14} />
       </View>
@@ -33,13 +49,75 @@ function SettingsRow({ icon, title, detail, danger = false }: SettingsRowProps) 
 }
 
 export default function ProfileScreen() {
+  const auth = useAuth();
   const { account, followedIds, setRole } = useMarketplaceStore();
-  const [locationPersonalization, setLocationPersonalization] = useState(true);
-  const [productEmails, setProductEmails] = useState(false);
-  const [quietHours, setQuietHours] = useState(true);
+  const [accountMessage, setAccountMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
+    null
+  );
+  const signedIn = auth.status === 'authenticated';
+  const preview = auth.status === 'preview';
+  const initials = account.displayName
+    .split(/\s+/)
+    .map((part) => part.charAt(0))
+    .join('')
+    .slice(0, 2)
+    .toLocaleUpperCase('en-US');
+
+  const openSupport = async () => {
+    const value = process.env.EXPO_PUBLIC_SUPPORT_URL;
+    try {
+      const url = new URL(value ?? '');
+      if (url.protocol !== 'https:') throw new Error('invalid support URL');
+      await Linking.openURL(url.toString());
+    } catch {
+      showMessage(
+        'Support is not configured',
+        'The production support destination has not been connected in this preview.'
+      );
+    }
+  };
+
+  const deleteAccount = async () => {
+    if (!signedIn) {
+      router.push('/auth');
+      return;
+    }
+    if (auth.assuranceLevel !== 'aal2') {
+      setAccountMessage({
+        type: 'error',
+        text: 'Verify an authenticator code in Security before deleting your account.',
+      });
+      router.push('/security');
+      return;
+    }
+    const confirmed = await confirmAction({
+      title: 'Delete your Spottr account?',
+      message:
+        'This immediately removes your profile, reviews, follows, uploads, and private account data. A business with no other owner is archived. This cannot be undone.',
+      confirmLabel: 'Delete account',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    const result = await auth.deleteAccount();
+    setAccountMessage({
+      type: result.ok ? 'success' : 'error',
+      text: result.ok ? result.message ?? 'Deletion request accepted.' : result.reason,
+    });
+  };
+
+  const toggleSession = async () => {
+    setAccountMessage(null);
+    if (!signedIn) {
+      router.push('/auth');
+      return;
+    }
+    const result = await auth.signOut();
+    if (!result.ok) setAccountMessage({ type: 'error', text: result.reason });
+  };
 
   return (
-    <ScrollView
+    <FocusAwareScreen>
+      <ScrollView
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       style={styles.screen}>
@@ -48,23 +126,26 @@ export default function ProfileScreen() {
           <BrandMark />
           <View style={styles.demoBadge}>
             <View style={styles.demoDot} />
-            <Text style={styles.demoText}>Secure preview</Text>
+            <Text style={styles.demoText}>
+              {signedIn ? 'Verified session' : preview ? 'Secure preview' : 'Guest'}
+            </Text>
           </View>
         </View>
 
         <View style={styles.profileHeader}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>MR</Text>
+            <Text style={styles.avatarText}>{initials || 'S'}</Text>
           </View>
           <View style={styles.profileCopy}>
             <Text style={styles.displayName}>{account.displayName}</Text>
             <Text style={styles.username}>@{account.username}</Text>
           </View>
-          <Link href="/auth" asChild>
-            <Pressable style={styles.editButton}>
-              <Text style={styles.editButtonText}>Account</Text>
-            </Pressable>
-          </Link>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push(signedIn ? '/security' : '/auth')}
+            style={styles.editButton}>
+            <Text style={styles.editButtonText}>{signedIn ? 'Security' : 'Sign in'}</Text>
+          </Pressable>
         </View>
 
         <View style={styles.profileStats}>
@@ -73,16 +154,17 @@ export default function ProfileScreen() {
             <Text style={styles.profileStatLabel}>Following</Text>
           </View>
           <View style={styles.profileStat}>
-            <Text style={styles.profileStatValue}>12</Text>
-            <Text style={styles.profileStatLabel}>Reviews</Text>
+            <Text style={styles.profileStatValue}>{account.emailVerified ? 'Yes' : '—'}</Text>
+            <Text style={styles.profileStatLabel}>Email verified</Text>
           </View>
           <View style={styles.profileStat}>
-            <Text style={styles.profileStatValue}>4</Text>
-            <Text style={styles.profileStatLabel}>Lists</Text>
+            <Text style={styles.profileStatValue}>{account.role === 'business' ? 'Business' : 'Customer'}</Text>
+            <Text style={styles.profileStatLabel}>Access</Text>
           </View>
         </View>
 
-        <View style={styles.rolePanel}>
+        {preview ? (
+          <View style={styles.rolePanel}>
           <SectionHeading
             detail="Customer and business tools stay in one account."
             eyebrow="Account mode"
@@ -108,77 +190,78 @@ export default function ProfileScreen() {
               );
             })}
           </View>
-        </View>
-
-        <View style={styles.section}>
-          <SectionHeading eyebrow="Preferences" title="Discovery & alerts" />
-          <View style={styles.settingGroup}>
-            <View style={styles.toggleRow}>
-              <View style={styles.toggleCopy}>
-                <Text style={styles.toggleTitle}>Nearby personalization</Text>
-                <Text style={styles.toggleDetail}>Use location only while the app is open. Search history is not stored.</Text>
-              </View>
-              <Switch
-                onValueChange={setLocationPersonalization}
-                thumbColor="#FFFFFF"
-                trackColor={{ false: palette.line, true: palette.success }}
-                value={locationPersonalization}
-              />
-            </View>
-            <View style={styles.toggleRow}>
-              <View style={styles.toggleCopy}>
-                <Text style={styles.toggleTitle}>Quiet hours</Text>
-                <Text style={styles.toggleDetail}>Hold non-urgent alerts from 10:00 PM to 8:00 AM.</Text>
-              </View>
-              <Switch
-                onValueChange={setQuietHours}
-                thumbColor="#FFFFFF"
-                trackColor={{ false: palette.line, true: palette.success }}
-                value={quietHours}
-              />
-            </View>
-            <View style={styles.toggleRow}>
-              <View style={styles.toggleCopy}>
-                <Text style={styles.toggleTitle}>Product emails</Text>
-                <Text style={styles.toggleDetail}>Occasional launches and neighborhood guides.</Text>
-              </View>
-              <Switch
-                onValueChange={setProductEmails}
-                thumbColor="#FFFFFF"
-                trackColor={{ false: palette.line, true: palette.success }}
-                value={productEmails}
-              />
-            </View>
           </View>
-        </View>
+        ) : (
+          <View style={styles.rolePanel}>
+            <SectionHeading
+              detail="Business privileges come only from verified memberships."
+              eyebrow="Account access"
+              title={account.role === 'business' ? 'Business tools enabled' : 'Customer account'}
+            />
+            {account.role !== 'business' ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push('/business-onboarding')}
+                style={styles.claimButton}>
+                <FontAwesome6 color={palette.ink} name="store" size={13} />
+                <Text style={styles.claimButtonText}>Add or claim a business</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        )}
 
         <View style={styles.section}>
           <SectionHeading eyebrow="Settings" title="Account & privacy" />
           <View style={styles.settingGroup}>
             <SettingsRow
-              detail="Email, password, username, and passkeys"
+              detail="Email verification, password recovery, and sessions"
               icon="user-shield"
+              onPress={() => router.push(signedIn ? '/security' : '/auth')}
               title="Sign-in & security"
             />
             <SettingsRow
-              detail="Precise location is never saved to your profile"
+              detail="Choose alerts for businesses you follow"
+              icon="bell"
+              onPress={() => router.push('/saved')}
+              title="Following alerts"
+            />
+            <SettingsRow
+              detail="How precise location is processed for nearby results"
               icon="location-dot"
+              onPress={() => router.push('/privacy')}
               title="Location privacy"
             />
             <SettingsRow
               detail="Blocked accounts and content reports"
               icon="shield-heart"
+              onPress={() => router.push('/safety')}
               title="Safety controls"
+            />
+            <SettingsRow
+              detail="Terms, privacy policy, and community rules"
+              icon="file-shield"
+              onPress={() =>
+                router.push({ pathname: '/legal', params: { document: 'terms' } })
+              }
+              title="Policies"
+            />
+            <SettingsRow
+              detail="Open the staffed Spottr support destination"
+              icon="life-ring"
+              onPress={() => void openSupport()}
+              title="Help & support"
             />
             <SettingsRow
               detail="Download a copy of your Spottr data"
               icon="download"
+              onPress={() => router.push('/account-data')}
               title="Export my data"
             />
             <SettingsRow
               danger
               detail="Required in-app deletion removes your account and private data"
               icon="trash-can"
+              onPress={() => void deleteAccount()}
               title="Delete account"
             />
           </View>
@@ -197,16 +280,40 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <Link href="/auth" asChild>
-          <Pressable style={styles.primaryButton}>
-            <Text style={styles.primaryButtonText}>Open sign-in & account demo</Text>
-            <FontAwesome6 color="#FFFFFF" name="arrow-right" size={13} />
-          </Pressable>
-        </Link>
+        {accountMessage ? (
+          <View
+            accessibilityLiveRegion="polite"
+            accessibilityRole="alert"
+            style={[styles.accountMessage, accountMessage.type === 'success' && styles.accountMessageSuccess]}>
+            <Text
+              style={[
+                styles.accountMessageText,
+                accountMessage.type === 'success' && styles.accountMessageTextSuccess,
+              ]}>
+              {accountMessage.text}
+            </Text>
+          </View>
+        ) : null}
 
-        <Text style={styles.version}>Spottr preview · Version 0.1</Text>
+        <Pressable
+          accessibilityRole="button"
+          disabled={auth.isBusy}
+          onPress={() => void toggleSession()}
+          style={[styles.primaryButton, auth.isBusy && styles.primaryButtonDisabled]}>
+          {auth.isBusy ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <>
+              <Text style={styles.primaryButtonText}>{signedIn ? 'Sign out' : 'Sign in or create an account'}</Text>
+              <FontAwesome6 color="#FFFFFF" name={signedIn ? 'arrow-right-from-bracket' : 'arrow-right'} size={13} />
+            </>
+          )}
+        </Pressable>
+
+        <Text style={styles.version}>Spottr · Version 0.2</Text>
       </PageShell>
-    </ScrollView>
+      </ScrollView>
+    </FocusAwareScreen>
   );
 }
 
@@ -325,6 +432,22 @@ const styles = StyleSheet.create({
   roleSwitch: {
     gap: spacing.sm,
   },
+  claimButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderColor: palette.line,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 48,
+    paddingHorizontal: spacing.lg,
+  },
+  claimButtonText: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+  },
   roleOption: {
     alignItems: 'center',
     borderColor: palette.line,
@@ -357,28 +480,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
     overflow: 'hidden',
-  },
-  toggleRow: {
-    alignItems: 'center',
-    borderBottomColor: palette.line,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    padding: spacing.md,
-  },
-  toggleCopy: {
-    flex: 1,
-    gap: 4,
-  },
-  toggleTitle: {
-    color: palette.ink,
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  toggleDetail: {
-    color: palette.muted,
-    fontSize: 10,
-    lineHeight: 15,
   },
   settingsRow: {
     alignItems: 'center',
@@ -447,20 +548,42 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 17,
   },
+  accountMessage: {
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.md,
+    marginTop: spacing.xl,
+    padding: spacing.md,
+  },
+  accountMessageSuccess: {
+    backgroundColor: palette.successSoft,
+  },
+  accountMessageText: {
+    color: palette.accentDeep,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  accountMessageTextSuccess: {
+    color: palette.success,
+  },
   primaryButton: {
     alignItems: 'center',
-    backgroundColor: palette.accent,
+    backgroundColor: palette.accentDeep,
     borderRadius: radii.pill,
     flexDirection: 'row',
     gap: 9,
     justifyContent: 'center',
     marginTop: spacing.xl,
+    minHeight: 52,
     paddingVertical: 14,
   },
   primaryButtonText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '900',
+  },
+  primaryButtonDisabled: {
+    opacity: 0.58,
   },
   version: {
     color: palette.mutedLight,

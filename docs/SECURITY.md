@@ -1,69 +1,171 @@
 # Spottr security and trust model
 
-## Core boundaries
+This document describes controls present in the repository and the operational
+evidence required before launch. It is not a certification, penetration-test
+report, or claim that production is risk-free.
 
-- The mobile/web client receives only a Supabase publishable key and platform-restricted map SDK keys.
-- Supabase service-role, Places web-service, moderation, email, and push secrets remain server-side.
-- Browsing is public. Reviews, follows, claims, and uploads require verified accounts.
-- Business changes require membership; ownership transfer, permit changes, publishing, suspension, and moderation require audited server operations.
-- Native auth sessions use device secure storage. Web sessions remain memory-only until a secure-cookie backend-for-frontend is configured.
+## Client and secret boundaries
 
-## Database
+- The client receives a Supabase publishable key and restricted platform/map
+  configuration only.
+- Supabase service-role keys, licensed-provider web-service keys, scanner
+  credentials, moderation secrets, email credentials, and push credentials
+  remain in server-managed environments.
+- Native auth persistence uses Expo SecureStore with
+  `WHEN_UNLOCKED_THIS_DEVICE_ONLY`.
+- The static web client stores the session in tab-scoped `sessionStorage`. Only
+  the short-lived PKCE code verifier uses `localStorage` so an email callback
+  opened in another tab can complete. Neither storage mechanism is HttpOnly;
+  strict CSP, short token lifetimes, dependency control, and XSS testing remain
+  mandatory.
+- Production deep links are restricted to the configured HTTPS application
+  origin and the supported `/auth`, `/reset-password`, and `/place` routes.
 
-`supabase/schema.sql` enables RLS on every application table.
+No client-side check is treated as authorization.
 
-- No anonymous insert, update, or delete policies exist.
-- Reviews derive `author_id` from the authenticated user and begin in moderation.
-- Business updates are membership-bound, limited to 120 characters, moderation-pending, and must expire.
-- Raw business locations are member-only. The public location view hides private addresses and coarsens home-kitchen coordinates.
-- Business claim evidence, permit numbers, phones, and emails are private.
-- State transitions and audit writes have no generic client policies.
-- Money uses integer minor units plus ISO currency, not display strings.
+## Authentication and privileged actions
 
-## Accounts
+- Supabase Auth owns password hashes; application tables never store passwords.
+- Email verification and accepted terms are part of the active-user database
+  predicate.
+- Usernames are normalized and case-insensitively unique. Database constraints
+  and triggers enforce length, reserved-name, impersonation, and
+  professional-language rules.
+- TOTP is implemented through Supabase MFA. Business onboarding, draft
+  configuration, claims, staged publication decisions, mobile-stop scheduling,
+  account export, and account deletion require a current `aal2` session.
+- Password recovery becomes active only after a recovery event or an allowed
+  reset-code exchange. A normal signed-in session is not enough to reach the
+  reset operation.
+- Recovery from a lost second factor still needs a documented, staffed,
+  identity-verified support process before business accounts can launch.
 
-- Username uniqueness is case-insensitive in the database.
-- Usernames accept 1–24 characters as requested, with server enforcement, normalization at the account endpoint, a reserved-name list, impersonation protection, and professional-language checks.
-- Passwords are handled by Supabase Auth, not stored in application tables.
-- Production auth should enable verified email, CAPTCHA/rate limiting, breached-password checks, PKCE, short sessions, and MFA/passkeys for owners and administrators.
-- Account deletion must be available in-app and revoke sessions/tokens before deleting or anonymizing data under retention rules.
+Production Supabase configuration must separately enable verified email,
+redirect allowlists, CAPTCHA/rate limits, breached-password protection where
+available, appropriate token lifetimes, SMTP monitoring, and TOTP recovery
+procedures.
+
+## Database exposure
+
+[supabase/schema.sql](../supabase/schema.sql) enables RLS on application tables,
+uses explicit grants, and routes anonymous reads through security-barrier
+projections:
+
+- `public_business_directory`
+- `public_business_contacts`
+- `public_business_locations`
+- `public_business_updates`
+- `public_business_live_status`
+- `public_reviews`
+- `public_business_responses`
+- `public_business_review_aggregates`
+- approved public media projections
+
+Anonymous access to Auth-ID-bearing base tables is revoked. Authenticated base
+table reads remain limited to self/member policies. Public profiles expose a
+generated public identifier only for people with eligible approved content.
+Private business contacts are projected only when the owner has opted to show
+them.
+
+Home-kitchen and non-public locations remove street/postal details and snap
+coordinates to an approximate grid. Public directory status is computed on the
+server from the business timezone, weekly/special hours, active mobile stops,
+and unexpired overrides.
+
+Published listing setup cannot be directly rewritten by a member. Material
+changes use staged revisions and audited staff decisions. Publication requires
+a complete listing, a published location, and an approved processed logo.
+
+These controls still require a migration review and adversarial RLS test against
+the exact production schema. Source inspection alone does not prove the deployed
+database matches this file.
+
+## Accounts, export, and deletion
+
+`export-account` accepts `GET` with an `aal2` bearer session and returns a
+no-store JSON attachment directly to the authenticated user. The current export
+contains Auth account metadata, profile, business memberships and claims,
+reviews, follows, notification preferences, submitted reports, blocked public
+profiles, and owned-media metadata. It does not return credentials, private
+moderation notes, or the platform audit log.
+
+`delete-account` accepts `DELETE` with:
+
+- an `aal2` bearer session;
+- a 16-128 character idempotency key;
+- `X-Spottr-Delete-Confirmation: DELETE`; and
+- JSON `{ "confirmation": "DELETE" }`.
+
+The function first removes owned storage objects. It then archives a business
+for which the member is the only active owner, clears creator attribution,
+marks the profile deleted, and hard-deletes the Supabase Auth user. Auth-linked
+reviews, follows, notification preferences, reports, blocks, memberships,
+claims, owned media rows, and rate-limit/idempotency rows cascade with the Auth
+user. Business updates/responses and audit records may remain for marketplace
+integrity, with the deleted actor reference set to null. A private deletion
+receipt is idempotent and expires; failures return a retryable error rather than
+claiming completion.
+
+The production privacy policy must disclose this behavior and the actual
+retention periods. The deletion drill in [RELEASE.md](RELEASE.md) must prove the
+behavior against a production-like environment.
 
 ## Media and user-generated content
 
-Uploads enter a private staging bucket under the authenticated user’s path. A server worker must:
+Media is fail-closed:
 
-1. MIME-sniff and reject mismatches.
-2. Enforce byte and pixel limits.
-3. Decode and re-encode to JPEG/PNG/WebP.
-4. Strip EXIF and GPS metadata.
-5. Virus-scan and run image/text safety moderation.
-6. Detect spam, duplicates, and high-velocity abuse.
-7. Publish only approved derivatives through short signed URLs or a controlled CDN.
+1. An authenticated request obtains a one-time upload URL in a private
+   quarantine namespace.
+2. Registration checks the stored object's ownership and server metadata.
+3. An internal scanner adapter requires malware-clean, content-safe,
+   decoded/re-encoded, metadata-stripped output.
+4. Spottr independently checks magic bytes, size, dimensions, and SHA-256.
+5. A valid malware-clean, content-safe, re-encoded result is approved by the
+   trusted scanner adapter; invalid, failed, or rejected results remain private.
+6. Public projections expose only approved processed derivatives. Reports,
+   appeals, and removals remain explicit audited staff actions.
 
-Reviews and owner notes use client guidance plus server-side schema/length checks, profanity/harassment/spam filtering, report/block tools, a moderation queue, human escalation, and appeals. Automated filtering reduces abuse but cannot guarantee that every vulgar or harmful submission is caught.
+Both client and server media gates must remain false until the external scanner,
+moderation queue, retention schedule, deletion worker, alerting, and drills are
+real. A stub endpoint or a configured flag is not acceptance evidence.
+
+Text reviews, business responses, and short owner updates use length checks,
+rate limits, professional-language checks, server-controlled moderation states,
+report flows, block relationships, and staff decisions. New text stays private
+until an AAL2 staff moderator approves it through the audited, concurrency-safe
+queue. The local filter is only an early rejection aid; it is never treated as
+proof that content is safe.
+Launch requires:
+
+- visible report and block controls wherever eligible UGC or its author appears;
+- a staffed moderation queue with severity targets and emergency escalation;
+- notice, appeal, repeat-offender, and evidence-preservation procedures;
+- documented handling for copyright, food-safety, threats, and lawful requests;
+- abuse/load tests covering creation, reporting, blocking, and moderation RPCs.
 
 ## Location privacy
 
-- Ask only for foreground location and always provide city/ZIP fallback.
-- Do not retain consumer search coordinates or background location history.
-- Round or redact coordinates in logs and analytics.
-- Truck positions are owner-published stops.
-- Home kitchens show an approximate service area; never expose a residence marker or address in public APIs or notification payloads.
+- Request foreground location only and always provide city/ZIP fallback.
+- Do not persist customer search coordinates to profiles or marketplace tables.
+- Redact or round coordinates in telemetry and security logs.
+- Food-truck locations are owner-published stops, not continuous owner-device
+  tracking.
+- Never expose a home residence address or precise marker in public APIs,
+  notifications, exports, screenshots, or logs.
 
-## Provider and legal controls
+## External verification required
 
-- Google Places content must follow display, attribution, caching, and retention terms. Broad scraping or permanent cloning is prohibited.
-- Do not copy Yelp reviews/photos or scrape delivery menus.
-- Home kitchens remain behind a server-side jurisdiction feature flag. Enable only after local legal review, permit verification, allowed-food checks, renewal tracking, and suspension on expiry.
-- Listing-only is the safe first phase. Ordering, payments, delivery, tax, insurance, and marketplace-liability work require separate review.
+Before public launch, retain evidence of:
 
-## Pre-launch checks
+- independent web/mobile/API penetration testing;
+- database/RLS and staged-publication review;
+- abuse, rate-limit, and load tests;
+- dependency/SBOM and secret-scanning review;
+- backup restoration with approved RPO/RTO;
+- key rotation and incident-response drills;
+- Apple/Google privacy, UGC, authentication, and account-deletion compliance;
+- real support/security/privacy contacts and moderation staffing.
 
-- Independent database/RLS review
-- Mobile/web penetration test
-- Dependency audit and lockfile review
-- CSP, security headers, and secure-cookie web auth
-- Rate-limit and abuse/load tests
-- Restore-tested backups and incident runbooks
-- Apple/Google UGC, privacy, account deletion, and sign-in compliance
-- Moderation staffing, escalation, and law-enforcement request policy
+The release may be called production-ready only after the checklist in
+[RELEASE.md](RELEASE.md) is complete for the exact commit and deployed
+environment.

@@ -1,0 +1,61 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify Expo dependency alignment
+        run: npx expo install --check
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Type-check Edge functions
+        run: npm run typecheck:edge
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test with coverage gates
+        run: npm run test:ci
+
+      - name: Test Edge function contracts
+        run: npm run test:edge
+
+      - name: Check Expo project health
+        run: npx expo-doctor
+
+      - name: Verify production configuration fails closed
+        run: npm run verify:production-config
+
+      - name: Build production web artifact
+        run: npm run build:sites
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high

@@ -6,7 +6,7 @@ type Props = PropsWithChildren<{
 }>;
 
 export function PageShell({ children, narrow = false }: Props) {
-  return <View style={[styles.shell, narrow && styles.narrow]}>{children}</View>;
+  return <View role="main" style={[styles.shell, narrow && styles.narrow]}>{children}</View>;
 }
 
 const styles = StyleSheet.create({
@@ -19,4 +19,3 @@ const styles = StyleSheet.create({
     maxWidth: 820,
   },
 });
-

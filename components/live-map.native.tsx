@@ -1,5 +1,6 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { Image, StyleSheet, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 
 import { palette } from '@/constants/theme';
@@ -9,6 +10,7 @@ type Props = {
   places: Place[];
   selectedId?: string;
   onSelect?: (place: Place) => void;
+  userCoordinates?: { latitude: number; longitude: number } | null;
 };
 
 const initialRegion = {
@@ -18,9 +20,28 @@ const initialRegion = {
   longitudeDelta: 0.17,
 };
 
-export function LiveMap({ places, selectedId, onSelect }: Props) {
+export function LiveMap({ places, selectedId, onSelect, userCoordinates }: Props) {
+  const mapRef = useRef<MapView | null>(null);
+
+  useEffect(() => {
+    const selected = places.find((place) => place.id === selectedId);
+    if (!selected) return;
+    mapRef.current?.animateCamera(
+      { center: { latitude: selected.latitude, longitude: selected.longitude }, zoom: 14 },
+      { duration: 380 }
+    );
+  }, [places, selectedId]);
+
   return (
-    <MapView initialRegion={initialRegion} showsUserLocation style={styles.map}>
+    <MapView
+      initialRegion={
+        userCoordinates
+          ? { ...userCoordinates, latitudeDelta: 0.12, longitudeDelta: 0.12 }
+          : initialRegion
+      }
+      ref={mapRef}
+      showsUserLocation={Boolean(userCoordinates)}
+      style={styles.map}>
       {places.map((place) => {
         const isTruck = place.category === 'food_truck';
         const isSelected = selectedId === place.id;
@@ -36,8 +57,10 @@ export function LiveMap({ places, selectedId, onSelect }: Props) {
             <View style={[styles.pin, isTruck && styles.truckPin, isSelected && styles.selectedPin]}>
               {isTruck ? (
                 <FontAwesome6 color="#FFFFFF" name="truck" size={15} />
-              ) : (
+              ) : place.logoUrl ? (
                 <Image source={{ uri: place.logoUrl }} style={styles.logo} />
+              ) : (
+                <Text style={styles.logoFallback}>{place.name.charAt(0).toLocaleUpperCase('en-US')}</Text>
               )}
             </View>
           </Marker>
@@ -79,5 +102,9 @@ const styles = StyleSheet.create({
     height: 32,
     width: 32,
   },
+  logoFallback: {
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
+  },
 });
-
