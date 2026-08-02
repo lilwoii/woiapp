@@ -1420,6 +1420,31 @@ export default function StudioScreen() {
               </Pressable>
             </Link>
 
+            {(place.category === 'home_kitchen' || place.category === 'pop_up') ? (
+              <Link
+                href={{
+                  pathname: '/business-marketplace',
+                  params: { businessId: place.id },
+                } as unknown as Href}
+                asChild>
+                <Pressable
+                  accessibilityHint="Manage private customer chat and reviewed pickup sites"
+                  accessibilityRole="button"
+                  style={styles.teamLink}>
+                  <View style={styles.teamLinkIcon}>
+                    <FontAwesome6 color={palette.accentDeep} name="comments" size={15} />
+                  </View>
+                  <View style={styles.teamLinkCopy}>
+                    <Text style={styles.teamLinkTitle}>Chat &amp; safe pickup</Text>
+                    <Text style={styles.teamLinkDetail}>
+                      Manage customer chat and non-residential handoff points.
+                    </Text>
+                  </View>
+                  <FontAwesome6 color={palette.ink} name="arrow-right" size={13} />
+                </Pressable>
+              </Link>
+            ) : null}
+
             <Link href="/business-onboarding" asChild>
               <Pressable style={styles.onboardingLink}>
                 <View>

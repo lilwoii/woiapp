@@ -78,6 +78,7 @@ export default function RootLayout() {
                 <Stack.Screen name="business-setup" options={{ headerShown: false }} />
                 <Stack.Screen name="business-team" options={{ headerShown: false }} />
                 <Stack.Screen name="business-profile" options={{ headerShown: false }} />
+                <Stack.Screen name="business-marketplace" options={{ headerShown: false }} />
                 <Stack.Screen name="report" options={{ headerShown: false, presentation: 'modal' }} />
                 <Stack.Screen name="privacy" options={{ headerShown: false }} />
                 <Stack.Screen name="safety" options={{ headerShown: false }} />
@@ -86,6 +87,7 @@ export default function RootLayout() {
                 <Stack.Screen name="reset-password" options={{ headerShown: false, presentation: 'modal' }} />
                 <Stack.Screen name="security" options={{ headerShown: false }} />
                 <Stack.Screen name="moderation" options={{ headerShown: false }} />
+                <Stack.Screen name="marketplace-moderation" options={{ headerShown: false }} />
               </Stack>
             </ThemeProvider>
           </MarketplaceStoreProvider>

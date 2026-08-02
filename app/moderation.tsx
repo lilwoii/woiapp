@@ -1,5 +1,5 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -128,6 +128,10 @@ export default function ModerationScreen() {
             <Text style={styles.eyebrow}>Trust operations</Text>
             <Text accessibilityRole="header" style={styles.title}>Moderate with context and an audit trail.</Text>
             <Text style={styles.subtitle}>Approve only content that is professional, relevant, and safe. Rejections require a concise internal reason.</Text>
+            <Pressable accessibilityHint="Open reported chat and pickup site queues" accessibilityRole="button" onPress={() => router.push('/marketplace-moderation' as Href)} style={styles.operationsLink}>
+              <Text style={styles.operationsLinkText}>Chat reports &amp; pickup safety</Text>
+              <FontAwesome6 color={palette.ink} name="arrow-right" size={11} />
+            </Pressable>
           </View>
 
           {message ? (
@@ -188,13 +192,15 @@ export default function ModerationScreen() {
 
 const styles = StyleSheet.create({
   screen: { backgroundColor: palette.bg, flex: 1 },
-  content: { paddingBottom: 88 },
+  content: { paddingBottom: 88, paddingHorizontal: spacing.lg },
   topbar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingTop: spacing.md },
   closeButton: { alignItems: 'center', borderColor: palette.line, borderRadius: 999, borderWidth: 1, height: 44, justifyContent: 'center', width: 44 },
   intro: { gap: spacing.sm, paddingBottom: spacing.xl, paddingTop: 48 },
   eyebrow: { color: palette.accentDeep, fontFamily: 'SpaceMono', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase' },
   title: { color: palette.ink, fontSize: 32, fontWeight: '900', letterSpacing: -1.2, lineHeight: 37 },
   subtitle: { color: palette.muted, fontSize: 13, lineHeight: 20, maxWidth: 580 },
+  operationsLink: { alignItems: 'center', alignSelf: 'flex-start', borderBottomColor: palette.ink, borderBottomWidth: 1, flexDirection: 'row', gap: spacing.sm, minHeight: 44 },
+  operationsLinkText: { color: palette.ink, fontSize: 11, fontWeight: '900' },
   message: { backgroundColor: palette.accentSoft, borderRadius: radii.md, marginBottom: spacing.lg, padding: spacing.md },
   messageSuccess: { backgroundColor: palette.successSoft },
   messageText: { color: palette.accentDeep, fontSize: 11, lineHeight: 17 },
