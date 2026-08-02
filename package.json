@@ -21,6 +21,7 @@
     "inventory:overture:extract": "node scripts/extract-overture-food.mjs",
     "export:web": "expo export --platform web",
     "build:sites": "npm run export:web && node scripts/prepare-sites-build.mjs",
+    "build": "npm run build:sites",
     "validate": "npm run typecheck && npm run typecheck:edge && npm run lint && npm run test:ci && npm run test:edge && npm run verify:production-config && npx expo-doctor && npx expo install --check && npm run build:sites"
   },
   "dependencies": {
