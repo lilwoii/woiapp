@@ -14,12 +14,14 @@ type MediaPurpose =
   | "business_logo"
   | "business_gallery"
   | "review_photo"
+  | "chat_photo"
   | "claim_evidence";
 
 type StageBody = {
   action?: unknown;
   purpose?: unknown;
   businessId?: unknown;
+  conversationId?: unknown;
   mimeType?: unknown;
   byteSize?: unknown;
   storagePath?: unknown;
@@ -41,9 +43,22 @@ function purpose(value: unknown): MediaPurpose {
     value !== "business_logo" &&
     value !== "business_gallery" &&
     value !== "review_photo" &&
+    value !== "chat_photo" &&
     value !== "claim_evidence"
   ) {
     throw new HttpError(400, "INVALID_MEDIA_PURPOSE");
+  }
+  return value;
+}
+
+function conversationId(value: unknown, required: boolean): string | null {
+  if (!required && (value === null || value === undefined)) return null;
+  if (
+    typeof value !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(value)
+  ) {
+    throw new HttpError(400, "INVALID_CONVERSATION_ID");
   }
   return value;
 }
@@ -70,12 +85,30 @@ Deno.serve(async (request) => {
 
     const body = await readJson<StageBody>(request);
     const selectedPurpose = purpose(body.purpose);
-    const ownerMedia = selectedPurpose !== "review_photo";
+    const ownerMedia = selectedPurpose !== "review_photo" && selectedPurpose !== "chat_photo";
     const { user, client } = await authenticatedUser(request, ownerMedia);
     const targetBusinessId = businessId(
       body.businessId,
       selectedPurpose !== "profile_avatar",
     );
+    const targetConversationId = conversationId(
+      body.conversationId,
+      selectedPurpose === "chat_photo",
+    );
+
+    const requireChatAccess = async (): Promise<void> => {
+      if (selectedPurpose !== "chat_photo") return;
+      const { data: canStage, error } = await client.rpc(
+        "can_stage_marketplace_chat_media",
+        {
+          target_conversation_public_id: targetConversationId,
+          target_business_id: targetBusinessId,
+        },
+      );
+      if (error || canStage !== true) {
+        throw new HttpError(403, "CHAT_MEDIA_ACCESS_REQUIRED");
+      }
+    };
 
     if (body.action === "stage") {
       if (
@@ -107,6 +140,8 @@ Deno.serve(async (request) => {
           allowed_roles: ["owner", "manager"],
         });
         if (error || !isMember) throw new HttpError(403, "BUSINESS_ACCESS_REQUIRED");
+      } else if (selectedPurpose === "chat_photo") {
+        await requireChatAccess();
       } else if (
         selectedPurpose === "review_photo" ||
         selectedPurpose === "claim_evidence"
@@ -146,6 +181,7 @@ Deno.serve(async (request) => {
               action: "register",
               purpose: selectedPurpose,
               businessId: targetBusinessId,
+              conversationId: targetConversationId,
               storagePath: path,
             },
         },
@@ -158,6 +194,7 @@ Deno.serve(async (request) => {
       if (selectedPurpose === "claim_evidence") {
         throw new HttpError(400, "CLAIM_EVIDENCE_IS_NOT_PUBLIC_MEDIA");
       }
+      await requireChatAccess();
       if (
         typeof body.storagePath !== "string" ||
         !new RegExp(
@@ -171,7 +208,7 @@ Deno.serve(async (request) => {
       const { data: assetId, error } = await client.rpc("register_quarantined_media", {
         target_storage_path: body.storagePath,
         target_business_id: targetBusinessId,
-        media_source: selectedPurpose === "review_photo"
+        media_source: selectedPurpose === "review_photo" || selectedPurpose === "chat_photo"
           ? "review_upload"
           : "owner_upload",
       });

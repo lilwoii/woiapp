@@ -729,6 +729,24 @@ create index if not exists business_invitations_business_state_idx
 -- Licensed-provider configuration and source records are private by design.
 -- They can contain contract metadata, provider identifiers, contact details,
 -- and exact locations that must never be exposed through the Data API.
+create or replace function private.provider_signing_key_ids_valid(candidate text[])
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select cardinality(candidate) between 1 and 8
+    and count(*) = count(key_id)
+    and count(*) = count(distinct key_id)
+    and coalesce(
+      bool_and(key_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'),
+      false
+    )
+  from unnest(candidate) key_id;
+$$;
+
+revoke all on function private.provider_signing_key_ids_valid(text[]) from public;
+
 create table if not exists private.provider_accounts (
   provider_slug text primary key,
   enabled boolean not null default false,
@@ -779,12 +797,7 @@ create table if not exists private.provider_accounts (
     ]::text[]
   ),
   constraint provider_accounts_signing_keys_valid check (
-    cardinality(accepted_signing_key_ids) between 1 and 8
-    and not exists (
-      select 1
-      from unnest(accepted_signing_key_ids) key_id
-      where key_id !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
-    )
+    private.provider_signing_key_ids_valid(accepted_signing_key_ids)
   )
 );
 
@@ -7582,6 +7595,7 @@ begin
       'business_logo',
       'business_gallery',
       'review_photo',
+      'chat_photo',
       'claim_evidence'
     )
   then
@@ -7591,7 +7605,7 @@ begin
   perform private.consume_rate_limit(
     target_user_id,
     'media_stage_' || media_purpose,
-    case when media_purpose = 'review_photo' then 12 else 20 end,
+    case when media_purpose in ('review_photo', 'chat_photo') then 12 else 20 end,
     86400
   );
 end;

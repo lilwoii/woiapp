@@ -45,7 +45,21 @@ The viewport RPC is installed by
 clusters with per-category counts; at street zoom it returns public place
 features. It supports antimeridian viewports, prioritizes food trucks in stable
 ordering, and applies the same home-kitchen coordinate redaction as public
-listing views.
+listing views. Web, iOS, and Android debounce inventory refreshes after a user
+finishes moving or zooming the map; the explicit `Search this area` action
+refreshes the detailed list. Cluster counts filter by category and individual
+features lazy-load their full public listing when selected. Requests spanning
+more than 12 degrees fail closed to prevent an unbounded global aggregation;
+continent and world views require precomputed vector tiles before those zoom
+levels can serve production traffic.
+
+Production must use a licensed vector basemap configured through
+`EXPO_PUBLIC_MAP_STYLE_URL`, with street names, road hierarchy, building
+footprints, accessible contrast, high-detail tiles through at least zoom 18,
+documented attribution, regional coverage, a traffic/usage agreement sized for
+launch load, and a tested fallback. The public OpenStreetMap raster fallback is
+for fail-safe development only and is not an authorization to run a
+million-user tile workload against community tile servers.
 
 The checked-in extractor stages the full `food_and_drink` taxonomy branch from
 an explicitly reviewed Overture release. It uses the new taxonomy hierarchy

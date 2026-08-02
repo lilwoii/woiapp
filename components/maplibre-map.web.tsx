@@ -5,15 +5,18 @@ import { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { palette, radii } from '@/constants/theme';
-import { clusterPlaces, type MapFeature } from '@/lib/map-clustering';
-import type { MapViewport } from '@/types/map';
+import { clusterPlaces, normalizeLongitude, viewportIsLiveInventoryEligible } from '@/lib/map-clustering';
+import type { MapInventoryFeature, MapViewport } from '@/types/map';
 import { Place } from '@/types/marketplace';
 
 export type Props = {
   places: Place[];
   selectedId?: string;
   onSelect?: (place: Place) => void;
+  onSelectBusinessId?: (businessId: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
+  onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
+  inventoryFeatures?: MapInventoryFeature[];
   userCoordinates?: { latitude: number; longitude: number } | null;
 };
 
@@ -62,7 +65,10 @@ function createMapStyle(): maplibregl.StyleSpecification | string {
   };
 }
 
-function markerElement(place: Place, selected: boolean) {
+function markerElement(
+  place: Pick<Place, 'name' | 'category' | 'categoryLabel' | 'distanceMiles' | 'logoUrl'>,
+  selected: boolean
+) {
   const element = document.createElement('button');
   element.type = 'button';
   element.setAttribute(
@@ -166,7 +172,7 @@ function updateMarkerSelection(element: HTMLButtonElement, selected: boolean) {
   }
 }
 
-function clusterElement(feature: Extract<MapFeature, { kind: 'cluster' }>) {
+function clusterElement(feature: { count: number }) {
   const element = document.createElement('button');
   element.type = 'button';
   element.setAttribute('aria-label', `${feature.count} food places in this area. Zoom in to explore.`);
@@ -201,18 +207,43 @@ function viewportFromMap(map: MapLibreMap): MapViewport {
     longitude: center.lng,
     radiusMeters: Math.round(Math.min(200_000, Math.max(1_000, Math.hypot(latitudeMeters, longitudeMeters) / 2))),
     zoom: map.getZoom(),
+    bounds: {
+      west: normalizeLongitude(bounds.getWest()),
+      south: Math.max(-85.05112878, bounds.getSouth()),
+      east: normalizeLongitude(bounds.getEast()),
+      north: Math.min(85.05112878, bounds.getNorth()),
+    },
   };
 }
 
-export default function MapLibreMapView({ places, selectedId, onSelect, onSearchArea, userCoordinates }: Props) {
+const categoryLabels: Record<Place['category'], string> = {
+  food_truck: 'Food truck',
+  restaurant: 'Restaurant',
+  pop_up: 'Pop-up',
+  cafe_bakery: 'Café & bakery',
+  home_kitchen: 'Neighborhood kitchen',
+};
+
+export default function MapLibreMapView({
+  places,
+  selectedId,
+  onSelect,
+  onSelectBusinessId,
+  onSearchArea,
+  onViewportChange,
+  inventoryFeatures = [],
+  userCoordinates,
+}: Props) {
   const containerRef = useRef<View | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markerRefs = useRef(
-    new Map<string, { marker: Marker; element: HTMLButtonElement }>()
+    new Map<string, { marker: Marker; element: HTMLButtonElement; businessId?: string; signature?: string }>()
   );
   const currentPlaces = useRef(new Map(places.map((place) => [place.id, place])));
   const onSelectRef = useRef(onSelect);
+  const onSelectBusinessIdRef = useRef(onSelectBusinessId);
   const onSearchAreaRef = useRef(onSearchArea);
+  const onViewportChangeRef = useRef(onViewportChange);
   const fittedPlacesKey = useRef('');
   const userMarkerRef = useRef<Marker | null>(null);
   const initialPlaces = useRef(places);
@@ -227,14 +258,23 @@ export default function MapLibreMapView({ places, selectedId, onSelect, onSearch
   }, [onSelect]);
 
   useEffect(() => {
+    onSelectBusinessIdRef.current = onSelectBusinessId;
+  }, [onSelectBusinessId]);
+
+  useEffect(() => {
     onSearchAreaRef.current = onSearchArea;
   }, [onSearchArea]);
+
+  useEffect(() => {
+    onViewportChangeRef.current = onViewportChange;
+  }, [onViewportChange]);
 
   useEffect(() => {
     const element = containerRef.current as unknown as HTMLElement | null;
     if (!element || mapRef.current) return;
     const markers = markerRefs.current;
     let failureTimer: ReturnType<typeof setTimeout> | null = null;
+    let inventoryTimer: ReturnType<typeof setTimeout> | null = null;
 
     try {
       const first = initialPlaces.current[0];
@@ -243,7 +283,7 @@ export default function MapLibreMapView({ places, selectedId, onSelect, onSearch
         center: first ? [first.longitude, first.latitude] : fallbackCenter,
         container: element,
         cooperativeGestures: true,
-        maxZoom: 18,
+        maxZoom: 20,
         minZoom: 2,
         style: createMapStyle(),
         zoom: 11.5,
@@ -254,15 +294,26 @@ export default function MapLibreMapView({ places, selectedId, onSelect, onSearch
         map.resize();
       });
       map.on('dragstart', () => {
+        if (inventoryTimer) clearTimeout(inventoryTimer);
         userMovedMap.current = true;
       });
       map.on('zoomstart', (event) => {
-        if (event.originalEvent) userMovedMap.current = true;
+        if (event.originalEvent) {
+          if (inventoryTimer) clearTimeout(inventoryTimer);
+          userMovedMap.current = true;
+        }
       });
       map.on('moveend', () => {
         setMapZoom(map.getZoom());
-        if (userMovedMap.current && onSearchAreaRef.current) {
-          setPendingViewport(viewportFromMap(map));
+        if (userMovedMap.current) {
+          const viewport = viewportFromMap(map);
+          if (onSearchAreaRef.current) setPendingViewport(viewport);
+          if (onViewportChangeRef.current && viewportIsLiveInventoryEligible(viewport.bounds)) {
+            if (inventoryTimer) clearTimeout(inventoryTimer);
+            inventoryTimer = setTimeout(() => {
+              void onViewportChangeRef.current?.(viewport);
+            }, 220);
+          }
         }
         userMovedMap.current = false;
       });
@@ -275,6 +326,7 @@ export default function MapLibreMapView({ places, selectedId, onSelect, onSearch
 
     return () => {
       if (failureTimer) clearTimeout(failureTimer);
+      if (inventoryTimer) clearTimeout(inventoryTimer);
       markers.forEach(({ marker }) => marker.remove());
       userMarkerRef.current?.remove();
       mapRef.current?.remove();
@@ -289,14 +341,72 @@ export default function MapLibreMapView({ places, selectedId, onSelect, onSearch
     if (!map || !ready) return;
 
     currentPlaces.current = new Map(places.map((place) => [place.id, place]));
-    const features = clusterPlaces(places, mapZoom);
-    const nextIds = new Set(features.map((feature) => feature.id));
+    const features = inventoryFeatures.length ? [] : clusterPlaces(places, mapZoom);
+    const renderedIds = inventoryFeatures.length
+      ? inventoryFeatures.map((feature) => feature.id)
+      : features.map((feature) => feature.id);
+    const nextIds = new Set(renderedIds);
     markerRefs.current.forEach(({ marker }, id) => {
       if (!nextIds.has(id)) {
         marker.remove();
         markerRefs.current.delete(id);
       }
     });
+    for (const inventoryFeature of inventoryFeatures) {
+      const signature = inventoryFeature.type === 'cluster'
+        ? `cluster:${inventoryFeature.count}:${inventoryFeature.dominantCategory}`
+        : `place:${inventoryFeature.businessId ?? ''}:${inventoryFeature.name ?? ''}:${inventoryFeature.logoUrl ?? ''}`;
+      const existing = markerRefs.current.get(inventoryFeature.id);
+      if (existing?.signature === signature) {
+        existing.marker.setLngLat([inventoryFeature.longitude, inventoryFeature.latitude]);
+        continue;
+      }
+      if (existing) {
+        existing.marker.remove();
+        markerRefs.current.delete(inventoryFeature.id);
+      }
+      const loadedPlace = inventoryFeature.businessId
+        ? currentPlaces.current.get(inventoryFeature.businessId)
+        : undefined;
+      const element = inventoryFeature.type === 'cluster'
+        ? clusterElement(inventoryFeature)
+        : markerElement(
+            loadedPlace ?? {
+              name: inventoryFeature.name ?? categoryLabels[inventoryFeature.dominantCategory],
+              category: inventoryFeature.dominantCategory,
+              categoryLabel: categoryLabels[inventoryFeature.dominantCategory],
+              distanceMiles: null,
+              logoUrl: inventoryFeature.logoUrl ?? '',
+            },
+            inventoryFeature.businessId === selectedId
+          );
+      element.addEventListener('click', () => {
+        if (inventoryFeature.type === 'cluster') {
+          userMovedMap.current = true;
+          map.easeTo({
+            center: [inventoryFeature.longitude, inventoryFeature.latitude],
+            duration: 380,
+            zoom: Math.min(18, map.getZoom() + 2),
+          });
+          return;
+        }
+        const selectedPlace = inventoryFeature.businessId
+          ? currentPlaces.current.get(inventoryFeature.businessId)
+          : undefined;
+        if (selectedPlace) onSelectRef.current?.(selectedPlace);
+        else if (inventoryFeature.businessId) onSelectBusinessIdRef.current?.(inventoryFeature.businessId);
+      });
+      const marker = new maplibregl.Marker({ anchor: 'bottom', element })
+        .setLngLat([inventoryFeature.longitude, inventoryFeature.latitude])
+        .addTo(map);
+      markerRefs.current.set(inventoryFeature.id, {
+        marker,
+        element,
+        businessId: inventoryFeature.businessId,
+        signature,
+      });
+    }
+
     for (const feature of features) {
       const existing = markerRefs.current.get(feature.id);
       if (existing) {
@@ -308,6 +418,7 @@ export default function MapLibreMapView({ places, selectedId, onSelect, onSearch
         : markerElement(feature.place, false);
       element.addEventListener('click', () => {
         if (feature.kind === 'cluster') {
+          userMovedMap.current = true;
           map.easeTo({
             center: [feature.longitude, feature.latitude],
             duration: 380,
@@ -321,7 +432,11 @@ export default function MapLibreMapView({ places, selectedId, onSelect, onSearch
       const marker = new maplibregl.Marker({ anchor: 'bottom', element })
         .setLngLat([feature.longitude, feature.latitude])
         .addTo(map);
-      markerRefs.current.set(feature.id, { marker, element });
+      markerRefs.current.set(feature.id, {
+        marker,
+        element,
+        businessId: feature.kind === 'place' ? feature.place.id : undefined,
+      });
     }
 
     const placesKey = places
@@ -341,13 +456,13 @@ export default function MapLibreMapView({ places, selectedId, onSelect, onSearch
         map.fitBounds(bounds, { duration: 450, maxZoom: 14, padding: 70 });
       }
     }
-  }, [mapZoom, places, ready]);
+  }, [inventoryFeatures, mapZoom, places, ready, selectedId]);
 
   useEffect(() => {
     const map = mapRef.current;
     const selected = places.find((place) => place.id === selectedId);
-    markerRefs.current.forEach(({ element }, id) => {
-      if (id.startsWith('place:')) updateMarkerSelection(element, id === `place:${selectedId}`);
+    markerRefs.current.forEach(({ element, businessId }) => {
+      if (businessId) updateMarkerSelection(element, businessId === selectedId);
     });
     if (!map || !selected || !ready) return;
     map.easeTo({

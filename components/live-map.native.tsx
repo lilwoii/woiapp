@@ -4,15 +4,23 @@ import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Marker, type Region } from 'react-native-maps';
 
 import { palette, radii } from '@/constants/theme';
-import { clusterPlaces, zoomFromLongitudeDelta } from '@/lib/map-clustering';
-import type { MapViewport } from '@/types/map';
+import {
+  clusterPlaces,
+  normalizeLongitude,
+  viewportIsLiveInventoryEligible,
+  zoomFromLongitudeDelta,
+} from '@/lib/map-clustering';
+import type { MapInventoryFeature, MapViewport } from '@/types/map';
 import { Place } from '@/types/marketplace';
 
 type Props = {
   places: Place[];
   selectedId?: string;
   onSelect?: (place: Place) => void;
+  onSelectBusinessId?: (businessId: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
+  onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
+  inventoryFeatures?: MapInventoryFeature[];
   userCoordinates?: { latitude: number; longitude: number } | null;
 };
 
@@ -41,10 +49,25 @@ function viewportFromRegion(region: Region): MapViewport {
     longitude: region.longitude,
     radiusMeters: Math.round(Math.min(200_000, Math.max(1_000, Math.hypot(latitudeMeters, longitudeMeters) / 2))),
     zoom,
+    bounds: {
+      west: normalizeLongitude(region.longitude - region.longitudeDelta / 2),
+      south: Math.max(-85.05112878, region.latitude - region.latitudeDelta / 2),
+      east: normalizeLongitude(region.longitude + region.longitudeDelta / 2),
+      north: Math.min(85.05112878, region.latitude + region.latitudeDelta / 2),
+    },
   };
 }
 
-export function LiveMap({ places, selectedId, onSelect, onSearchArea, userCoordinates }: Props) {
+export function LiveMap({
+  places,
+  selectedId,
+  onSelect,
+  onSelectBusinessId,
+  onSearchArea,
+  onViewportChange,
+  inventoryFeatures = [],
+  userCoordinates,
+}: Props) {
   const mapRef = useRef<MapView | null>(null);
   const [region, setRegion] = useState<Region>(
     userCoordinates
@@ -53,10 +76,19 @@ export function LiveMap({ places, selectedId, onSelect, onSearchArea, userCoordi
   );
   const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
   const userMovedMap = useRef(false);
-  const features = useMemo(
+  const inventoryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clientFeatures = useMemo(
     () => clusterPlaces(places, zoomFromLongitudeDelta(region.longitudeDelta)),
     [places, region.longitudeDelta]
   );
+  const placesById = useMemo(
+    () => new Map(places.map((place) => [place.id, place])),
+    [places]
+  );
+
+  useEffect(() => () => {
+    if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
+  }, []);
 
   useEffect(() => {
     const selected = places.find((place) => place.id === selectedId);
@@ -77,28 +109,83 @@ export function LiveMap({ places, selectedId, onSelect, onSearchArea, userCoordi
       }
       ref={mapRef}
       onPanDrag={() => {
+        if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
         userMovedMap.current = true;
       }}
       onTouchStart={() => {
+        if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
         userMovedMap.current = true;
       }}
       onRegionChangeComplete={(nextRegion) => {
         setRegion(nextRegion);
-        if (userMovedMap.current && onSearchArea) {
-          setPendingViewport(viewportFromRegion(nextRegion));
+        if (userMovedMap.current) {
+          const viewport = viewportFromRegion(nextRegion);
+          if (onSearchArea) setPendingViewport(viewport);
+          if (onViewportChange && viewportIsLiveInventoryEligible(viewport.bounds)) {
+            if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
+            inventoryTimer.current = setTimeout(() => {
+              void onViewportChange(viewport);
+            }, 280);
+          }
         }
         userMovedMap.current = false;
       }}
       showsUserLocation={Boolean(userCoordinates)}
       style={styles.map}>
-      {features.map((feature) => {
+      {inventoryFeatures.map((feature) => {
+        if (feature.type === 'cluster') {
+          return (
+            <Marker
+              coordinate={{ latitude: feature.latitude, longitude: feature.longitude }}
+              key={`${feature.id}:${feature.count}:${feature.dominantCategory}`}
+              onPress={() => {
+                userMovedMap.current = true;
+                mapRef.current?.animateCamera(
+                  { center: { latitude: feature.latitude, longitude: feature.longitude }, zoom: Math.min(18, zoomFromLongitudeDelta(region.longitudeDelta) + 2) },
+                  { duration: 380 }
+                );
+              }}
+              tracksViewChanges={false}>
+              <View accessibilityLabel={`${feature.count} food places in this area`} style={styles.clusterPin}>
+                <Text style={styles.clusterCount}>{feature.count > 999 ? '999+' : feature.count}</Text>
+              </View>
+            </Marker>
+          );
+        }
+        const place = feature.businessId ? placesById.get(feature.businessId) : undefined;
+        const isTruck = feature.dominantCategory === 'food_truck';
+        return (
+          <Marker
+            coordinate={{ latitude: feature.latitude, longitude: feature.longitude }}
+            description={place?.todayHours ?? feature.sourceLabel}
+            key={`${feature.id}:${feature.logoUrl ?? ''}:${feature.businessId === selectedId}`}
+            onPress={() => {
+              if (place) onSelect?.(place);
+              else if (feature.businessId) onSelectBusinessId?.(feature.businessId);
+            }}
+            title={place?.name ?? feature.name ?? 'Food place'}
+            tracksViewChanges={false}>
+            <View style={[styles.pin, isTruck && styles.truckPin, feature.businessId === selectedId && styles.selectedPin]}>
+              {isTruck ? (
+                <FontAwesome6 color="#FFFFFF" name="truck" size={15} />
+              ) : feature.logoUrl ? (
+                <Image source={{ uri: feature.logoUrl }} style={styles.logo} />
+              ) : (
+                <FontAwesome6 color={palette.ink} name={categoryIcons[feature.dominantCategory]} size={14} />
+              )}
+            </View>
+          </Marker>
+        );
+      })}
+      {!inventoryFeatures.length ? clientFeatures.map((feature) => {
         if (feature.kind === 'cluster') {
           return (
             <Marker
               coordinate={{ latitude: feature.latitude, longitude: feature.longitude }}
               key={feature.id}
-              onPress={() => {
-                mapRef.current?.animateCamera(
+            onPress={() => {
+              userMovedMap.current = true;
+              mapRef.current?.animateCamera(
                   { center: { latitude: feature.latitude, longitude: feature.longitude }, zoom: Math.min(18, zoomFromLongitudeDelta(region.longitudeDelta) + 2) },
                   { duration: 380 }
                 );
@@ -134,7 +221,7 @@ export function LiveMap({ places, selectedId, onSelect, onSearchArea, userCoordi
             </View>
           </Marker>
         );
-      })}
+      }) : null}
     </MapView>
     {pendingViewport && onSearchArea ? (
       <Pressable

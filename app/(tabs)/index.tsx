@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router } from 'expo-router';
 import * as Location from 'expo-location';
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -33,9 +33,11 @@ import {
   type DiscoverySort,
 } from '@/lib/discovery-filters';
 import { featureFlags } from '@/lib/features';
+import { normalizeLongitude, zoomFromLongitudeDelta } from '@/lib/map-clustering';
+import { fetchMapFoodFeatures } from '@/lib/marketplace-api';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import type { DietaryTag, PaymentMethod, Place } from '@/types/marketplace';
-import type { MapViewport } from '@/types/map';
+import type { MapInventoryFeature, MapViewport } from '@/types/map';
 
 const categoryFilters: { id: DiscoveryCategory; label: string; icon: keyof typeof FontAwesome6.glyphMap }[] = [
   { id: 'food_truck', label: 'Food trucks', icon: 'truck' },
@@ -71,8 +73,36 @@ const distanceOptions = [1, 3, 5, 10, 25] as const;
 const ratingOptions = [4, 4.5, 4.8] as const;
 const priceOptions = [1, 2, 3, 4] as const;
 
+function viewportAroundPoint(
+  latitude: number,
+  longitude: number,
+  radiusMeters: number,
+  zoom = 11
+): MapViewport {
+  const latitudeDelta = (radiusMeters * 2) / 111_320;
+  // The live RPC intentionally rejects very large dynamic viewports. Keep
+  // point/radius searches inside that contract, including near the poles.
+  const longitudeDelta = Math.min(
+    11.9,
+    latitudeDelta / Math.max(0.1, Math.cos((latitude * Math.PI) / 180))
+  );
+  return {
+    latitude,
+    longitude: normalizeLongitude(longitude),
+    radiusMeters,
+    zoom,
+    bounds: {
+      west: normalizeLongitude(longitude - longitudeDelta / 2),
+      south: Math.max(-85.05112878, latitude - latitudeDelta / 2),
+      east: normalizeLongitude(longitude + longitudeDelta / 2),
+      north: Math.min(85.05112878, latitude + latitudeDelta / 2),
+    },
+  };
+}
+
 export default function DiscoverScreen() {
   const {
+    ensurePlace,
     followedIds,
     hasMoreResults,
     loadingMoreResults,
@@ -109,12 +139,26 @@ export default function DiscoverScreen() {
   const [activeArea, setActiveArea] = useState('');
   const [pagination, setPagination] = useState({ key: '', count: 24 });
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [mapInventoryFeatures, setMapInventoryFeatures] = useState<MapInventoryFeature[]>([]);
+  const mapInventoryRequest = useRef(0);
   const deferredQuery = useDeferredValue(query);
   const visibleCategoryFilters = useMemo(
     () => categoryFilters.filter((item) => item.id !== 'home_kitchen' || featureFlags.homeKitchens),
     []
   );
   const cuisines = useMemo(() => cuisineFacets(places).slice(0, 14), [places]);
+
+  const loadMapInventory = useCallback(async (viewport: MapViewport) => {
+    const requestId = ++mapInventoryRequest.current;
+    const result = await fetchMapFoodFeatures(viewport);
+    if (requestId !== mapInventoryRequest.current) return result;
+    if (!result.ok) {
+      setMapInventoryFeatures([]);
+      return result;
+    }
+    setMapInventoryFeatures(result.data ?? []);
+    return result;
+  }, []);
 
   const toggleSelection = <T extends string | number>(
     value: T,
@@ -147,9 +191,11 @@ export default function DiscoverScreen() {
         latitude: current.coords.latitude,
         longitude: current.coords.longitude,
       });
+      const latitude = current.coords.latitude;
+      const longitude = current.coords.longitude;
       const searchResult = await refresh({
-        latitude: current.coords.latitude,
-        longitude: current.coords.longitude,
+        latitude,
+        longitude,
         radiusMeters: 16093,
       });
       if (!searchResult.ok) {
@@ -160,12 +206,13 @@ export default function DiscoverScreen() {
       setActiveArea('');
       setLocationPanelOpen(false);
       setSortMode('nearby');
+      void loadMapInventory(viewportAroundPoint(latitude, longitude, 16_093));
     } catch {
       setLocationError('Your location could not be read. Search by city or ZIP instead.');
     } finally {
       setLocating(false);
     }
-  }, [refresh]);
+  }, [loadMapInventory, refresh]);
 
   useEffect(() => {
     if (!isSupabaseConfigured) return;
@@ -213,11 +260,14 @@ export default function DiscoverScreen() {
   const searchVisibleMap = useCallback(async (viewport: MapViewport) => {
     setLocating(true);
     setLocationError(null);
-    const result = await refresh({
+    const [result] = await Promise.all([
+      refresh({
       latitude: viewport.latitude,
       longitude: viewport.longitude,
       radiusMeters: Math.min(80_467, viewport.radiusMeters),
-    });
+      }),
+      loadMapInventory(viewport),
+    ]);
     setLocating(false);
     if (!result.ok) {
       setLocationError(result.reason);
@@ -226,7 +276,40 @@ export default function DiscoverScreen() {
     setActiveArea('');
     setLocationLabel('Visible map area');
     setSortMode('nearby');
-  }, [refresh]);
+  }, [loadMapInventory, refresh]);
+
+  useEffect(() => {
+    if (!activeArea || !places.length) return;
+    const latitudes = places.map((place) => place.latitude);
+    const centerLatitude = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
+    const longitudes = places.map((place) => normalizeLongitude(place.longitude));
+    const radians = longitudes.map((longitude) => (longitude * Math.PI) / 180);
+    const centerLongitude = normalizeLongitude(
+      (Math.atan2(
+        radians.reduce((sum, value) => sum + Math.sin(value), 0),
+        radians.reduce((sum, value) => sum + Math.cos(value), 0)
+      ) * 180) / Math.PI
+    );
+    const longitudeOffsets = longitudes.map((longitude) =>
+      Math.abs(normalizeLongitude(longitude - centerLongitude))
+    );
+    const latitudeSpan = Math.max(0.03, Math.max(...latitudes) - Math.min(...latitudes));
+    const longitudeSpan = Math.max(0.03, Math.max(...longitudeOffsets) * 2);
+    const radiusMeters = Math.min(
+      80_467,
+      Math.max(latitudeSpan * 111_320, longitudeSpan * 111_320 * Math.max(0.1, Math.cos((centerLatitude * Math.PI) / 180))) / 2
+    );
+    const viewport = viewportAroundPoint(
+      centerLatitude,
+      centerLongitude,
+      Math.max(1_000, radiusMeters),
+      zoomFromLongitudeDelta(longitudeSpan)
+    );
+    const timer = setTimeout(() => {
+      void loadMapInventory(viewport);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [activeArea, loadMapInventory, places]);
 
   const discoveryFilters: DiscoveryFilters = useMemo(
     () => ({
@@ -274,8 +357,22 @@ export default function DiscoverScreen() {
   const selected = ranked.find((place) => place.id === selectedId) ?? ranked[0];
   const visibleRanked = ranked.slice(0, visibleCount);
   const mappedPlaces = ranked;
+  const visibleMapInventory = useMemo(() => {
+    if (category === 'all') return mapInventoryFeatures;
+    return mapInventoryFeatures.flatMap((feature) => {
+      if (feature.type === 'place') {
+        return feature.dominantCategory === category ? [feature] : [];
+      }
+      const count = feature.categoryCounts[category] ?? 0;
+      return count ? [{ ...feature, count, dominantCategory: category }] : [];
+    });
+  }, [category, mapInventoryFeatures]);
 
   const selectPlace = useCallback((place: Place) => setSelectedId(place.id), []);
+  const selectBusinessId = useCallback(async (businessId: string) => {
+    const result = await ensurePlace(businessId);
+    if (result.ok) setSelectedId(businessId);
+  }, [ensurePlace]);
 
   return (
     <FocusAwareScreen>
@@ -657,12 +754,15 @@ export default function DiscoverScreen() {
             <ActivityIndicator color={palette.accentDeep} />
             <Text style={styles.loadingText}>Loading nearby food…</Text>
           </View>
-        ) : ranked.length ? (
+        ) : ranked.length || visibleMapInventory.length ? (
           <View style={[styles.workspace, wide && styles.workspaceWide]}>
             <View style={[styles.mapColumn, wide && styles.mapColumnWide]}>
               <LiveMap
+                inventoryFeatures={visibleMapInventory}
                 onSelect={selectPlace}
+                onSelectBusinessId={(businessId) => void selectBusinessId(businessId)}
                 onSearchArea={searchVisibleMap}
+                onViewportChange={(viewport) => void loadMapInventory(viewport)}
                 places={mappedPlaces}
                 selectedId={selected?.id}
                 userCoordinates={userCoordinates}
@@ -726,6 +826,13 @@ export default function DiscoverScreen() {
               </View>
 
               <View style={styles.resultsList}>
+                {!visibleRanked.length ? (
+                  <View style={styles.mapOnlyResult}>
+                    <FontAwesome6 color={palette.accentDeep} name="map-location-dot" size={17} />
+                    <Text style={styles.mapOnlyTitle}>More places are visible on the map</Text>
+                    <Text style={styles.mapOnlyBody}>Zoom into a cluster or search this area to load its detailed list.</Text>
+                  </View>
+                ) : null}
                 {visibleRanked.map((place) => (
                   <PlaceCard
                     compact={wide}
@@ -1373,6 +1480,25 @@ const styles = StyleSheet.create({
   },
   resultsList: {
     gap: spacing.md,
+  },
+  mapOnlyResult: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.surface,
+    borderColor: palette.line,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    gap: 6,
+    padding: spacing.lg,
+  },
+  mapOnlyTitle: {
+    color: palette.ink,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  mapOnlyBody: {
+    color: palette.muted,
+    fontSize: 11,
+    lineHeight: 17,
   },
   loadMoreButton: {
     alignItems: 'center',

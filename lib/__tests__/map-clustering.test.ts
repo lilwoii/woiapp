@@ -1,5 +1,10 @@
 import { seedPlaces } from '@/data/places';
-import { clusterPlaces, zoomFromLongitudeDelta } from '@/lib/map-clustering';
+import {
+  clusterPlaces,
+  normalizeLongitude,
+  viewportIsLiveInventoryEligible,
+  zoomFromLongitudeDelta,
+} from '@/lib/map-clustering';
 
 describe('map clustering', () => {
   it('groups close listings at city zoom and expands them at street zoom', () => {
@@ -35,5 +40,14 @@ describe('map clustering', () => {
     expect(zoomFromLongitudeDelta(0.01)).toBeLessThanOrEqual(18);
     expect(zoomFromLongitudeDelta(0)).toBe(2);
   });
-});
 
+  it('normalizes wrapped longitudes for antimeridian viewports', () => {
+    expect(normalizeLongitude(181)).toBe(-179);
+    expect(normalizeLongitude(-181)).toBe(179);
+  });
+
+  it('bounds live inventory requests while supporting antimeridian viewports', () => {
+    expect(viewportIsLiveInventoryEligible({ west: 170, south: -2, east: -178, north: 2 })).toBe(true);
+    expect(viewportIsLiveInventoryEligible({ west: -20, south: -2, east: 20, north: 2 })).toBe(false);
+  });
+});

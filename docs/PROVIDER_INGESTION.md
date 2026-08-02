@@ -173,14 +173,16 @@ Spottr's quarantine, malware scan, metadata stripping, decode/re-encode, content
 safety, moderation, attribution, and deletion pipeline. A URL is never treated
 as permission to copy or publish an image.
 
-## Required database migration
+## Database ingestion boundary
 
 The current `businesses.provenance`, `businesses.provider_freshness_at`, and
 `provider_links(provider, provider_place_id, last_fetched_at)` columns identify
 a source at business level. They cannot safely provide field ownership,
 child-record idempotency, replay protection, paginated snapshot completion, or
-owner/provider conflict handling. Before deploying this function, add a
-reviewed migration with all of the following.
+owner/provider conflict handling. The reviewed implementation is checked in at
+`supabase/migrations/20260804000000_provider_ingest_rpc.sql`; it must be applied
+to a disposable production-equivalent PostgreSQL/Supabase environment and pass
+the runtime scenarios below before this function is enabled.
 
 1. `private.provider_accounts`
 
@@ -197,7 +199,9 @@ reviewed migration with all of the following.
    - `(provider_slug, idempotency_key_hash)` primary key;
    - exact request SHA-256, batch ID, status, safe response JSON, created and
      completed timestamps;
-   - no raw idempotency key, payload, signature, or secret;
+   - no signature, secret, or raw provider payload. The non-secret `batchId` is
+     retained because the protocol intentionally makes it the idempotency key
+     and returns it in the safe receipt;
    - a retention job long enough to cover provider retries.
 
 3. `private.provider_rate_limit_buckets`
@@ -314,15 +318,25 @@ error codes and intentionally logs none of those values.
 ## Current limitations
 
 - The private source, snapshot, receipt, rate-limit, history, and field-
-  precedence tables are present. The final transactional
-  `ingest_licensed_provider_batch` RPC is not yet installed; the function
-  therefore returns `INGESTION_STORE_UNAVAILABLE` and performs no writes.
+  precedence tables and the transactional RPC migration are checked in. The
+  migration has static contract coverage, but it has not yet been applied and
+  exercised against a production-equivalent PostgreSQL/Supabase instance in
+  this workspace. Until deployment applies it, the Edge Function returns
+  `INGESTION_STORE_UNAVAILABLE` and performs no writes.
+- Runtime evidence is still required for concurrent same-key calls, full
+  rollback, source-order conflicts, paginated snapshot recovery, owner-edit
+  hash detection, PostGIS materialization, and query plans at the contractual
+  maximum batch size. Static SQL assertions are not a substitute for those
+  database tests.
 - `supabase/config.toml` and the server environment example still need the
   deployment entries above after migration approval.
 - No provider is configured or licensed, and no provider data ships with this
   scaffold.
-- The Edge per-isolate limiter is defense in depth, not the authoritative
-  global limit. The migration's database limiter is mandatory.
+- The database bucket is the global authority for committed apply/replay
+  transactions. PostgreSQL rolls the bucket increment back with any later SQL
+  exception, so production still needs a gateway/distributed limiter if
+  rejected signed attempts must count toward a strict global budget. The Edge
+  per-isolate limiter remains defense in depth, not that distributed control.
 - The existing public model supports one weekly and one special-hours interval
   per day. Providers with split service periods require a separately reviewed
   schedule-model migration rather than lossy merging.

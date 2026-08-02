@@ -71,6 +71,8 @@ export default function RootLayout() {
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="place/[id]" options={{ headerShown: false }} />
                 <Stack.Screen name="order/[id]" options={{ headerShown: false }} />
+                <Stack.Screen name="messages/index" options={{ headerShown: false }} />
+                <Stack.Screen name="messages/[id]" options={{ headerShown: false }} />
                 <Stack.Screen name="auth" options={{ headerShown: false, presentation: 'modal' }} />
                 <Stack.Screen name="business-onboarding" options={{ headerShown: false }} />
                 <Stack.Screen name="business-setup" options={{ headerShown: false }} />

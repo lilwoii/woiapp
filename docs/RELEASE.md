@@ -101,6 +101,13 @@ not just the file:
   approved, while reports/blocks affect public reads;
 - rate limits and idempotency behave correctly under concurrency.
 
+Then apply the reviewed map, provider-ingest, and chat migrations in timestamp
+order. The chat migration requires participant/RLS, Realtime authorization,
+message sequencing, read/typing races, block/report behavior, clean-media state,
+and expiring pickup-disclosure tests against the target PostgreSQL project. The
+provider migration requires same-key concurrency, rollback, snapshot recovery,
+owner-precedence, PostGIS materialization, and maximum-batch query-plan evidence.
+
 Deploy and test:
 
 - `export-account`
@@ -211,6 +218,11 @@ escalation, copyright and food-safety intake, evidence retention, and published
 response targets. Professional-language automation is a filter, not a
 guarantee.
 
+Marketplace chat additionally requires staffed message-report operations,
+scheduled ephemeral cleanup, address/DLP controls, retention and privacy-export
+coverage, push-notification redaction, and an independent participant/RLS audit.
+Chat is server-readable for moderation and is not end-to-end encrypted.
+
 ### Monetization and pickup ordering
 
 Production sponsored placement and ordering remain disabled until the separate
@@ -241,17 +253,18 @@ surface; it is not authorization to accept customer orders or money.
 ## 7. Account export and deletion drill
 
 Use a production-like staging user with AAL2, a review, follow, alert
-preference, report, block, business membership/claim, and staged media.
+preference, report, block, business membership/claim, staged media, and a chat
+conversation with a clean attachment and expired pickup disclosure.
 
 1. Call `GET export-account` and verify the no-store JSON includes only the
    documented account/profile/membership/claim/review/follow/preference/report/
-   block/media data plus Auth account metadata. Verify credentials, moderation
+   block/media/chat data plus Auth account metadata. Verify credentials, moderation
    notes, other users' private data, and platform audit logs are absent.
 2. Call `DELETE delete-account` with the required AAL2 session, idempotency key,
    confirmation header, and confirmation body.
 3. Verify owned storage objects are gone before Auth deletion; Auth access is
    revoked; the profile and Auth user are gone; reviews, follows, preferences,
-   reports, blocks, claims, memberships, owned media rows, and private rate
+   reports, blocks, claims, memberships, chat participant data, owned media rows, and private rate
    records cascade.
 4. Verify a solely owned business is archived. For a business with another
    active owner, verify the business remains and deleted-user attribution on

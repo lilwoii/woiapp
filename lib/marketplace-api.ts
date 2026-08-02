@@ -14,6 +14,7 @@ import {
   VenueStatus,
   WeeklyHours,
 } from '@/types/marketplace';
+import type { MapInventoryFeature, MapViewport } from '@/types/map';
 
 type Row = Record<string, unknown>;
 export type MarketplacePage = {
@@ -382,12 +383,22 @@ async function createSignedMediaUrls(
   const urlByPath = new Map<string, string>();
   if (!client || !uniquePaths.length) return urlByPath;
 
-  const { data, error } = await client.storage
-    .from('spottr-media')
-    .createSignedUrls(uniquePaths, 6 * 60 * 60);
-  if (error) return urlByPath;
-  for (const entry of data ?? []) {
-    if (entry.path && entry.signedUrl) urlByPath.set(entry.path, entry.signedUrl);
+  const chunks: string[][] = [];
+  for (let offset = 0; offset < uniquePaths.length; offset += 100) {
+    chunks.push(uniquePaths.slice(offset, offset + 100));
+  }
+  for (let offset = 0; offset < chunks.length; offset += 4) {
+    const results = await Promise.all(
+      chunks.slice(offset, offset + 4).map((chunk) =>
+        client.storage.from('spottr-media').createSignedUrls(chunk, 6 * 60 * 60)
+      )
+    );
+    for (const { data, error } of results) {
+      if (error) continue;
+      for (const entry of data ?? []) {
+        if (entry.path && entry.signedUrl) urlByPath.set(entry.path, entry.signedUrl);
+      }
+    }
   }
   return urlByPath;
 }
@@ -396,6 +407,97 @@ function sourceLabel(value: unknown, verified: boolean): Place['sourceLabel'] {
   if (value === 'licensed_provider') return 'Licensed provider';
   if (value === 'community') return 'Community added';
   return verified ? 'Owner verified' : 'Owner provided';
+}
+
+const businessCategories: BusinessCategory[] = [
+  'food_truck',
+  'restaurant',
+  'pop_up',
+  'cafe_bakery',
+  'home_kitchen',
+];
+
+function businessCategory(value: unknown): BusinessCategory | null {
+  return typeof value === 'string' && businessCategories.includes(value as BusinessCategory)
+    ? (value as BusinessCategory)
+    : null;
+}
+
+export async function fetchMapFoodFeatures(
+  viewport: MapViewport
+): Promise<ActionResult<MapInventoryFeature[]>> {
+  const client = supabase;
+  if (!client) return configurationRequired();
+  const { west, south, east, north } = viewport.bounds;
+  if (
+    ![west, south, east, north, viewport.zoom].every(Number.isFinite) ||
+    west < -180 || west > 180 || east < -180 || east > 180 ||
+    south < -85.05112878 || north > 85.05112878 || south >= north
+  ) {
+    return { ok: false, code: 'INVALID', reason: 'The visible map area is invalid.' };
+  }
+
+  try {
+    const { data, error } = await client.rpc('map_food_places', {
+      west_longitude: west,
+      south_latitude: south,
+      east_longitude: east,
+      north_latitude: north,
+      map_zoom: Math.round(Math.min(18, Math.max(2, viewport.zoom))),
+      requested_kinds: null,
+      max_features: 1200,
+    });
+    if (error) throw error;
+    const mapRows = rows(data);
+    const logoPaths = mapRows.map((entry) => stringValue(entry.logo_path)).filter(Boolean);
+    const logoUrls = await createSignedMediaUrls(logoPaths);
+    const features: MapInventoryFeature[] = [];
+
+    for (const entry of mapRows) {
+      const type = entry.feature_type === 'cluster' ? 'cluster' : entry.feature_type === 'place' ? 'place' : null;
+      const dominantCategory = businessCategory(entry.dominant_kind);
+      const latitude = numberValue(entry.latitude, Number.NaN);
+      const longitude = numberValue(entry.longitude, Number.NaN);
+      const count = numberValue(entry.place_count, 0);
+      const id = stringValue(entry.feature_id);
+      if (!type || !dominantCategory || !id || !Number.isFinite(latitude) || !Number.isFinite(longitude) || count < 1) continue;
+
+      const rawCounts = entry.category_counts;
+      const categoryCounts: MapInventoryFeature['categoryCounts'] = {};
+      if (rawCounts && typeof rawCounts === 'object' && !Array.isArray(rawCounts)) {
+        for (const category of businessCategories) {
+          const value = numberValue((rawCounts as Row)[category], 0);
+          if (Number.isInteger(value) && value > 0) categoryCounts[category] = value;
+        }
+      }
+      const logoPath = stringValue(entry.logo_path);
+      const businessId = stringValue(entry.business_id);
+      const locationId = stringValue(entry.location_id);
+      const rawSourceLabel = stringValue(entry.source_label);
+      features.push({
+        type,
+        id,
+        count,
+        latitude,
+        longitude,
+        categoryCounts,
+        dominantCategory,
+        ...(uuidPattern.test(businessId) ? { businessId } : {}),
+        ...(uuidPattern.test(locationId) ? { locationId } : {}),
+        ...(stringValue(entry.business_name) ? { name: stringValue(entry.business_name) } : {}),
+        ...(logoUrls.get(logoPath) ? { logoUrl: logoUrls.get(logoPath) } : {}),
+        ...(
+          rawSourceLabel === 'Owner verified' || rawSourceLabel === 'Owner provided' ||
+          rawSourceLabel === 'Community added' || rawSourceLabel === 'Licensed provider'
+            ? { sourceLabel: rawSourceLabel as Place['sourceLabel'] }
+            : {}
+        ),
+      });
+    }
+    return { ok: true, data: features };
+  } catch (error) {
+    return toActionError(error, 'The visible map inventory could not be loaded.');
+  }
 }
 
 export async function fetchMarketplacePlaces(

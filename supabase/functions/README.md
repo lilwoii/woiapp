@@ -44,12 +44,17 @@ retryable error without claiming completion.
 Media is disabled unless `SPOTTR_MEDIA_UPLOADS_ENABLED=true`.
 `POST /functions/v1/media-stage` uses one of two actions:
 
-1. `stage`: `{ action, purpose, businessId?, mimeType, byteSize }` returns a
+1. `stage`: `{ action, purpose, businessId?, conversationId?, mimeType, byteSize }` returns a
    one-time signed upload URL under `quarantine/<auth-user-id>/<random-id>`.
-2. `register`: `{ action, purpose, businessId?, storagePath }` verifies the
+2. `register`: `{ action, purpose, businessId?, conversationId?, storagePath }` verifies the
    uploaded object's server metadata and returns an asset in `uploaded/pending`.
 
 Owner/profile purposes require `aal2`; review photos require an active account.
+`chat_photo` requires both the public conversation ID and business ID, and the
+participant/write-eligibility check runs at staging and registration so a block,
+closure, or eligibility change fails closed. Chat media still must complete the
+same scan, metadata-stripping, re-encoding, and approval pipeline before an RPC
+can attach it to a message.
 No staged or merely scanned asset is public.
 
 There is no generic Storage `INSERT` policy. Only signed staging tokens can

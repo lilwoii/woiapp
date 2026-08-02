@@ -17,6 +17,6 @@ Deno.test("map viewport supports clusters, individuals, kinds, and antimeridian"
   assertMatch(migration, /safe_zoom >= 14/);
   assertMatch(migration, /west_longitude > east_longitude/);
   assertMatch(migration, /requested_kinds <@ array/);
+  assertMatch(migration, /MAP_VIEWPORT_TOO_LARGE/);
   assertMatch(migration, /when b\.kind = 'food_truck' then 0/);
 });
-

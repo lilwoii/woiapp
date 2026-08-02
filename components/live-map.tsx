@@ -4,13 +4,16 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { palette, radii } from '@/constants/theme';
 import { Place } from '@/types/marketplace';
-import type { MapViewport } from '@/types/map';
+import type { MapInventoryFeature, MapViewport } from '@/types/map';
 
 type Props = {
   places: Place[];
   selectedId?: string;
   onSelect?: (place: Place) => void;
+  onSelectBusinessId?: (businessId: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
+  onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
+  inventoryFeatures?: MapInventoryFeature[];
   userCoordinates?: { latitude: number; longitude: number } | null;
 };
 

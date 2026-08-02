@@ -23,6 +23,24 @@ export type MapFeature = PlaceMapFeature | ClusterMapFeature;
 const tileSize = 512;
 const maxMercatorLatitude = 85.05112878;
 
+export function normalizeLongitude(longitude: number) {
+  if (!Number.isFinite(longitude)) return 0;
+  return ((((longitude + 180) % 360) + 360) % 360) - 180;
+}
+
+export function viewportIsLiveInventoryEligible(bounds: {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+}) {
+  if (![bounds.west, bounds.south, bounds.east, bounds.north].every(Number.isFinite)) return false;
+  const longitudeSpan = bounds.west <= bounds.east
+    ? bounds.east - bounds.west
+    : (180 - bounds.west) + (bounds.east + 180);
+  return bounds.north > bounds.south && bounds.north - bounds.south <= 12 && longitudeSpan <= 12;
+}
+
 function worldPixel(latitude: number, longitude: number, zoom: number) {
   const scale = tileSize * 2 ** Math.max(0, zoom);
   const clampedLatitude = Math.max(-maxMercatorLatitude, Math.min(maxMercatorLatitude, latitude));
@@ -104,4 +122,3 @@ export function zoomFromLongitudeDelta(longitudeDelta: number) {
   if (!Number.isFinite(longitudeDelta) || longitudeDelta <= 0) return 2;
   return Math.max(2, Math.min(18, Math.log2(360 / longitudeDelta)));
 }
-

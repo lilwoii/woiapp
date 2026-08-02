@@ -30,6 +30,7 @@ import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
 import { featureFlags } from '@/lib/features';
 import { phoneHref, placeShareUrl, safeHttpsUrl } from '@/lib/links';
+import { isMarketplaceChatAvailable, startMarketplaceConversation } from '@/lib/marketplace-chat';
 import {
   blockUser,
   createMarketplaceIdempotencyKey,
@@ -58,6 +59,7 @@ export default function PlaceDetailScreen() {
   const { width } = useWindowDimensions();
   const wide = width >= 920;
   const place = places.find((entry) => entry.id === id);
+  const chatEligibleCategory = place?.category === 'home_kitchen' || place?.category === 'pop_up';
   const [rating, setRating] = useState(5);
   const [review, setReview] = useState('');
   const [reviewPhotos, setReviewPhotos] = useState<ReviewPhotoInput[]>([]);
@@ -66,6 +68,8 @@ export default function PlaceDetailScreen() {
   const [activeMenuSection, setActiveMenuSection] = useState(0);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [moreReviewsLoading, setMoreReviewsLoading] = useState(false);
+  const [chatAvailable, setChatAvailable] = useState(false);
+  const [chatStarting, setChatStarting] = useState(false);
   const reviewIntent = useRef<{ fingerprint: string; key: string } | null>(null);
   const [listingLoading, setListingLoading] = useState(
     !place || (auth.isConfigured && !place.detailsLoaded)
@@ -97,6 +101,15 @@ export default function PlaceDetailScreen() {
       clearTimeout(timer);
     };
   }, [auth.isConfigured, ensurePlace, id, place]);
+
+  useEffect(() => {
+    let active = true;
+    if (!place || !chatEligibleCategory) return () => { active = false; };
+    void isMarketplaceChatAvailable(place.id).then((available) => {
+      if (active) setChatAvailable(available);
+    });
+    return () => { active = false; };
+  }, [chatEligibleCategory, place]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined' || !place) return;
@@ -149,6 +162,7 @@ export default function PlaceDetailScreen() {
   const selectedSection = place.menu[activeMenuSection] ?? place.menu[0];
   const callablePhone = phoneHref(place.phone);
   const safeWebsite = safeHttpsUrl(place.websiteUrl);
+  const canOpenPublicDirections = place.category !== 'home_kitchen';
 
   const openDirections = () => {
     const url =
@@ -169,6 +183,21 @@ export default function PlaceDetailScreen() {
     } catch {
       showMessage('Sharing unavailable', 'This listing could not be shared right now.');
     }
+  };
+
+  const openChat = async () => {
+    if (auth.status !== 'authenticated') {
+      router.push('/auth');
+      return;
+    }
+    setChatStarting(true);
+    const result = await startMarketplaceConversation(place.id);
+    setChatStarting(false);
+    if (!result.ok || !result.data) {
+      showMessage('Chat unavailable', result.ok ? 'This conversation could not be opened.' : result.reason);
+      return;
+    }
+    router.push({ pathname: '/messages/[id]', params: { id: result.data } } as never);
   };
 
   const blockReviewer = async (authorId: string, displayName: string) => {
@@ -412,10 +441,23 @@ export default function PlaceDetailScreen() {
               <Text style={styles.primaryActionText}>Pickup pilot</Text>
             </Pressable>
           ) : null}
-          <Pressable accessibilityLabel="Directions" accessibilityRole="button" onPress={openDirections} style={styles.primaryAction}>
-            <FontAwesome6 color="#FFFFFF" name="diamond-turn-right" size={14} />
-            <Text style={styles.primaryActionText}>Directions</Text>
-          </Pressable>
+          {canOpenPublicDirections ? (
+            <Pressable accessibilityLabel="Get directions" accessibilityRole="button" onPress={openDirections} style={styles.primaryAction}>
+              <FontAwesome6 color="#FFFFFF" name="diamond-turn-right" size={14} />
+              <Text style={styles.primaryActionText}>Get directions</Text>
+            </Pressable>
+          ) : null}
+          {chatEligibleCategory && chatAvailable ? (
+            <Pressable
+              accessibilityLabel={`Message ${place.name}`}
+              accessibilityRole="button"
+              disabled={chatStarting}
+              onPress={() => void openChat()}
+              style={[styles.primaryAction, chatStarting && styles.buttonDisabled]}>
+              {chatStarting ? <ActivityIndicator color="#FFFFFF" size="small" /> : <FontAwesome6 color="#FFFFFF" name="comment-dots" size={14} solid />}
+              <Text style={styles.primaryActionText}>Message seller</Text>
+            </Pressable>
+          ) : null}
           {callablePhone ? (
             <Pressable
               accessibilityLabel="Call business"
@@ -871,7 +913,7 @@ export default function PlaceDetailScreen() {
                 <View style={styles.privacyNote}>
                   <FontAwesome6 color={palette.success} name="user-shield" size={13} />
                   <Text style={styles.privacyText}>
-                    Residence address is hidden. Follow only the pickup instructions the verified business publishes.
+                    Residence address and directions are never public. Use only a verified public meetup or private pickup detail released through Spottr after eligibility checks.
                   </Text>
                 </View>
               ) : null}

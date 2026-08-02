@@ -35,6 +35,7 @@ declare
   safe_zoom integer := least(greatest(coalesce(map_zoom, 11), 2), 18);
   safe_limit integer := least(greatest(coalesce(max_features, 1200), 1), 2500);
   grid_degrees double precision;
+  longitude_span double precision;
 begin
   if west_longitude is null
     or east_longitude is null
@@ -49,6 +50,14 @@ begin
     or south_latitude >= north_latitude
   then
     raise exception using errcode = '22023', message = 'INVALID_MAP_VIEWPORT';
+  end if;
+
+  longitude_span := case
+    when west_longitude <= east_longitude then east_longitude - west_longitude
+    else (180 - west_longitude) + (east_longitude + 180)
+  end;
+  if north_latitude - south_latitude > 12 or longitude_span > 12 then
+    raise exception using errcode = '22023', message = 'MAP_VIEWPORT_TOO_LARGE';
   end if;
 
   if requested_kinds is not null and not (

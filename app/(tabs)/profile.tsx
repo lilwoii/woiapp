@@ -199,6 +199,12 @@ export default function ProfileScreen() {
               title="Sign-in & security"
             />
             <SettingsRow
+              detail="Private conversations with kitchens and participating pop-ups"
+              icon="comments"
+              onPress={() => router.push((signedIn ? '/messages' : '/auth') as never)}
+              title="Messages"
+            />
+            <SettingsRow
               detail="Choose alerts for businesses you follow"
               icon="bell"
               onPress={() => router.push('/saved')}

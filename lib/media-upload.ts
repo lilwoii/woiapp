@@ -9,7 +9,8 @@ export type MediaPurpose =
   | 'profile_avatar'
   | 'business_logo'
   | 'business_gallery'
-  | 'review_photo';
+  | 'review_photo'
+  | 'chat_photo';
 
 export type LocalMedia = {
   uri: string;
@@ -70,7 +71,8 @@ async function readLocalMedia(uri: string): Promise<ArrayBuffer> {
 export async function stageMediaUpload(
   media: LocalMedia,
   purpose: MediaPurpose,
-  businessId?: string
+  businessId?: string,
+  conversationId?: string
 ): Promise<ActionResult<StagedMedia>> {
   const client = supabase;
   if (!client) {
@@ -83,10 +85,14 @@ export async function stageMediaUpload(
   if (
     (purpose === 'business_logo' ||
       purpose === 'business_gallery' ||
-      purpose === 'review_photo') &&
+      purpose === 'review_photo' ||
+      purpose === 'chat_photo') &&
     !businessId
   ) {
     return { ok: false, code: 'INVALID', reason: 'Choose a valid business first.' };
+  }
+  if (purpose === 'chat_photo' && !conversationId) {
+    return { ok: false, code: 'INVALID', reason: 'Choose a valid conversation first.' };
   }
 
   try {
@@ -129,6 +135,7 @@ export async function stageMediaUpload(
           action: 'stage',
           purpose,
           businessId: businessId ?? null,
+          conversationId: conversationId ?? null,
           mimeType: detectedMime,
           byteSize: bytes.byteLength,
         },
@@ -161,6 +168,7 @@ export async function stageMediaUpload(
           action: 'register',
           purpose,
           businessId: businessId ?? null,
+          conversationId: conversationId ?? null,
           storagePath: path,
         },
       });
@@ -185,4 +193,21 @@ export async function stageMediaUpload(
   } catch (error) {
     return toActionError(error, 'This image could not be uploaded securely.');
   }
+}
+
+export async function mediaProcessingStates(conversationId: string, assetIds: string[]) {
+  const client = supabase;
+  if (!client || !assetIds.length) return new Map<string, 'pending' | 'approved' | 'rejected'>();
+  const { data, error } = await client.rpc('get_marketplace_chat_media_states', {
+    target_conversation_public_id: conversationId,
+    target_asset_ids: assetIds.slice(0, 4),
+  });
+  const states = new Map<string, 'pending' | 'approved' | 'rejected'>();
+  if (error) return states;
+  for (const row of data ?? []) {
+    if (row.processing_state === 'pending' || row.processing_state === 'approved' || row.processing_state === 'rejected') {
+      states.set(row.asset_id, row.processing_state);
+    }
+  }
+  return states;
 }
