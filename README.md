@@ -7,9 +7,9 @@ lead discovery, while restaurants, pop-ups, cafes, and bakeries share the same
 directory.
 
 This repository is prelaunch source, not evidence of a live production
-marketplace. When Supabase credentials are absent, the app enters an explicitly
-labelled preview mode with seeded data; it does not accept real credentials or
-pretend that preview listings are live.
+marketplace. When production services are absent, the app fails closed: it
+shows no fixture listings, accepts no credentials, and performs no simulated
+account, safety, review, claim, or business mutations.
 
 ## Current product surface
 
@@ -88,10 +88,11 @@ keys, scanner credentials, moderation secrets, provider web-service keys, and
 push credentials are server-side values. See
 [the Edge Function environment template](supabase/functions/.env.example).
 
-Apply [supabase/schema.sql](supabase/schema.sql) only through a reviewed staging
-and production database-change process. Deploy and test the account and media
-Edge Functions separately; a schema file in source control is not proof that a
-production project has received it.
+Apply [supabase/schema.sql](supabase/schema.sql) and then the ordered files in
+[supabase/migrations](supabase/migrations) only through a reviewed staging and
+production database-change process. Deploy and test the account and media Edge
+Functions separately; SQL or function source in version control is not proof
+that a production project has received or safely exercised it.
 
 ## Deliberate launch gates
 
@@ -116,4 +117,5 @@ The connected web project is identified by
 [.openai/hosting.json](.openai/hosting.json). Reuse that project through the
 Sites workflow; do not create a duplicate project. See [RELEASE.md](docs/RELEASE.md)
 for the exact evidence and deployment checklist, [PRODUCT.md](docs/PRODUCT.md)
-for scope, and [SECURITY.md](docs/SECURITY.md) for security boundaries.
+for scope, [GLOBAL_DIRECTORY.md](docs/GLOBAL_DIRECTORY.md) for worldwide food
+inventory and map clustering, and [SECURITY.md](docs/SECURITY.md) for security boundaries.

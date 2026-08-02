@@ -7,10 +7,10 @@ pointed at Google Maps, Yelp, DoorDash, Facebook Marketplace, or another source
 whose terms do not grant those rights.
 
 The checked-in Edge Function is a strict validator and authenticated mutation
-gateway. It intentionally fails closed against the current database because the
-schema does not yet have enough source-level state to merge provider data
-without risking owner edits. Do not replace the single RPC call with direct
-service-role writes.
+gateway. The schema contains the private provider/source/precedence foundation,
+but the final transactional ingestion RPC is intentionally not enabled until
+its concurrency and reconciliation suite passes against the target database.
+Do not replace the single RPC call with direct service-role writes.
 
 ## Request contract
 
@@ -313,9 +313,10 @@ error codes and intentionally logs none of those values.
 
 ## Current limitations
 
-- The required transactional RPC and source tables are not present in
-  `supabase/schema.sql`; the function therefore returns
-  `INGESTION_STORE_UNAVAILABLE` and performs no writes.
+- The private source, snapshot, receipt, rate-limit, history, and field-
+  precedence tables are present. The final transactional
+  `ingest_licensed_provider_batch` RPC is not yet installed; the function
+  therefore returns `INGESTION_STORE_UNAVAILABLE` and performs no writes.
 - `supabase/config.toml` and the server environment example still need the
   deployment entries above after migration approval.
 - No provider is configured or licensed, and no provider data ships with this

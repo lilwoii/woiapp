@@ -99,7 +99,7 @@ const categoryLabels: Record<BusinessCategory, string> = {
   restaurant: 'Restaurant',
   pop_up: 'Pop-up',
   cafe_bakery: 'Café & bakery',
-  home_kitchen: 'Verified home kitchen',
+  home_kitchen: 'Neighborhood kitchen',
 };
 
 class BusinessProfileValidationError extends Error {}

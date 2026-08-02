@@ -1,6 +1,6 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -30,7 +30,7 @@ import {
 import type { LocalMedia } from '@/lib/media-upload';
 import { checkProfessionalText } from '@/lib/moderation';
 import { showMessage } from '@/lib/platform-dialog';
-import { BusinessCategory, PaymentMethod } from '@/types/marketplace';
+import { BusinessCategory, PaymentMethod, Place } from '@/types/marketplace';
 
 const categories: {
   id: BusinessCategory;
@@ -42,7 +42,7 @@ const categories: {
   { id: 'restaurant', label: 'Restaurant', detail: 'Permanent storefront', icon: 'utensils' },
   { id: 'pop_up', label: 'Pop-up', detail: 'Markets and temporary service', icon: 'store' },
   { id: 'cafe_bakery', label: 'Café or bakery', detail: 'Coffee, pastry, or counter', icon: 'mug-hot' },
-  { id: 'home_kitchen', label: 'Home kitchen', detail: 'Jurisdiction and permit gated', icon: 'house' },
+  { id: 'home_kitchen', label: 'Neighborhood kitchen', detail: 'Permit-verified where local law allows', icon: 'house' },
 ];
 
 const payments: PaymentMethod[] = [
@@ -94,11 +94,12 @@ function Input({
 }
 
 export default function BusinessOnboardingScreen() {
+  const claimParams = useLocalSearchParams<{ claim?: string; claimId?: string; name?: string }>();
   const auth = useAuth();
-  const { places, refreshAccess } = useMarketplaceStore();
+  const { refreshAccess } = useMarketplaceStore();
   const [step, setStep] = useState(1);
   const [category, setCategory] = useState<BusinessCategory>('food_truck');
-  const [businessName, setBusinessName] = useState('');
+  const [businessName, setBusinessName] = useState(claimParams.name ?? '');
   const [cuisine, setCuisine] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -118,10 +119,10 @@ export default function BusinessOnboardingScreen() {
   const [createdBusinessId, setCreatedBusinessId] = useState<string | null>(null);
   const [logoMeta, setLogoMeta] = useState('');
   const [description, setDescription] = useState('');
-  const [claimExisting, setClaimExisting] = useState(false);
-  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
+  const [claimExisting, setClaimExisting] = useState(claimParams.claim === '1');
+  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(claimParams.claimId ?? null);
   const [claimMethod, setClaimMethod] = useState<'listed_phone' | 'domain_email'>('listed_phone');
-  const [claimSearchResults, setClaimSearchResults] = useState<typeof places>([]);
+  const [claimSearchResults, setClaimSearchResults] = useState<Place[]>([]);
   const [claimSearching, setClaimSearching] = useState(false);
   const [claimSearchError, setClaimSearchError] = useState<string | null>(null);
   const [accuracyConfirmed, setAccuracyConfirmed] = useState(false);
@@ -134,14 +135,7 @@ export default function BusinessOnboardingScreen() {
     () => categories.filter((item) => item.id !== 'home_kitchen' || featureFlags.homeKitchens),
     []
   );
-  const previewClaimMatches = useMemo(() => {
-    if (!claimExisting || businessName.trim().length < 2) return [];
-    const normalized = businessName.trim().toLocaleLowerCase('en-US');
-    return places
-      .filter((place) => place.name.toLocaleLowerCase('en-US').includes(normalized))
-      .slice(0, 5);
-  }, [businessName, claimExisting, places]);
-  const claimMatches = auth.isConfigured ? claimSearchResults : previewClaimMatches;
+  const claimMatches = claimSearchResults;
 
   useEffect(() => {
     let active = true;
@@ -173,7 +167,24 @@ export default function BusinessOnboardingScreen() {
     };
   }, [auth.isConfigured, businessName, claimExisting]);
 
-  if (auth.isConfigured && auth.status === 'loading') {
+  if (!auth.isConfigured) {
+    return (
+      <View style={styles.authGate}>
+        <BrandMark />
+        <View style={styles.authGateIcon}>
+          <FontAwesome6 color={palette.accentDeep} name="server" size={21} />
+        </View>
+        <Text accessibilityRole="header" style={styles.authGateTitle}>
+          Live business services are required.
+        </Text>
+        <Text style={styles.authGateDetail}>
+          This build cannot create or claim listings until the secured backend, verification service, and audit trail are configured.
+        </Text>
+      </View>
+    );
+  }
+
+  if (auth.status === 'loading') {
     return (
       <View style={styles.authGate}>
         <ActivityIndicator color={palette.accentDeep} />
@@ -182,7 +193,7 @@ export default function BusinessOnboardingScreen() {
     );
   }
 
-  if (auth.isConfigured && auth.status !== 'authenticated') {
+  if (auth.status !== 'authenticated') {
     return (
       <View style={styles.authGate}>
         <BrandMark />

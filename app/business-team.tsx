@@ -323,7 +323,7 @@ export default function BusinessTeamScreen() {
         icon: 'plug-circle-xmark' as const,
         title: 'Team controls need Spottr live services.',
         body:
-          'The preview never fabricates team access. Connect the production backend to manage real members and invitations.',
+          'An unconfigured build never fabricates team access. Connect live Spottr services to manage real members and invitations.',
         action: null,
       };
     }

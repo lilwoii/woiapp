@@ -19,7 +19,6 @@ import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
 import { confirmAction, showMessage } from '@/lib/platform-dialog';
-import { AccountRole } from '@/types/marketplace';
 
 type SettingsRowProps = {
   icon: keyof typeof FontAwesome6.glyphMap;
@@ -50,12 +49,12 @@ function SettingsRow({ icon, title, detail, danger = false, onPress }: SettingsR
 
 export default function ProfileScreen() {
   const auth = useAuth();
-  const { account, followedIds, setRole } = useMarketplaceStore();
+  const { account, followedIds } = useMarketplaceStore();
   const [accountMessage, setAccountMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
     null
   );
   const signedIn = auth.status === 'authenticated';
-  const preview = auth.status === 'preview';
+  const unconfigured = auth.status === 'unconfigured';
   const initials = account.displayName
     .split(/\s+/)
     .map((part) => part.charAt(0))
@@ -72,7 +71,7 @@ export default function ProfileScreen() {
     } catch {
       showMessage(
         'Support is not configured',
-        'The production support destination has not been connected in this preview.'
+        'The production support destination has not been configured.'
       );
     }
   };
@@ -124,10 +123,10 @@ export default function ProfileScreen() {
       <PageShell narrow>
         <View style={styles.topbar}>
           <BrandMark />
-          <View style={styles.demoBadge}>
-            <View style={styles.demoDot} />
-            <Text style={styles.demoText}>
-              {signedIn ? 'Verified session' : preview ? 'Secure preview' : 'Guest'}
+          <View style={styles.sessionBadge}>
+            <View style={styles.sessionDot} />
+            <Text style={styles.sessionText}>
+              {signedIn ? 'Verified session' : unconfigured ? 'Services offline' : 'Guest'}
             </Text>
           </View>
         </View>
@@ -163,33 +162,13 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {preview ? (
+        {unconfigured ? (
           <View style={styles.rolePanel}>
           <SectionHeading
-            detail="Customer and business tools stay in one account."
-            eyebrow="Account mode"
-            title="How are you using Spottr?"
+            detail="This build does not accept credentials or create account data until the secured backend is configured."
+            eyebrow="Configuration required"
+            title="Live account services are offline"
           />
-          <View style={styles.roleSwitch}>
-            {(
-              [
-                ['customer', 'Customer', 'heart'],
-                ['business', 'Business', 'store'],
-              ] as [AccountRole, string, keyof typeof FontAwesome6.glyphMap][]
-            ).map(([role, label, icon]) => {
-              const active = account.role === role;
-              return (
-                <Pressable
-                  key={role}
-                  onPress={() => setRole(role)}
-                  style={[styles.roleOption, active && styles.roleOptionActive]}>
-                  <FontAwesome6 color={active ? '#FFFFFF' : palette.ink} name={icon} size={14} solid={active} />
-                  <Text style={[styles.roleText, active && styles.roleTextActive]}>{label}</Text>
-                  {active ? <FontAwesome6 color={palette.mint} name="circle-check" size={13} solid /> : null}
-                </Pressable>
-              );
-            })}
-          </View>
           </View>
         ) : (
           <View style={styles.rolePanel}>
@@ -332,7 +311,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  demoBadge: {
+  sessionBadge: {
     alignItems: 'center',
     backgroundColor: palette.successSoft,
     borderRadius: radii.pill,
@@ -341,13 +320,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     paddingVertical: 8,
   },
-  demoDot: {
+  sessionDot: {
     backgroundColor: palette.success,
     borderRadius: 999,
     height: 7,
     width: 7,
   },
-  demoText: {
+  sessionText: {
     color: palette.success,
     fontSize: 10,
     fontWeight: '900',

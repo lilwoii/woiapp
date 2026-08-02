@@ -21,7 +21,7 @@ export default function Root({ children }: { children: React.ReactNode }) {
         <title>Spottr · Live local food, mapped</title>
         <meta
           name="description"
-          content="Find nearby food trucks, restaurants, pop-ups, bakeries, and verified local kitchens with live locations, menus, payments, reviews, and owner updates."
+          content="Find nearby food trucks, restaurants, pop-ups, bakeries, and permit-verified Neighborhood Kitchens with live locations, menus, payments, reviews, and owner updates."
         />
         <meta name="theme-color" content="#F6F3EC" />
         <meta name="color-scheme" content="light" />

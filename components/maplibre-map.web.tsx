@@ -5,12 +5,15 @@ import { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { palette, radii } from '@/constants/theme';
+import { clusterPlaces, type MapFeature } from '@/lib/map-clustering';
+import type { MapViewport } from '@/types/map';
 import { Place } from '@/types/marketplace';
 
 export type Props = {
   places: Place[];
   selectedId?: string;
   onSelect?: (place: Place) => void;
+  onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
   userCoordinates?: { latitude: number; longitude: number } | null;
 };
 
@@ -135,7 +138,13 @@ function markerElement(place: Place, selected: boolean) {
   } else {
     const symbol = document.createElement('span');
     symbol.setAttribute('aria-hidden', 'true');
-    symbol.textContent = place.name.charAt(0).toLocaleUpperCase('en-US');
+    symbol.textContent = {
+      restaurant: 'R',
+      pop_up: 'P',
+      cafe_bakery: 'C',
+      home_kitchen: 'N',
+      food_truck: 'T',
+    }[place.category];
     symbol.style.color = palette.ink;
     symbol.style.fontFamily = 'system-ui, sans-serif';
     symbol.style.fontSize = '14px';
@@ -157,7 +166,45 @@ function updateMarkerSelection(element: HTMLButtonElement, selected: boolean) {
   }
 }
 
-export default function MapLibreMapView({ places, selectedId, onSelect, userCoordinates }: Props) {
+function clusterElement(feature: Extract<MapFeature, { kind: 'cluster' }>) {
+  const element = document.createElement('button');
+  element.type = 'button';
+  element.setAttribute('aria-label', `${feature.count} food places in this area. Zoom in to explore.`);
+  element.style.alignItems = 'center';
+  element.style.background = palette.accentDeep;
+  element.style.border = '4px solid rgba(255, 255, 255, 0.94)';
+  element.style.borderRadius = '999px';
+  element.style.boxShadow = '0 7px 22px rgba(23, 44, 42, 0.28)';
+  element.style.color = '#FFFFFF';
+  element.style.cursor = 'pointer';
+  element.style.display = 'flex';
+  element.style.fontFamily = 'system-ui, sans-serif';
+  element.style.fontSize = feature.count > 99 ? '12px' : '13px';
+  element.style.fontWeight = '900';
+  element.style.height = feature.count > 99 ? '56px' : '50px';
+  element.style.justifyContent = 'center';
+  element.style.width = feature.count > 99 ? '56px' : '50px';
+  element.textContent = feature.count > 999 ? '999+' : String(feature.count);
+  return element;
+}
+
+function viewportFromMap(map: MapLibreMap): MapViewport {
+  const center = map.getCenter();
+  const bounds = map.getBounds();
+  const latitudeMeters = Math.abs(bounds.getNorth() - bounds.getSouth()) * 111_320;
+  const longitudeMeters =
+    Math.abs(bounds.getEast() - bounds.getWest()) *
+    111_320 *
+    Math.max(0.1, Math.cos((center.lat * Math.PI) / 180));
+  return {
+    latitude: center.lat,
+    longitude: center.lng,
+    radiusMeters: Math.round(Math.min(200_000, Math.max(1_000, Math.hypot(latitudeMeters, longitudeMeters) / 2))),
+    zoom: map.getZoom(),
+  };
+}
+
+export default function MapLibreMapView({ places, selectedId, onSelect, onSearchArea, userCoordinates }: Props) {
   const containerRef = useRef<View | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markerRefs = useRef(
@@ -165,15 +212,23 @@ export default function MapLibreMapView({ places, selectedId, onSelect, userCoor
   );
   const currentPlaces = useRef(new Map(places.map((place) => [place.id, place])));
   const onSelectRef = useRef(onSelect);
+  const onSearchAreaRef = useRef(onSearchArea);
   const fittedPlacesKey = useRef('');
   const userMarkerRef = useRef<Marker | null>(null);
   const initialPlaces = useRef(places);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [mapZoom, setMapZoom] = useState(11.5);
+  const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
+  const userMovedMap = useRef(false);
 
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
+
+  useEffect(() => {
+    onSearchAreaRef.current = onSearchArea;
+  }, [onSearchArea]);
 
   useEffect(() => {
     const element = containerRef.current as unknown as HTMLElement | null;
@@ -198,6 +253,19 @@ export default function MapLibreMapView({ places, selectedId, onSelect, userCoor
         setReady(true);
         map.resize();
       });
+      map.on('dragstart', () => {
+        userMovedMap.current = true;
+      });
+      map.on('zoomstart', (event) => {
+        if (event.originalEvent) userMovedMap.current = true;
+      });
+      map.on('moveend', () => {
+        setMapZoom(map.getZoom());
+        if (userMovedMap.current && onSearchAreaRef.current) {
+          setPendingViewport(viewportFromMap(map));
+        }
+        userMovedMap.current = false;
+      });
       map.on('error', (event) => {
         if (!event.error?.message?.includes('tile')) setFailed(true);
       });
@@ -221,36 +289,39 @@ export default function MapLibreMapView({ places, selectedId, onSelect, userCoor
     if (!map || !ready) return;
 
     currentPlaces.current = new Map(places.map((place) => [place.id, place]));
-    const nextIds = new Set(places.map((place) => place.id));
+    const features = clusterPlaces(places, mapZoom);
+    const nextIds = new Set(features.map((feature) => feature.id));
     markerRefs.current.forEach(({ marker }, id) => {
       if (!nextIds.has(id)) {
         marker.remove();
         markerRefs.current.delete(id);
       }
     });
-    for (const place of places) {
-      const existing = markerRefs.current.get(place.id);
+    for (const feature of features) {
+      const existing = markerRefs.current.get(feature.id);
       if (existing) {
-        existing.marker.setLngLat([place.longitude, place.latitude]);
-        existing.element.setAttribute(
-          'aria-label',
-          `${place.name}, ${place.categoryLabel}${
-            place.distanceMiles !== null
-              ? `, ${place.distanceMiles.toFixed(1)} miles away`
-              : ''
-          }`
-        );
+        existing.marker.setLngLat([feature.longitude, feature.latitude]);
         continue;
       }
-      const element = markerElement(place, false);
+      const element = feature.kind === 'cluster'
+        ? clusterElement(feature)
+        : markerElement(feature.place, false);
       element.addEventListener('click', () => {
-        const selectedPlace = currentPlaces.current.get(place.id);
+        if (feature.kind === 'cluster') {
+          map.easeTo({
+            center: [feature.longitude, feature.latitude],
+            duration: 380,
+            zoom: Math.min(18, map.getZoom() + 2),
+          });
+          return;
+        }
+        const selectedPlace = currentPlaces.current.get(feature.place.id);
         if (selectedPlace) onSelectRef.current?.(selectedPlace);
       });
       const marker = new maplibregl.Marker({ anchor: 'bottom', element })
-        .setLngLat([place.longitude, place.latitude])
+        .setLngLat([feature.longitude, feature.latitude])
         .addTo(map);
-      markerRefs.current.set(place.id, { marker, element });
+      markerRefs.current.set(feature.id, { marker, element });
     }
 
     const placesKey = places
@@ -270,13 +341,13 @@ export default function MapLibreMapView({ places, selectedId, onSelect, userCoor
         map.fitBounds(bounds, { duration: 450, maxZoom: 14, padding: 70 });
       }
     }
-  }, [places, ready]);
+  }, [mapZoom, places, ready]);
 
   useEffect(() => {
     const map = mapRef.current;
     const selected = places.find((place) => place.id === selectedId);
     markerRefs.current.forEach(({ element }, id) => {
-      updateMarkerSelection(element, id === selectedId);
+      if (id.startsWith('place:')) updateMarkerSelection(element, id === `place:${selectedId}`);
     });
     if (!map || !selected || !ready) return;
     map.easeTo({
@@ -326,18 +397,38 @@ export default function MapLibreMapView({ places, selectedId, onSelect, userCoor
         <Pressable
           accessibilityLabel="Zoom in"
           accessibilityRole="button"
-          onPress={() => mapRef.current?.zoomIn({ duration: 180 })}
+          onPress={() => {
+            userMovedMap.current = true;
+            mapRef.current?.zoomIn({ duration: 180 });
+          }}
           style={styles.controlButton}>
           <FontAwesome6 color={palette.ink} name="plus" size={13} />
         </Pressable>
         <Pressable
           accessibilityLabel="Zoom out"
           accessibilityRole="button"
-          onPress={() => mapRef.current?.zoomOut({ duration: 180 })}
+          onPress={() => {
+            userMovedMap.current = true;
+            mapRef.current?.zoomOut({ duration: 180 });
+          }}
           style={styles.controlButton}>
           <FontAwesome6 color={palette.ink} name="minus" size={13} />
         </Pressable>
       </View>
+      {pendingViewport && onSearchArea ? (
+        <Pressable
+          accessibilityLabel="Search the visible map area"
+          accessibilityRole="button"
+          onPress={() => {
+            const viewport = pendingViewport;
+            setPendingViewport(null);
+            void onSearchArea(viewport);
+          }}
+          style={styles.searchAreaButton}>
+          <FontAwesome6 color="#FFFFFF" name="magnifying-glass-location" size={12} />
+          <Text style={styles.searchAreaText}>Search this area</Text>
+        </Pressable>
+      ) : null}
       <Pressable
         accessibilityRole="link"
         onPress={() => void Linking.openURL(mapAttributionUrl)}
@@ -377,6 +468,25 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 14,
     top: 14,
+  },
+  searchAreaButton: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: palette.ink,
+    borderColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: radii.pill,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 8,
+    minHeight: 46,
+    paddingHorizontal: 17,
+    position: 'absolute',
+    top: 14,
+  },
+  searchAreaText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
   },
   controlButton: {
     alignItems: 'center',

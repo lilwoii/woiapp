@@ -146,7 +146,7 @@ export type OwnerUpdateInput = {
 
 export type AccountRole = 'customer' | 'business';
 
-export type DemoAccount = {
+export type AccountSummary = {
   id: string;
   username: string;
   displayName: string;
@@ -156,7 +156,7 @@ export type DemoAccount = {
   avatarPath?: string | null;
 };
 
-export type SyncStatus = 'demo' | 'idle' | 'syncing' | 'live' | 'error';
+export type SyncStatus = 'idle' | 'syncing' | 'live' | 'error';
 
 export type ActionResult<T = undefined> =
   | {

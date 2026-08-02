@@ -40,11 +40,11 @@ The universal client currently supports:
 - AAL2-protected business identity/contact/logo editing and a restricted,
   concurrency-safe staff moderation workspace.
 
-The disconnected preview also demonstrates a separately labelled
-`Sponsored ad` lane. It does not alter the organic list. Production campaign
-serving, charging, reporting, and native purchase controls remain disabled
-until the server ledger, fraud, legal, payment, and store-policy gates in
-[MONETIZATION.md](MONETIZATION.md) are complete.
+Paid placement is implemented as a separately labelled `Sponsored ad` lane and
+never changes organic order. Production campaign serving, charging, reporting,
+and native purchase controls remain disabled until the server ledger, fraud,
+legal, payment, and store-policy gates in [MONETIZATION.md](MONETIZATION.md)
+are complete. Unconfigured builds show no fixture placement.
 
 In live mode, nearby distance and safe coordinates come from PostGIS. Effective
 open status comes from the server. The client does not substitute a default city
@@ -114,7 +114,7 @@ the listing application.
 
 [ORDERING_ARCHITECTURE.md](ORDERING_ARCHITECTURE.md) defines the versioned
 catalog, quote, order, payment, refund, capacity, fraud, and future-delivery
-boundaries for that gated program. Pure client-domain code or a preview cart is
+boundaries for that gated program. Pure client-domain code or a staff-only pilot cart is
 not evidence that production ordering is enabled.
 
 ## External product blockers

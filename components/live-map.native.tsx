@@ -1,15 +1,18 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { useEffect, useRef } from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import MapView, { Marker, type Region } from 'react-native-maps';
 
-import { palette } from '@/constants/theme';
+import { palette, radii } from '@/constants/theme';
+import { clusterPlaces, zoomFromLongitudeDelta } from '@/lib/map-clustering';
+import type { MapViewport } from '@/types/map';
 import { Place } from '@/types/marketplace';
 
 type Props = {
   places: Place[];
   selectedId?: string;
   onSelect?: (place: Place) => void;
+  onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
   userCoordinates?: { latitude: number; longitude: number } | null;
 };
 
@@ -20,8 +23,40 @@ const initialRegion = {
   longitudeDelta: 0.17,
 };
 
-export function LiveMap({ places, selectedId, onSelect, userCoordinates }: Props) {
+const categoryIcons = {
+  food_truck: 'truck',
+  restaurant: 'utensils',
+  pop_up: 'store',
+  cafe_bakery: 'mug-hot',
+  home_kitchen: 'house',
+} as const;
+
+function viewportFromRegion(region: Region): MapViewport {
+  const zoom = zoomFromLongitudeDelta(region.longitudeDelta);
+  const latitudeMeters = region.latitudeDelta * 111_320;
+  const longitudeMeters =
+    region.longitudeDelta * 111_320 * Math.max(0.1, Math.cos((region.latitude * Math.PI) / 180));
+  return {
+    latitude: region.latitude,
+    longitude: region.longitude,
+    radiusMeters: Math.round(Math.min(200_000, Math.max(1_000, Math.hypot(latitudeMeters, longitudeMeters) / 2))),
+    zoom,
+  };
+}
+
+export function LiveMap({ places, selectedId, onSelect, onSearchArea, userCoordinates }: Props) {
   const mapRef = useRef<MapView | null>(null);
+  const [region, setRegion] = useState<Region>(
+    userCoordinates
+      ? { ...userCoordinates, latitudeDelta: 0.12, longitudeDelta: 0.12 }
+      : initialRegion
+  );
+  const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
+  const userMovedMap = useRef(false);
+  const features = useMemo(
+    () => clusterPlaces(places, zoomFromLongitudeDelta(region.longitudeDelta)),
+    [places, region.longitudeDelta]
+  );
 
   useEffect(() => {
     const selected = places.find((place) => place.id === selectedId);
@@ -33,6 +68,7 @@ export function LiveMap({ places, selectedId, onSelect, userCoordinates }: Props
   }, [places, selectedId]);
 
   return (
+    <View style={styles.frame}>
     <MapView
       initialRegion={
         userCoordinates
@@ -40,9 +76,42 @@ export function LiveMap({ places, selectedId, onSelect, userCoordinates }: Props
           : initialRegion
       }
       ref={mapRef}
+      onPanDrag={() => {
+        userMovedMap.current = true;
+      }}
+      onTouchStart={() => {
+        userMovedMap.current = true;
+      }}
+      onRegionChangeComplete={(nextRegion) => {
+        setRegion(nextRegion);
+        if (userMovedMap.current && onSearchArea) {
+          setPendingViewport(viewportFromRegion(nextRegion));
+        }
+        userMovedMap.current = false;
+      }}
       showsUserLocation={Boolean(userCoordinates)}
       style={styles.map}>
-      {places.map((place) => {
+      {features.map((feature) => {
+        if (feature.kind === 'cluster') {
+          return (
+            <Marker
+              coordinate={{ latitude: feature.latitude, longitude: feature.longitude }}
+              key={feature.id}
+              onPress={() => {
+                mapRef.current?.animateCamera(
+                  { center: { latitude: feature.latitude, longitude: feature.longitude }, zoom: Math.min(18, zoomFromLongitudeDelta(region.longitudeDelta) + 2) },
+                  { duration: 380 }
+                );
+              }}
+              tracksViewChanges={false}>
+              <View accessibilityLabel={`${feature.count} food places in this area`} style={styles.clusterPin}>
+                <Text style={styles.clusterCount}>{feature.count > 999 ? '999+' : feature.count}</Text>
+              </View>
+            </Marker>
+          );
+        }
+
+        const place = feature.place;
         const isTruck = place.category === 'food_truck';
         const isSelected = selectedId === place.id;
 
@@ -60,20 +129,74 @@ export function LiveMap({ places, selectedId, onSelect, userCoordinates }: Props
               ) : place.logoUrl ? (
                 <Image source={{ uri: place.logoUrl }} style={styles.logo} />
               ) : (
-                <Text style={styles.logoFallback}>{place.name.charAt(0).toLocaleUpperCase('en-US')}</Text>
+                <FontAwesome6 color={palette.ink} name={categoryIcons[place.category]} size={14} />
               )}
             </View>
           </Marker>
         );
       })}
     </MapView>
+    {pendingViewport && onSearchArea ? (
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => {
+          const viewport = pendingViewport;
+          setPendingViewport(null);
+          void onSearchArea(viewport);
+        }}
+        style={styles.searchAreaButton}>
+        <FontAwesome6 color="#FFFFFF" name="magnifying-glass-location" size={12} />
+        <Text style={styles.searchAreaText}>Search this area</Text>
+      </Pressable>
+    ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  frame: {
+    height: 470,
+    position: 'relative',
+    width: '100%',
+  },
   map: {
     height: 470,
     width: '100%',
+  },
+  clusterPin: {
+    alignItems: 'center',
+    backgroundColor: palette.accentDeep,
+    borderColor: '#FFFFFF',
+    borderRadius: 999,
+    borderWidth: 4,
+    elevation: 5,
+    height: 52,
+    justifyContent: 'center',
+    width: 52,
+  },
+  clusterCount: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  searchAreaButton: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: palette.ink,
+    borderColor: '#FFFFFF',
+    borderRadius: radii.pill,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 8,
+    minHeight: 46,
+    paddingHorizontal: 17,
+    position: 'absolute',
+    top: 14,
+  },
+  searchAreaText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
   },
   pin: {
     alignItems: 'center',

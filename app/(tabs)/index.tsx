@@ -35,13 +35,14 @@ import {
 import { featureFlags } from '@/lib/features';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import type { DietaryTag, PaymentMethod, Place } from '@/types/marketplace';
+import type { MapViewport } from '@/types/map';
 
 const categoryFilters: { id: DiscoveryCategory; label: string; icon: keyof typeof FontAwesome6.glyphMap }[] = [
   { id: 'food_truck', label: 'Food trucks', icon: 'truck' },
   { id: 'restaurant', label: 'Restaurants', icon: 'utensils' },
   { id: 'pop_up', label: 'Pop-ups', icon: 'store' },
   { id: 'cafe_bakery', label: 'Cafés & bakeries', icon: 'mug-hot' },
-  { id: 'home_kitchen', label: 'Verified home kitchens', icon: 'house' },
+  { id: 'home_kitchen', label: 'Neighborhood kitchens', icon: 'house' },
   { id: 'all', label: 'Everything', icon: 'layer-group' },
 ];
 
@@ -100,9 +101,7 @@ export default function DiscoverScreen() {
   const [hiddenSponsoredIds, setHiddenSponsoredIds] = useState<string[]>([]);
   const [openSponsorReasonId, setOpenSponsorReasonId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState(places[0]?.id);
-  const [locationLabel, setLocationLabel] = useState(
-    isSupabaseConfigured ? 'Choose city, ZIP, or location' : 'Los Angeles preview'
-  );
+  const [locationLabel, setLocationLabel] = useState('Choose city, ZIP, or location');
   const [userCoordinates, setUserCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locating, setLocating] = useState(isSupabaseConfigured);
   const [locationPanelOpen, setLocationPanelOpen] = useState(isSupabaseConfigured);
@@ -211,6 +210,24 @@ export default function DiscoverScreen() {
     setSortMode('nearby');
   };
 
+  const searchVisibleMap = useCallback(async (viewport: MapViewport) => {
+    setLocating(true);
+    setLocationError(null);
+    const result = await refresh({
+      latitude: viewport.latitude,
+      longitude: viewport.longitude,
+      radiusMeters: Math.min(80_467, viewport.radiusMeters),
+    });
+    setLocating(false);
+    if (!result.ok) {
+      setLocationError(result.reason);
+      return;
+    }
+    setActiveArea('');
+    setLocationLabel('Visible map area');
+    setSortMode('nearby');
+  }, [refresh]);
+
   const discoveryFilters: DiscoveryFilters = useMemo(
     () => ({
       query: deferredQuery,
@@ -256,7 +273,7 @@ export default function DiscoverScreen() {
   const visibleCount = pagination.key === resultsKey ? pagination.count : 24;
   const selected = ranked.find((place) => place.id === selectedId) ?? ranked[0];
   const visibleRanked = ranked.slice(0, visibleCount);
-  const mappedPlaces = ranked.slice(0, 60);
+  const mappedPlaces = ranked;
 
   const selectPlace = useCallback((place: Place) => setSelectedId(place.id), []);
 
@@ -611,11 +628,6 @@ export default function DiscoverScreen() {
               <Text style={styles.syncRetryText}>Retry</Text>
             </Pressable>
           </View>
-        ) : syncStatus === 'demo' ? (
-          <View style={styles.syncBanner}>
-            <FontAwesome6 color={palette.warning} name="flask" size={12} />
-            <Text style={styles.syncBannerDetail}>{syncMessage}</Text>
-          </View>
         ) : null}
 
         {syncStatus === 'idle' && !places.length ? (
@@ -650,10 +662,29 @@ export default function DiscoverScreen() {
             <View style={[styles.mapColumn, wide && styles.mapColumnWide]}>
               <LiveMap
                 onSelect={selectPlace}
+                onSearchArea={searchVisibleMap}
                 places={mappedPlaces}
                 selectedId={selected?.id}
                 userCoordinates={userCoordinates}
               />
+              <View accessibilityLabel="Map marker key" style={styles.mapLegend}>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendIcon, styles.legendTruck]}>
+                    <FontAwesome6 color="#FFFFFF" name="truck" size={9} />
+                  </View>
+                  <Text style={styles.legendText}>Trucks</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={styles.legendIcon}>
+                    <FontAwesome6 color={palette.ink} name="utensils" size={9} />
+                  </View>
+                  <Text style={styles.legendText}>Places</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={styles.legendCluster}><Text style={styles.legendClusterText}>12</Text></View>
+                  <Text style={styles.legendText}>Cluster</Text>
+                </View>
+              </View>
               {selected ? (
                 <View style={styles.mapPreview}>
                   <View style={styles.mapPreviewCopy}>
@@ -1196,6 +1227,57 @@ const styles = StyleSheet.create({
   mapColumnWide: {
     flex: 1.12,
     minWidth: 0,
+  },
+  mapLegend: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 253, 248, 0.94)',
+    borderColor: palette.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    left: 14,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    position: 'absolute',
+    top: 72,
+  },
+  legendItem: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  legendIcon: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderColor: palette.line,
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 22,
+    justifyContent: 'center',
+    width: 22,
+  },
+  legendTruck: {
+    backgroundColor: palette.dark,
+    borderColor: palette.dark,
+  },
+  legendCluster: {
+    alignItems: 'center',
+    backgroundColor: palette.accentDeep,
+    borderRadius: 999,
+    height: 22,
+    justifyContent: 'center',
+    width: 22,
+  },
+  legendClusterText: {
+    color: '#FFFFFF',
+    fontSize: 8,
+    fontWeight: '900',
+  },
+  legendText: {
+    color: palette.muted,
+    fontSize: 9,
+    fontWeight: '800',
   },
   mapPreview: {
     alignItems: 'center',

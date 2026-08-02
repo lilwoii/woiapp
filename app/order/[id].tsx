@@ -16,6 +16,7 @@ import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useMarketplaceStore } from '@/context/marketplace-store';
+import { featureFlags } from '@/lib/features';
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
 
@@ -69,7 +70,7 @@ export default function PickupOrderScreen() {
     return <FocusAwareScreen><View accessibilityLiveRegion="polite" style={styles.center}><ActivityIndicator color={palette.accentDeep} /><Text style={styles.centerText}>Loading the pickup menu…</Text></View></FocusAwareScreen>;
   }
 
-  if (!place || error || !place.pickup?.enabled) {
+  if (!featureFlags.pickupOrdering || !place || error || !place.pickup?.enabled) {
     return <FocusAwareScreen><View style={styles.center}><FontAwesome6 color={palette.accentDeep} name="bag-shopping" size={24} /><Text accessibilityRole="header" style={styles.centerTitle}>Pickup ordering is unavailable.</Text><Text style={styles.centerText}>{error ?? 'This business is not accepting Spottr pickup orders.'}</Text><Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backPill}><Text style={styles.backPillText}>Back to listing</Text></Pressable></View></FocusAwareScreen>;
   }
 
@@ -84,7 +85,7 @@ export default function PickupOrderScreen() {
           <View style={styles.identity}>
             <Image accessibilityIgnoresInvertColors source={{ uri: place.logoUrl }} style={styles.logo} />
             <View style={styles.identityCopy}>
-              <Text style={styles.eyebrow}>Pickup preview</Text>
+              <Text style={styles.eyebrow}>Pickup pilot</Text>
               <Text accessibilityRole="header" style={styles.title}>{place.name}</Text>
               <Text style={styles.detail}>{place.address} · about {place.pickup.estimatedMinutes ?? 20} min</Text>
             </View>
@@ -92,7 +93,7 @@ export default function PickupOrderScreen() {
 
           <View style={styles.pilotNotice}>
             <FontAwesome6 color={palette.warning} name="shield-halved" size={13} />
-            <Text style={styles.pilotText}>Build a cart to preview Spottr pickup. Payment and order submission remain off until tax, processor, merchant, refund, and operations gates are approved.</Text>
+            <Text style={styles.pilotText}>This staff-only pilot validates catalog and pickup operations. Customer payment and submission remain off until tax, processor, merchant, refund, and operations gates are approved.</Text>
           </View>
 
           <View style={styles.menu}>

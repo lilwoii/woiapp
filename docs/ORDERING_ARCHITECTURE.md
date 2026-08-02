@@ -1,6 +1,6 @@
 # Spottr pickup-ordering architecture
 
-Status: implementation plan. The repository does not prove that payments,
+Status: phase O1 foundation implemented; prepaid ordering remains gated. The repository does not prove that payments,
 merchant onboarding, tax calculation, refunds, payouts, or delivery are
 production-enabled. Policy notes were last checked on 2026-08-01 and require
 review for the exact release, legal entity, processor contract, and storefront.
@@ -524,6 +524,17 @@ checkout evidence for exact signed binaries.
   behind server/client feature flags defaulted off.
 - Run employee-only zero-money shadow orders to verify timing and operations.
 
+The reviewed migration
+`supabase/migrations/20260802000000_shadow_ordering_foundation.sql` now provides
+an immutable catalog, capacity locking, opaque order receipts, append-only
+event history, participant RLS, idempotent creation and merchant transitions,
+rate limits, and audit events for employee-only zero-money shadow orders. It
+cannot represent or create a charge: `payment_state` is constrained to
+`not_required`, every financial addition is constrained to zero, and creation
+requires AAL2 platform staff. Cart/quote UX, modifier selection, notification
+outbox, support issue intake, scheduled expiry, and an operations pilot remain
+before phase O1 is complete.
+
 ### Phase O2 — capped prepaid pickup pilot
 
 - One processor, country, currency, city cohort, and verified merchant group.
@@ -566,4 +577,3 @@ alone. It requires:
 - measured pilot acceptance time, cancellation/refund rate, fraud/chargeback
   loss, support cost, processor cost, and order contribution. Source code cannot
   justify invented profitability or safety claims.
-

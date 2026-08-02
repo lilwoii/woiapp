@@ -313,7 +313,7 @@ export default function PlaceDetailScreen() {
     setRating(5);
     setReviewMessage({
       type: 'success',
-      text: result.message ?? 'Thanks — your review is now part of this preview.',
+      text: result.message ?? 'Thanks — your review was submitted.',
     });
   };
 
@@ -395,9 +395,9 @@ export default function PlaceDetailScreen() {
         </ImageBackground>
 
         <View style={styles.actionBar}>
-          {place.pickup?.enabled && place.pickup.orderingMode === 'spottr' ? (
+          {featureFlags.pickupOrdering && place.pickup?.enabled && place.pickup.orderingMode === 'spottr' ? (
             <Pressable
-              accessibilityLabel="Pickup preview"
+              accessibilityLabel="Pickup pilot"
               accessibilityRole="button"
               onPress={() =>
                 router.push(
@@ -409,7 +409,7 @@ export default function PlaceDetailScreen() {
               }
               style={styles.primaryAction}>
               <FontAwesome6 color="#FFFFFF" name="bag-shopping" size={14} />
-              <Text style={styles.primaryActionText}>Pickup preview</Text>
+              <Text style={styles.primaryActionText}>Pickup pilot</Text>
             </Pressable>
           ) : null}
           <Pressable accessibilityLabel="Directions" accessibilityRole="button" onPress={openDirections} style={styles.primaryAction}>
@@ -923,6 +923,21 @@ export default function PlaceDetailScreen() {
                 <FontAwesome6 color={palette.muted} name="flag" size={11} />
                 <Text style={styles.sourceReportText}>Report listing</Text>
               </Pressable>
+              {place.sourceLabel === 'Licensed provider' || place.sourceLabel === 'Community added' ? (
+                <Pressable
+                  accessibilityLabel={`Are you the owner of ${place.name}? Claim this place`}
+                  accessibilityRole="button"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/business-onboarding',
+                      params: { claim: '1', claimId: place.id, name: place.name },
+                    } as never)
+                  }
+                  style={styles.sourceClaim}>
+                  <FontAwesome6 color="#FFFFFF" name="key" size={11} />
+                  <Text style={styles.sourceClaimText}>Are you the owner? Claim this place</Text>
+                </Pressable>
+              ) : null}
             </View>
           </View>
         </View>
@@ -1716,6 +1731,22 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 10,
     fontWeight: '800',
+  },
+  sourceClaim: {
+    alignItems: 'center',
+    backgroundColor: palette.ink,
+    borderRadius: radii.pill,
+    flexBasis: '100%',
+    flexDirection: 'row',
+    gap: 7,
+    justifyContent: 'center',
+    minHeight: 46,
+    paddingHorizontal: 14,
+  },
+  sourceClaimText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
   },
   missing: {
     alignItems: 'center',

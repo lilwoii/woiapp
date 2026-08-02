@@ -67,6 +67,6 @@ export function requireConfigured(configured: boolean): ActionResult<never> | nu
   return {
     ok: false,
     code: 'CONFIG_REQUIRED',
-    reason: 'Live services are not connected in this preview.',
+    reason: 'Live Spottr services are not configured for this build.',
   };
 }

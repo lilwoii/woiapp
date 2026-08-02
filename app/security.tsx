@@ -156,7 +156,7 @@ export default function SecurityScreen() {
   };
 
   const signedOut = auth.status === 'anonymous' || auth.status === 'error';
-  const preview = auth.status === 'preview';
+  const unconfigured = auth.status === 'unconfigured';
   const needsChallenge = Boolean(overview?.enrolled && overview.currentLevel !== 'aal2');
   const businessNeedsEnrollment =
     auth.account?.role === 'business' && !overview?.enrolled && !enrollment;
@@ -187,20 +187,20 @@ export default function SecurityScreen() {
           </Text>
         </View>
 
-        {signedOut || preview ? (
+        {signedOut || unconfigured ? (
           <View style={styles.panel}>
             <View style={styles.statusIcon}>
               <FontAwesome6 color={palette.accentDeep} name="shield-halved" size={20} />
             </View>
             <Text style={styles.panelTitle}>
-              {preview ? 'Security setup needs the live backend.' : 'Sign in to continue.'}
+              {unconfigured ? 'Security setup needs live Spottr services.' : 'Sign in to continue.'}
             </Text>
             <Text style={styles.panelBody}>
-              {preview
-                ? 'Preview mode accepts no real credentials and stores no server-side account.'
+              {unconfigured
+                ? 'This build accepts no credentials and creates no account until the secured backend is configured.'
                 : 'Your security settings are available only after a verified sign-in.'}
             </Text>
-            {!preview ? (
+            {!unconfigured ? (
               <Pressable
                 accessibilityRole="button"
                 onPress={() => router.replace('/auth')}

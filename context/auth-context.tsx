@@ -16,9 +16,9 @@ import { toActionError } from '@/lib/errors';
 import { appRouteUrl } from '@/lib/links';
 import { usernameKey, validateUsername } from '@/lib/moderation';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
-import { AccountRole, ActionResult, DemoAccount } from '@/types/marketplace';
+import { AccountRole, AccountSummary, ActionResult } from '@/types/marketplace';
 
-type AuthStatus = 'loading' | 'preview' | 'anonymous' | 'authenticated' | 'error';
+type AuthStatus = 'loading' | 'unconfigured' | 'anonymous' | 'authenticated' | 'error';
 type SecurityStatus = 'loading' | 'ready' | 'error';
 
 type SignUpInput = {
@@ -31,7 +31,7 @@ type SignUpInput = {
 };
 
 type AuthContextValue = {
-  account: DemoAccount | null;
+  account: AccountSummary | null;
   status: AuthStatus;
   isConfigured: boolean;
   isBusy: boolean;
@@ -50,23 +50,13 @@ type AuthContextValue = {
   updatePassword: (password: string) => Promise<ActionResult>;
   signOut: () => Promise<ActionResult>;
   deleteAccount: () => Promise<ActionResult>;
-  setPreviewRole: (role: AccountRole) => void;
   refreshSecurity: () => Promise<ActionResult>;
   clearMessage: () => void;
 };
 
-const previewAccount: DemoAccount = {
-  id: 'preview-user',
-  username: 'maya.rose',
-  displayName: 'Maya Rose',
-  email: 'maya@example.com',
-  role: 'customer',
-  emailVerified: true,
-};
-
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function safeUserAccount(user: User): DemoAccount {
+function safeUserAccount(user: User): AccountSummary {
   const metadata = user.user_metadata ?? {};
   return {
     id: user.id,
@@ -86,10 +76,8 @@ function safeUserAccount(user: User): DemoAccount {
 }
 
 export function AuthProvider({ children }: PropsWithChildren) {
-  const [status, setStatus] = useState<AuthStatus>(isSupabaseConfigured ? 'loading' : 'preview');
-  const [account, setAccount] = useState<DemoAccount | null>(
-    isSupabaseConfigured ? null : previewAccount
-  );
+  const [status, setStatus] = useState<AuthStatus>(isSupabaseConfigured ? 'loading' : 'unconfigured');
+  const [account, setAccount] = useState<AccountSummary | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [recoveryReady, setRecoveryReady] = useState(false);
   const [mfaEnrolled, setMfaEnrolled] = useState(false);
@@ -350,7 +338,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       return {
         ok: false,
         code: 'CONFIG_REQUIRED',
-        reason: 'Live sign-in is unavailable in this preview.',
+        reason: 'Live sign-in is unavailable because Spottr services are not configured.',
       };
     }
 
@@ -529,11 +517,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }, [account, assuranceLevel, status]);
 
-  const setPreviewRole = useCallback((role: AccountRole) => {
-    if (isSupabaseConfigured) return;
-    setAccount((current) => (current ? { ...current, role } : { ...previewAccount, role }));
-  }, []);
-
   const value = useMemo<AuthContextValue>(
     () => ({
       account,
@@ -552,7 +535,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
       updatePassword,
       signOut,
       deleteAccount,
-      setPreviewRole,
       refreshSecurity,
       clearMessage: () => setMessage(null),
     }),
@@ -567,7 +549,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
       recoveryReady,
       refreshSecurity,
       requestPasswordReset,
-      setPreviewRole,
       signIn,
       signOut,
       signUp,

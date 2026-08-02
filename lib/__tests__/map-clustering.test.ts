@@ -1,0 +1,39 @@
+import { seedPlaces } from '@/data/places';
+import { clusterPlaces, zoomFromLongitudeDelta } from '@/lib/map-clustering';
+
+describe('map clustering', () => {
+  it('groups close listings at city zoom and expands them at street zoom', () => {
+    const close = [
+      { ...seedPlaces[0], id: 'one', latitude: 34.05, longitude: -118.25 },
+      { ...seedPlaces[1], id: 'two', latitude: 34.0501, longitude: -118.2501 },
+    ];
+
+    const city = clusterPlaces(close, 10);
+    expect(city).toHaveLength(1);
+    expect(city[0]).toMatchObject({ kind: 'cluster', count: 2 });
+
+    const street = clusterPlaces(close, 16);
+    expect(street).toHaveLength(2);
+    expect(street.every((feature) => feature.kind === 'place')).toBe(true);
+  });
+
+  it('preserves category counts and handles the antimeridian centroid', () => {
+    const places = [
+      { ...seedPlaces[0], id: 'east', latitude: 0, longitude: 179.99 },
+      { ...seedPlaces[3], id: 'west', latitude: 0, longitude: -179.99 },
+    ];
+    const feature = clusterPlaces(places, 2, 10_000)[0];
+    expect(feature.kind).toBe('cluster');
+    if (feature.kind !== 'cluster') return;
+    expect(Math.abs(feature.longitude)).toBeGreaterThan(179);
+    expect(feature.categories.food_truck).toBe(1);
+    expect(feature.categories.restaurant).toBe(1);
+  });
+
+  it('derives a bounded zoom from native longitude deltas', () => {
+    expect(zoomFromLongitudeDelta(360)).toBe(2);
+    expect(zoomFromLongitudeDelta(0.01)).toBeLessThanOrEqual(18);
+    expect(zoomFromLongitudeDelta(0)).toBe(2);
+  });
+});
+

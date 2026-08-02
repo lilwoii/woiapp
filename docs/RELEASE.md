@@ -216,7 +216,7 @@ guarantee.
 Production sponsored placement and ordering remain disabled until the separate
 acceptance programs in [MONETIZATION.md](MONETIZATION.md) and
 [ORDERING_ARCHITECTURE.md](ORDERING_ARCHITECTURE.md) are complete. In
-particular, a UI preview, client state machine, database schema, processor
+particular, a client interface, state machine, database schema, processor
 sandbox, or unsigned build is not evidence of billing, settlement, tax,
 refund, store-policy, or marketplace-liability readiness.
 
@@ -225,6 +225,18 @@ from organic ranking, match every explicit filter, and support hide/report and
 plain-language explanation controls. Consumer food checkout and merchant
 digital purchases have different Apple/Google payment-policy boundaries; the
 exact regional implementation requires current store and legal review.
+
+The phase-O1 shadow-order migration is deliberately zero-money and employee
+only. Apply and review
+`supabase/migrations/20260802000000_shadow_ordering_foundation.sql` after the
+baseline schema. Do not change `pilot_mode` to `shadow` outside an internal
+operations environment until its RLS/runtime/concurrency tests have passed
+against the target Postgres instance. This migration does not authorize or
+implement prepaid checkout.
+
+Keep `EXPO_PUBLIC_PICKUP_ORDERING_ENABLED=false` in every customer build until
+the full ordering program is approved. The flag exposes only the staff pilot
+surface; it is not authorization to accept customer orders or money.
 
 ## 7. Account export and deletion drill
 

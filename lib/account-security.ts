@@ -25,7 +25,7 @@ async function requireAuthenticatedClient() {
       result: {
         ok: false as const,
         code: 'CONFIG_REQUIRED' as const,
-        reason: 'Live account security is unavailable in preview mode.',
+        reason: 'Live account security is unavailable because Spottr services are not configured.',
       },
     };
   }

@@ -39,6 +39,14 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 const idempotencyPattern = /^[A-Za-z0-9._:-]{16,128}$/;
 let actionIdempotencySequence = 0;
 
+function configurationRequired<T = undefined>(): ActionResult<T> {
+  return {
+    ok: false,
+    code: 'CONFIG_REQUIRED',
+    reason: 'Live Spottr services are not configured for this build.',
+  };
+}
+
 export function createMarketplaceIdempotencyKey(
   scope: 'review' | 'update' | 'response'
 ) {
@@ -72,7 +80,7 @@ const categoryLabels: Record<BusinessCategory, string> = {
   restaurant: 'Restaurant',
   pop_up: 'Pop-up',
   cafe_bakery: 'Café & bakery',
-  home_kitchen: 'Verified home kitchen',
+  home_kitchen: 'Neighborhood kitchen',
 };
 
 const categoryAccents: Record<BusinessCategory, string> = {
@@ -1019,7 +1027,7 @@ async function authenticatedUserId(): Promise<ActionResult<string>> {
 
 export async function fetchFollowedIds(): Promise<ActionResult<string[]>> {
   const client = supabase;
-  if (!client) return { ok: true, data: [] };
+  if (!client) return configurationRequired();
   const user = await authenticatedUserId();
   if (!user.ok) return user;
 
@@ -1040,7 +1048,7 @@ export async function fetchFollowedIds(): Promise<ActionResult<string[]>> {
 
 export async function fetchManagedBusinessIds(): Promise<ActionResult<string[]>> {
   const client = supabase;
-  if (!client) return { ok: true, data: [] };
+  if (!client) return configurationRequired();
   const user = await authenticatedUserId();
   if (!user.ok) return user;
 
@@ -1248,7 +1256,7 @@ export async function setMenuItemAvailability(
   soldOut: boolean
 ): Promise<ActionResult> {
   const client = supabase;
-  if (!client) return { ok: true };
+  if (!client) return configurationRequired();
   const user = await authenticatedUserId();
   if (!user.ok) return user;
 
@@ -1271,12 +1279,7 @@ export async function submitContentReport(input: {
   detail?: string;
 }): Promise<ActionResult> {
   const client = supabase;
-  if (!client) {
-    return {
-      ok: true,
-      message: 'Report recorded in this preview. Live reports are routed to the safety queue.',
-    };
-  }
+  if (!client) return configurationRequired();
   const user = await authenticatedUserId();
   if (!user.ok) return user;
 
@@ -1299,7 +1302,7 @@ export async function submitContentReport(input: {
 
 export async function blockUser(blockedPublicProfileId: string): Promise<ActionResult> {
   const client = supabase;
-  if (!client) return { ok: true, message: 'This member is hidden in preview mode.' };
+  if (!client) return configurationRequired();
   const user = await authenticatedUserId();
   if (!user.ok) return user;
   if (!uuidPattern.test(blockedPublicProfileId)) {
@@ -1335,13 +1338,7 @@ export async function createBusinessDraft(input: {
   permitNumber?: string;
 }): Promise<ActionResult<{ businessId: string }>> {
   const client = supabase;
-  if (!client) {
-    return {
-      ok: true,
-      data: { businessId: `preview-${Date.now()}` },
-      message: 'Business draft completed in preview mode.',
-    };
-  }
+  if (!client) return configurationRequired();
   const user = await authenticatedUserId();
   if (!user.ok) return user;
 
@@ -1388,12 +1385,7 @@ export async function submitBusinessClaim(
   method: 'listed_phone' | 'domain_email' | 'document' | 'permit'
 ): Promise<ActionResult> {
   const client = supabase;
-  if (!client) {
-    return {
-      ok: true,
-      message: 'Claim completed in preview mode.',
-    };
-  }
+  if (!client) return configurationRequired();
   const user = await authenticatedUserId();
   if (!user.ok) return user;
 
@@ -1417,13 +1409,7 @@ export async function requestAccountExport(): Promise<
   ActionResult<{ content?: string; fileName?: string }>
 > {
   const client = supabase;
-  if (!client) {
-    return {
-      ok: true,
-      data: {},
-      message: 'Preview accounts contain no server-side personal data to export.',
-    };
-  }
+  if (!client) return configurationRequired();
   const user = await authenticatedUserId();
   if (!user.ok) return user;
 
@@ -1448,7 +1434,7 @@ export async function updateFollowAlertPreference(
   enabled: boolean
 ): Promise<ActionResult> {
   const client = supabase;
-  if (!client) return { ok: true };
+  if (!client) return configurationRequired();
   const user = await authenticatedUserId();
   if (!user.ok) return user;
   if (!businessIds.length) return { ok: true };
@@ -1476,7 +1462,8 @@ export async function fetchFollowAlertPreferences(
   businessIds: string[]
 ): Promise<ActionResult<{ liveNearby: boolean; ownerUpdates: boolean }>> {
   const client = supabase;
-  if (!client || !businessIds.length) {
+  if (!client) return configurationRequired();
+  if (!businessIds.length) {
     return {
       ok: true,
       data: { liveNearby: true, ownerUpdates: true },

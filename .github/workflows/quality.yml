@@ -14,6 +14,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  shadow-ordering-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: spottr_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d spottr_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install --yes postgresql-client
+
+      - name: Bootstrap ordering runtime
+        run: psql -h 127.0.0.1 -U postgres -d spottr_test -f supabase/tests/shadow_ordering_runtime_setup.sql
+
+      - name: Apply shadow-order migration
+        run: psql -h 127.0.0.1 -U postgres -d spottr_test -f supabase/migrations/20260802000000_shadow_ordering_foundation.sql
+
+      - name: Exercise ordering invariants and RLS
+        run: psql -h 127.0.0.1 -U postgres -d spottr_test -f supabase/tests/shadow_ordering_runtime_test.sql
+
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20

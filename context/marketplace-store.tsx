@@ -9,7 +9,6 @@ import {
   useState,
 } from 'react';
 
-import { seedPlaces } from '@/data/places';
 import { useAuth } from '@/context/auth-context';
 import {
   fetchFollowedIds,
@@ -24,14 +23,11 @@ import {
   submitReview,
   updateVenueStatus,
 } from '@/lib/marketplace-api';
-import { featureFlags } from '@/lib/features';
 import { checkProfessionalText } from '@/lib/moderation';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 import {
-  AccountRole,
   ActionResult,
-  BusinessUpdate,
-  DemoAccount,
+  AccountSummary,
   OwnerUpdateInput,
   Place,
   ReviewInput,
@@ -42,7 +38,7 @@ import {
 type MarketplaceStoreValue = {
   places: Place[];
   followedIds: string[];
-  account: DemoAccount;
+  account: AccountSummary;
   syncStatus: SyncStatus;
   syncMessage: string;
   hasMoreResults: boolean;
@@ -53,7 +49,6 @@ type MarketplaceStoreValue = {
   addReview: (placeId: string, input: ReviewInput) => Promise<ActionResult>;
   publishUpdate: (input: OwnerUpdateInput) => Promise<ActionResult>;
   setVenueStatus: (placeId: string, status: VenueStatus) => Promise<ActionResult>;
-  setRole: (role: AccountRole) => void;
   refreshAccess: () => Promise<ActionResult>;
   ensurePlace: (placeId: string) => Promise<ActionResult>;
   searchArea: (searchText: string) => Promise<ActionResult>;
@@ -68,7 +63,7 @@ type MarketplaceStoreValue = {
 
 const MarketplaceStoreContext = createContext<MarketplaceStoreValue | null>(null);
 
-const guestAccount: DemoAccount = {
+const guestAccount: AccountSummary = {
   id: 'guest',
   username: 'guest',
   displayName: 'Spottr guest',
@@ -76,23 +71,23 @@ const guestAccount: DemoAccount = {
   role: 'customer',
 };
 
-const previewPlaces = featureFlags.homeKitchens
-  ? seedPlaces
-  : seedPlaces.filter((place) => place.category !== 'home_kitchen');
+const liveServicesRequired: Extract<ActionResult, { ok: false }> = {
+  ok: false,
+  code: 'CONFIG_REQUIRED',
+  reason: 'Live Spottr services are not configured for this build.',
+};
 
 export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   const auth = useAuth();
-  const [places, setPlaces] = useState<Place[]>(isSupabaseConfigured ? [] : previewPlaces);
-  const [followedIds, setFollowedIds] = useState<string[]>(
-    isSupabaseConfigured ? [] : ['copper-coyote', 'soft-corner-bakes']
-  );
+  const [places, setPlaces] = useState<Place[]>([]);
+  const [followedIds, setFollowedIds] = useState<string[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(
-    isSupabaseConfigured ? 'idle' : 'demo'
+    isSupabaseConfigured ? 'idle' : 'error'
   );
   const [syncMessage, setSyncMessage] = useState(
     isSupabaseConfigured
       ? 'Choose your location, city, or ZIP to load nearby listings.'
-      : 'Curated preview data is active. Live publishing turns on when the secured backend is connected.'
+      : 'Live Spottr services are not configured. Listings and account changes are unavailable.'
   );
   const [pendingPlaceIds, setPendingPlaceIds] = useState<string[]>([]);
   const [managedPlaceIds, setManagedPlaceIds] = useState<string[]>([]);
@@ -101,7 +96,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   const activeRefresh = useRef<Promise<ActionResult<MarketplacePage>> | null>(null);
   const nextResultOffset = useRef(0);
   const managedPlaceIdsRef = useRef<string[]>([]);
-  const followedIdsRef = useRef<string[]>(isSupabaseConfigured ? [] : ['copper-coyote', 'soft-corner-bakes']);
+  const followedIdsRef = useRef<string[]>([]);
   const lastOrigin = useRef<{
     latitude: number;
     longitude: number;
@@ -115,11 +110,12 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
     radiusMeters?: number;
   }): Promise<ActionResult> => {
     if (!isSupabaseConfigured) {
-      setPlaces(previewPlaces);
-      setSyncStatus('demo');
+      setPlaces([]);
+      setSyncStatus('error');
+      setSyncMessage(liveServicesRequired.reason);
       setHasMoreResults(false);
       nextResultOffset.current = 0;
-      return { ok: true };
+      return liveServicesRequired;
     }
     if (origin) {
       lastOrigin.current = origin;
@@ -174,9 +170,10 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
 
   const searchArea = useCallback(async (searchText: string): Promise<ActionResult> => {
     if (!isSupabaseConfigured) {
-      setPlaces(previewPlaces);
-      setSyncStatus('demo');
-      return { ok: true };
+      setPlaces([]);
+      setSyncStatus('error');
+      setSyncMessage(liveServicesRequired.reason);
+      return liveServicesRequired;
     }
 
     const clean = searchText.replace(/\s+/g, ' ').trim();
@@ -229,7 +226,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   }, [hasMoreResults, loadingMoreResults]);
 
   const refreshAccess = useCallback(async (): Promise<ActionResult> => {
-    if (!isSupabaseConfigured) return { ok: true };
+    if (!isSupabaseConfigured) return liveServicesRequired;
     if (auth.status !== 'authenticated') {
       managedPlaceIdsRef.current = [];
       followedIdsRef.current = [];
@@ -257,11 +254,11 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   const ensurePlace = useCallback(
     async (placeId: string): Promise<ActionResult> => {
       const existingPlace = places.find((place) => place.id === placeId);
-      if (existingPlace && (!isSupabaseConfigured || existingPlace.detailsLoaded)) {
+      if (existingPlace?.detailsLoaded) {
         return { ok: true };
       }
       if (!isSupabaseConfigured) {
-        return { ok: false, code: 'NOT_FOUND', reason: 'This preview listing is unavailable.' };
+        return liveServicesRequired;
       }
 
       const result = await fetchMarketplacePlaceById(placeId);
@@ -321,16 +318,6 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   }, [auth.account?.id, auth.status, refreshAccess]);
 
   useEffect(() => {
-    if (isSupabaseConfigured) return;
-    const timer = setTimeout(() => {
-      const ids = auth.account?.role === 'business' ? ['copper-coyote'] : [];
-      managedPlaceIdsRef.current = ids;
-      setManagedPlaceIds(ids);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [auth.account?.role]);
-
-  useEffect(() => {
     const client = supabase;
     if (!client || !isSupabaseConfigured) return;
 
@@ -355,6 +342,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
 
   const toggleFollow = useCallback(
     async (placeId: string): Promise<ActionResult> => {
+      if (!isSupabaseConfigured) return liveServicesRequired;
       if (pendingPlaceIds.includes(placeId)) {
         return { ok: false, code: 'UNKNOWN', reason: 'This change is already in progress.' };
       }
@@ -366,11 +354,6 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       setPendingPlaceIds((current) => [...current, placeId]);
       followedIdsRef.current = nextIds;
       setFollowedIds(nextIds);
-
-      if (!isSupabaseConfigured) {
-        setPendingPlaceIds((current) => current.filter((id) => id !== placeId));
-        return { ok: true };
-      }
 
       const result = await setFollow(placeId, nextFollowing);
       if (!result.ok) {
@@ -393,83 +376,22 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
     const place = places.find((entry) => entry.id === placeId);
     if (!place) return { ok: false, reason: 'This place is no longer available.' };
 
-    if (isSupabaseConfigured) {
-      return submitReview(placeId, { ...input, comment: moderation.clean });
-    }
-
-    const author = auth.account ?? guestAccount;
-    setPlaces((current) =>
-      current.map((entry) => {
-        if (entry.id !== placeId) return entry;
-
-        const nextCount = entry.reviewCount + 1;
-        const nextRating = (entry.rating * entry.reviewCount + input.rating) / nextCount;
-
-        return {
-          ...entry,
-          rating: Number(nextRating.toFixed(2)),
-          reviewCount: nextCount,
-          reviews: [
-            {
-              id: `${placeId}-${Date.now()}`,
-              username: author.username,
-              displayName: author.displayName,
-              rating: input.rating,
-              comment: moderation.clean,
-              createdAt: 'Just now',
-              photos: input.photos ?? [],
-              helpfulCount: 0,
-              moderation: 'approved',
-            },
-            ...entry.reviews,
-          ],
-        };
-      })
-    );
-
-    return { ok: true };
-  }, [auth.account, places]);
+    if (!isSupabaseConfigured) return liveServicesRequired;
+    return submitReview(placeId, { ...input, comment: moderation.clean });
+  }, [places]);
 
   const publishUpdate = useCallback(async (input: OwnerUpdateInput): Promise<ActionResult> => {
     const moderation = checkProfessionalText(input.message, 120);
     if (!moderation.ok) return moderation;
 
-    if (isSupabaseConfigured) {
-      return submitOwnerUpdate({ ...input, message: moderation.clean });
-    }
-
-    const update: BusinessUpdate = {
-      id: `${input.placeId}-${Date.now()}`,
-      type: input.type,
-      message: moderation.clean,
-      createdAt: 'Just now',
-      expiresAt: 'Expires automatically in 6 hours',
-    };
-
-    setPlaces((current) =>
-      current.map((place) => (place.id === input.placeId ? { ...place, update } : place))
-    );
-
-    return { ok: true };
+    if (!isSupabaseConfigured) return liveServicesRequired;
+    return submitOwnerUpdate({ ...input, message: moderation.clean });
   }, []);
 
   const setVenueStatus = useCallback(async (placeId: string, status: VenueStatus): Promise<ActionResult> => {
-    if (isSupabaseConfigured) {
-      const result = await updateVenueStatus(placeId, status);
-      if (!result.ok) return result;
-    }
-
-    setPlaces((current) =>
-      current.map((place) =>
-        place.id === placeId
-          ? { ...place, status, lastConfirmedAt: 'Just now' }
-          : place
-      )
-    );
-    return { ok: true };
+    if (!isSupabaseConfigured) return liveServicesRequired;
+    return updateVenueStatus(placeId, status);
   }, []);
-
-  const setRole = auth.setPreviewRole;
 
   const value = useMemo(
     () => ({
@@ -486,7 +408,6 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       addReview,
       publishUpdate,
       setVenueStatus,
-      setRole,
       refreshAccess,
       ensurePlace,
       searchArea,
@@ -510,7 +431,6 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       loadMoreReviews,
       loadingMoreResults,
       searchArea,
-      setRole,
       setVenueStatus,
       syncMessage,
       syncStatus,

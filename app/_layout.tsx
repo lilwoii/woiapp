@@ -1,6 +1,7 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { StatusBar } from 'expo-status-bar';
 import { DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import Head from 'expo-router/head';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { useEffect } from 'react';
@@ -55,6 +56,9 @@ export default function RootLayout() {
         <AuthProvider>
           <MarketplaceStoreProvider>
             <ThemeProvider value={theme}>
+              <Head>
+                <title>Spottr · Live local food, mapped</title>
+              </Head>
               <StatusBar style="dark" />
               <Stack
                 screenOptions={{
@@ -62,6 +66,7 @@ export default function RootLayout() {
                   headerShown: false,
                   headerStyle: { backgroundColor: '#FFFDF8' },
                   headerTitleStyle: { color: '#191D1B', fontWeight: '800' },
+                  title: 'Spottr · Live local food, mapped',
                 }}>
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="place/[id]" options={{ headerShown: false }} />

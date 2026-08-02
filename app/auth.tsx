@@ -273,10 +273,10 @@ export default function AuthScreen() {
             </View>
 
             {!auth.isConfigured ? (
-              <View accessibilityRole="alert" style={styles.previewNotice}>
+              <View accessibilityRole="alert" style={styles.configurationNotice}>
                 <FontAwesome6 color={palette.accentDeep} name="circle-info" size={14} />
-                <Text style={styles.previewNoticeText}>
-                  This published preview does not accept real credentials. Connect the secured backend to enable accounts.
+                <Text style={styles.configurationNoticeText}>
+                  Account services are not configured. This build accepts no credentials until the secured backend is connected.
                 </Text>
               </View>
             ) : null}
@@ -551,7 +551,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
   },
-  previewNotice: {
+  configurationNotice: {
     alignItems: 'flex-start',
     backgroundColor: palette.accentSoft,
     borderRadius: radii.md,
@@ -559,7 +559,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     padding: spacing.md,
   },
-  previewNoticeText: {
+  configurationNoticeText: {
     color: palette.accentDeep,
     flex: 1,
     fontSize: 10,
