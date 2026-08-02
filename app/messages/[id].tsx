@@ -24,23 +24,29 @@ import { chatSafetyIssue, chatSafetyMessage } from '@/lib/chat-safety';
 import {
   getMarketplaceMessages,
   getAuthorizedMarketplacePickupDetail,
+  getAuthorizedNeighborhoodPickupDetail,
+  getMarketplaceConversationContext,
   getMarketplaceConversationRole,
   getMarketplaceTyping,
   listMarketplacePickupOptions,
+  listNeighborhoodPickupChoices,
   listMarketplacePickupRequests,
   listMarketplaceConversations,
   markMarketplaceConversationRead,
   reportMarketplaceMessage,
   requestMarketplacePickup,
+  requestNeighborhoodPickupChoice,
   resolveMarketplacePickup,
   sendMarketplaceMessage,
   setMarketplaceTyping,
   authorizeMarketplacePickup,
+  authorizeNeighborhoodPickupChoice,
+  clearMarketplaceConversation,
 } from '@/lib/marketplace-chat';
 import { blockUser } from '@/lib/marketplace-api';
 import { mediaProcessingStates, stageMediaUpload } from '@/lib/media-upload';
 import { confirmAction, showMessage } from '@/lib/platform-dialog';
-import type { MarketplaceChatMessage, MarketplaceConversation, MarketplacePickupDetail, MarketplacePickupOption, MarketplacePickupRequest, MarketplaceTypingMember } from '@/types/chat';
+import type { MarketplaceChatMessage, MarketplaceConversation, MarketplaceConversationContext, MarketplacePickupDetail, MarketplacePickupOption, MarketplacePickupRequest, MarketplaceTypingMember } from '@/types/chat';
 
 const sentTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const pickupTime = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
@@ -61,8 +67,10 @@ export default function ConversationScreen() {
   const [conversation, setConversation] = useState<MarketplaceConversation | null>(null);
   const [typing, setTyping] = useState<MarketplaceTypingMember[]>([]);
   const [pickupRole, setPickupRole] = useState<'customer' | 'merchant' | null>(null);
+  const [chatContext, setChatContext] = useState<MarketplaceConversationContext | null>(null);
   const [pickupRequests, setPickupRequests] = useState<MarketplacePickupRequest[]>([]);
   const [pickupOptions, setPickupOptions] = useState<MarketplacePickupOption[]>([]);
+  const [selectedPickupOption, setSelectedPickupOption] = useState<MarketplacePickupOption | null>(null);
   const [pickupDetail, setPickupDetail] = useState<MarketplacePickupDetail | null>(null);
   const [pickupBusy, setPickupBusy] = useState(false);
   const [photos, setPhotos] = useState<{ assetId: string; uri: string; state: 'pending' | 'approved' | 'rejected' }[]>([]);
@@ -77,11 +85,11 @@ export default function ConversationScreen() {
   const refresh = useCallback(async (quiet = false) => {
     if (!id) return;
     if (!quiet) setLoading(true);
-    const [messageResult, typingMembers, requestResult, role] = await Promise.all([
+    const [messageResult, typingMembers, requestResult, contextResult] = await Promise.all([
       getMarketplaceMessages(id),
       getMarketplaceTyping(id),
       listMarketplacePickupRequests(id),
-      getMarketplaceConversationRole(id),
+      getMarketplaceConversationContext(id),
     ]);
     if (!quiet) setLoading(false);
     if (!messageResult.ok) {
@@ -92,13 +100,18 @@ export default function ConversationScreen() {
     setError(null);
     setMessages(nextMessages);
     setTyping(typingMembers);
+    const context = contextResult.ok ? contextResult.data ?? null : null;
+    const role = context?.role ?? await getMarketplaceConversationRole(id);
+    setChatContext(context);
     setPickupRole(role);
     if (requestResult.ok) {
       const nextRequests = requestResult.data ?? [];
       setPickupRequests(nextRequests);
       const authorized = nextRequests.find((request) => request.state === 'authorized');
       if (authorized && pickupDetailRequestRef.current !== authorized.id) {
-        const detailResult = await getAuthorizedMarketplacePickupDetail(id, authorized.id);
+        const detailResult = context?.businessCategory === 'home_kitchen'
+          ? await getAuthorizedNeighborhoodPickupDetail(id, authorized.id)
+          : await getAuthorizedMarketplacePickupDetail(id, authorized.id);
         if (detailResult.ok) {
           pickupDetailRequestRef.current = authorized.id;
           setPickupDetail(detailResult.data ?? null);
@@ -113,7 +126,14 @@ export default function ConversationScreen() {
         }
       }
     }
-    if (role === 'merchant') {
+    if (context?.businessCategory === 'home_kitchen' && role === 'customer') {
+      const optionResult = await listNeighborhoodPickupChoices(id);
+      if (optionResult.ok) {
+        const nextOptions = optionResult.data ?? [];
+        setPickupOptions(nextOptions);
+        setSelectedPickupOption((current) => nextOptions.find((option) => option.id === current?.id) ?? null);
+      }
+    } else if (role === 'merchant' && context?.businessCategory !== 'home_kitchen') {
       const optionResult = await listMarketplacePickupOptions(id);
       if (optionResult.ok) setPickupOptions(optionResult.data ?? []);
     }
@@ -239,7 +259,17 @@ export default function ConversationScreen() {
     if (!id || pickupBusy || pickupRole !== 'customer') return;
     const { startsAt, endsAt } = pickupWindowFromNow(minutesFromNow);
     setPickupBusy(true);
-    const result = await requestMarketplacePickup(id, startsAt, endsAt);
+    const result = chatContext?.businessCategory === 'home_kitchen'
+      ? selectedPickupOption
+        ? await requestNeighborhoodPickupChoice(
+          id,
+          selectedPickupOption,
+          startsAt,
+          endsAt,
+          selectedPickupOption.kind === 'seller_residence'
+        )
+        : { ok: false as const, reason: 'Choose a pickup location first.' }
+      : await requestMarketplacePickup(id, startsAt, endsAt);
     setPickupBusy(false);
     if (!result.ok) {
       showMessage('Pickup request unavailable', result.reason);
@@ -264,6 +294,47 @@ export default function ConversationScreen() {
     }
     pickupDetailRequestRef.current = null;
     await refresh(true);
+  };
+
+  const acceptNeighborhoodPickup = async (request: MarketplacePickupRequest) => {
+    if (!id || pickupBusy || pickupRole !== 'merchant') return;
+    if (auth.assuranceLevel !== 'aal2') {
+      showMessage('Verification required', 'Verify an authenticator code before releasing pickup details.');
+      router.push('/security');
+      return;
+    }
+    setPickupBusy(true);
+    const result = await authorizeNeighborhoodPickupChoice(id, request.id, request.version);
+    setPickupBusy(false);
+    if (!result.ok) { showMessage('Pickup preference unavailable', result.reason); return; }
+    pickupDetailRequestRef.current = null;
+    await refresh(true);
+  };
+
+  const choosePickupOption = async (option: MarketplacePickupOption) => {
+    if (option.kind === 'seller_residence') {
+      const accepted = await confirmAction({
+        title: 'Residence pickup caution',
+        message: 'Spottr recommends a public shopping center. If you choose the seller residence, tell someone where you are going, meet in daylight when possible, and leave if anything feels wrong. Spottr does not inspect or guarantee the location or transaction.',
+        confirmLabel: 'I understand',
+      });
+      if (!accepted) return;
+    }
+    setSelectedPickupOption(option);
+  };
+
+  const clearInbox = async () => {
+    if (!id) return;
+    const confirmed = await confirmAction({
+      title: 'Clear from your inbox?',
+      message: 'This hides the current history for you and cancels any active pickup detail. The other participant keeps their copy, and Spottr may retain records under its safety and legal policy. A new message can make this chat reappear.',
+      confirmLabel: 'Clear inbox',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    const result = await clearMarketplaceConversation(id);
+    if (result.ok) router.replace('/messages' as never);
+    else showMessage('Conversation not cleared', result.reason);
   };
 
   const resolvePickup = async (request: MarketplacePickupRequest) => {
@@ -330,6 +401,9 @@ export default function ConversationScreen() {
               <Text style={styles.headerTitle}>{conversation?.counterpart.name ?? 'Private conversation'}</Text>
               <Text style={styles.headerMeta}>{conversation ? `${conversation.counterpart.username ? `@${conversation.counterpart.username} · ` : ''}${conversation.businessName}` : 'Encrypted in transit · participant-only access'}</Text>
             </View>
+            <Pressable accessibilityLabel="Clear conversation from my inbox" accessibilityRole="button" onPress={() => void clearInbox()} style={styles.iconButton}>
+              <FontAwesome6 color={palette.ink} name="broom" size={13} />
+            </Pressable>
             <Pressable accessibilityLabel="Block conversation member" accessibilityRole="button" accessibilityState={{ disabled: !conversation?.counterpart.profileId }} disabled={!conversation?.counterpart.profileId} onPress={() => void blockCounterpart()} style={[styles.iconButton, !conversation?.counterpart.profileId && styles.iconButtonDisabled]}>
               <FontAwesome6 color={palette.accentDeep} name="user-slash" size={13} />
             </Pressable>
@@ -337,8 +411,9 @@ export default function ConversationScreen() {
 
           <View style={styles.privacyBanner}>
             <FontAwesome6 color={palette.success} name="shield-halved" size={13} />
-            <Text style={styles.privacyText}>Do not post a home address in messages. Exact pickup details appear only in a verified, expiring pickup card.</Text>
+            <Text style={styles.privacyText}>Do not post addresses, card, bank, or identity details. Structured pickup details expire automatically. Spottr does not process or guarantee the transaction.</Text>
           </View>
+          {chatContext?.paymentMethods.length ? <View style={styles.paymentLine}><Text style={styles.paymentText}>Seller-reported: {chatContext.paymentMethods.map((method) => method.replaceAll('_', ' ')).join(' · ')}. Pay the seller directly.</Text></View> : null}
 
           {auth.status !== 'authenticated' ? (
             <View style={styles.center}>
@@ -363,7 +438,7 @@ export default function ConversationScreen() {
                 keyboardShouldPersistTaps="handled"
                 ref={scrollRef}>
                 {messages.map((message) => {
-                  const mine = message.sender.username === auth.account?.username;
+                  const mine = Boolean(chatContext?.actorProfileId && message.sender.profileId === chatContext.actorProfileId);
                   return (
                     <View key={message.id} style={[styles.messageRow, mine && styles.messageRowMine]}>
                       {!mine ? (
@@ -398,8 +473,8 @@ export default function ConversationScreen() {
                 <View style={styles.pickupHeading}>
                   <FontAwesome6 color={palette.accentDeep} name="location-dot" size={12} />
                   <View style={styles.pickupHeadingCopy}>
-                    <Text style={styles.pickupTitle}>Verified pickup</Text>
-                    <Text style={styles.pickupSubtitle}>Exact details stay out of messages and expire automatically.</Text>
+                    <Text style={styles.pickupTitle}>Pickup details</Text>
+                    <Text style={styles.pickupSubtitle}>Choose a meetup preference, agree on timing, and keep precise details in the expiring card.</Text>
                   </View>
                 </View>
                 {activePickup?.state === 'authorized' && pickupDetail ? (
@@ -426,31 +501,52 @@ export default function ConversationScreen() {
                   </View>
                 ) : activePickup?.state === 'pending' && pickupRole === 'merchant' ? (
                   <View style={styles.pickupDetail}>
-                    <Text style={styles.pickupStatus}>Customer requested {pickupTime.format(new Date(activePickup.startsAt))}–{pickupTime.format(new Date(activePickup.endsAt))}.</Text>
-                    {pickupOptions.length ? pickupOptions.slice(0, 3).map((option) => (
+                    <Text style={styles.pickupStatus}>Customer requested {pickupTime.format(new Date(activePickup.startsAt))}–{pickupTime.format(new Date(activePickup.endsAt))}{activePickup.choice ? ` at ${activePickup.choice.label}` : ''}.</Text>
+                    {chatContext?.businessCategory === 'home_kitchen' && activePickup.choice ? (
+                      <View style={styles.pickupOption}>
+                        <View style={styles.pickupDetailCopy}>
+                          <Text style={styles.pickupLocation}>{activePickup.choice.label}</Text>
+                          <Text style={styles.pickupAddress}>{activePickup.choice.city}, {activePickup.choice.region}{activePickup.choice.kind === 'seller_residence' ? ' · customer accepted residence caution' : ' · customer-selected public place'}</Text>
+                        </View>
+                        <Pressable accessibilityRole="button" disabled={pickupBusy} onPress={() => void acceptNeighborhoodPickup(activePickup)} style={styles.pickupPrimary}><Text style={styles.pickupPrimaryText}>Accept</Text></Pressable>
+                      </View>
+                    ) : pickupOptions.length ? pickupOptions.slice(0, 3).map((option) => (
                       <Pressable accessibilityRole="button" disabled={pickupBusy} key={option.id} onPress={() => void authorizePickup(activePickup, option)} style={styles.pickupOption}>
                         <View style={styles.pickupDetailCopy}>
                           <Text style={styles.pickupLocation}>{option.label}</Text>
-                          <Text style={styles.pickupAddress}>{option.city}, {option.region} · staff-approved public location</Text>
+                          <Text style={styles.pickupAddress}>{option.city}, {option.region} · public meeting place</Text>
                         </View>
                         <FontAwesome6 color={palette.accentDeep} name="arrow-right" size={11} />
                       </Pressable>
-                    )) : <Text style={styles.pickupWarning}>Business pickup-location setup and staff approval are required before details can be released.</Text>}
+                    )) : <Text style={styles.pickupWarning}>This pickup preference is no longer available. Decline it and ask the customer to choose again.</Text>}
                     {pickupOptions.length > 3 ? <Text style={styles.pickupStatus}>Showing the first 3 of {pickupOptions.length} approved locations.</Text> : null}
                     <Pressable accessibilityRole="button" disabled={pickupBusy} onPress={() => void resolvePickup(activePickup)} style={styles.pickupLink}><Text style={styles.pickupLinkText}>Decline request</Text></Pressable>
                   </View>
                 ) : activePickup?.state === 'pending' ? (
                   <View style={styles.pickupDetail}>
-                    <Text style={styles.pickupStatus}>Waiting for the seller to approve a public pickup location for {pickupTime.format(new Date(activePickup.startsAt))}.</Text>
+                    <Text style={styles.pickupStatus}>Waiting for the seller to confirm {activePickup.choice?.label ?? 'the pickup preference'} for {pickupTime.format(new Date(activePickup.startsAt))}.</Text>
                     <Pressable accessibilityRole="button" disabled={pickupBusy} onPress={() => void resolvePickup(activePickup)} style={styles.pickupLink}><Text style={styles.pickupLinkText}>Cancel request</Text></Pressable>
                   </View>
                 ) : pickupRole === 'customer' && !threadClosed ? (
-                  <View style={styles.pickupPresets}>
-                    {[60, 120, 24 * 60].map((minutes) => (
-                      <Pressable accessibilityRole="button" disabled={pickupBusy} key={minutes} onPress={() => void requestPickupWindow(minutes)} style={styles.pickupPreset}>
-                        <Text style={styles.pickupPresetText}>{minutes === 60 ? 'In 1 hour' : minutes === 120 ? 'In 2 hours' : 'Tomorrow'}</Text>
-                      </Pressable>
-                    ))}
+                  <View style={styles.pickupDetail}>
+                    {chatContext?.businessCategory === 'home_kitchen' ? (
+                      pickupOptions.length ? pickupOptions.map((option) => (
+                        <Pressable accessibilityRole="radio" accessibilityState={{ checked: selectedPickupOption?.id === option.id }} key={option.id} onPress={() => void choosePickupOption(option)} style={[styles.pickupOption, selectedPickupOption?.id === option.id && styles.pickupOptionSelected]}>
+                          <View style={styles.pickupDetailCopy}>
+                            <Text style={styles.pickupLocation}>{option.label}</Text>
+                            <Text style={styles.pickupAddress}>{option.address ? `${option.address} · ` : ''}{option.city}, {option.region}{option.warningRequired ? ' · extra caution' : ' · recommended public place'}</Text>
+                          </View>
+                          <FontAwesome6 color={selectedPickupOption?.id === option.id ? palette.success : palette.mutedLight} name={selectedPickupOption?.id === option.id ? 'circle-check' : 'circle'} size={13} />
+                        </Pressable>
+                      )) : <Text style={styles.pickupWarning}>The seller has not configured 2–3 current public meetup places. Residence pickup appears only when the seller explicitly enables it.</Text>
+                    ) : null}
+                    <View style={styles.pickupPresets}>
+                      {[60, 120, 24 * 60].map((minutes) => (
+                        <Pressable accessibilityRole="button" disabled={pickupBusy || (chatContext?.businessCategory === 'home_kitchen' && !selectedPickupOption)} key={minutes} onPress={() => void requestPickupWindow(minutes)} style={styles.pickupPreset}>
+                          <Text style={styles.pickupPresetText}>{minutes === 60 ? 'In 1 hour' : minutes === 120 ? 'In 2 hours' : 'Tomorrow'}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
                   </View>
                 ) : (
                   <Text style={styles.pickupStatus}>{threadClosed ? 'Pickup controls are closed with this conversation.' : 'Waiting for the customer to request a pickup window.'}</Text>
@@ -510,6 +606,8 @@ const styles = StyleSheet.create({
   iconButtonDisabled: { opacity: 0.35 },
   privacyBanner: { alignItems: 'flex-start', backgroundColor: palette.successSoft, flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   privacyText: { color: palette.success, flex: 1, fontSize: 9, lineHeight: 14 },
+  paymentLine: { backgroundColor: palette.surface, borderBottomColor: palette.line, borderBottomWidth: 1, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  paymentText: { color: palette.muted, fontSize: 9, lineHeight: 14 },
   center: { alignItems: 'center', flex: 1, gap: spacing.md, justifyContent: 'center', padding: spacing.xl },
   centerTitle: { color: palette.ink, fontSize: 17, fontWeight: '900' },
   centerBody: { color: palette.muted, fontSize: 11, textAlign: 'center' },
@@ -551,6 +649,7 @@ const styles = StyleSheet.create({
   pickupLink: { alignSelf: 'flex-start', minHeight: 32, justifyContent: 'center' },
   pickupLinkText: { color: palette.accentDeep, fontSize: 9, fontWeight: '800', textDecorationLine: 'underline' },
   pickupOption: { alignItems: 'center', borderTopColor: palette.line, borderTopWidth: 1, flexDirection: 'row', gap: spacing.md, minHeight: 48, paddingVertical: spacing.sm },
+  pickupOptionSelected: { backgroundColor: palette.successSoft, borderRadius: radii.sm, borderTopColor: palette.successSoft, paddingHorizontal: spacing.sm },
   pickupPresets: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   pickupPreset: { borderColor: palette.line, borderRadius: 999, borderWidth: 1, minHeight: 38, justifyContent: 'center', paddingHorizontal: spacing.md },
   pickupPresetText: { color: palette.ink, fontSize: 9, fontWeight: '800' },

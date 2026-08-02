@@ -12,10 +12,14 @@ import { useAuth } from '@/context/auth-context';
 import {
   archivePickupSite,
   loadBusinessMarketplace,
+  setBusinessMeetingRoutes,
   setBusinessMarketplaceChat,
+  setNeighborhoodResidencePickup,
   submitPickupSite,
   type ManagedPickupSite,
   type MarketplaceControls,
+  type MeetingPlaceSuggestion,
+  type NeighborhoodPickupSettings,
   type PickupSiteDraft,
 } from '@/lib/business-marketplace';
 import { confirmAction } from '@/lib/platform-dialog';
@@ -29,6 +33,9 @@ export default function BusinessMarketplaceScreen() {
   const businessId = Array.isArray(params.businessId) ? params.businessId[0] ?? '' : params.businessId ?? '';
   const [controls, setControls] = useState<MarketplaceControls | null>(null);
   const [sites, setSites] = useState<ManagedPickupSite[]>([]);
+  const [neighborhoodSettings, setNeighborhoodSettings] = useState<NeighborhoodPickupSettings | null>(null);
+  const [meetingSuggestions, setMeetingSuggestions] = useState<MeetingPlaceSuggestion[]>([]);
+  const [selectedRoutes, setSelectedRoutes] = useState<string[]>([]);
   const [draft, setDraft] = useState<PickupSiteDraft>(blankDraft);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -40,8 +47,11 @@ export default function BusinessMarketplaceScreen() {
     setLoading(true); setNotice(null);
     const result = await loadBusinessMarketplace(businessId);
     setLoading(false);
-    if (!result.ok) { setControls(null); setSites([]); setNotice({ tone: 'error', text: result.reason }); return; }
+    if (!result.ok) { setControls(null); setSites([]); setMeetingSuggestions([]); setNotice({ tone: 'error', text: result.reason }); return; }
     setControls(result.data.controls); setSites(result.data.sites);
+    setNeighborhoodSettings(result.data.neighborhoodSettings);
+    setMeetingSuggestions(result.data.meetingSuggestions);
+    setSelectedRoutes(result.data.meetingSuggestions.filter((entry) => entry.selectedOrdinal !== null).sort((a, b) => (a.selectedOrdinal ?? 9) - (b.selectedOrdinal ?? 9)).map((entry) => entry.publicId));
   }, [businessId, secureSession]);
 
   useEffect(() => { const timer = setTimeout(() => void load(), 0); return () => clearTimeout(timer); }, [load]);
@@ -87,6 +97,35 @@ export default function BusinessMarketplaceScreen() {
     setNotice({ tone: 'success', text: 'Pickup site archived and active exact-location disclosures destroyed.' });
   };
 
+  const toggleRoute = (publicId: string) => setSelectedRoutes((current) => current.includes(publicId)
+    ? current.filter((id) => id !== publicId)
+    : current.length < 3 ? [...current, publicId] : current);
+
+  const saveRoutes = async () => {
+    if (!controls || busy) return;
+    setBusy('routes'); setNotice(null);
+    const result = await setBusinessMeetingRoutes(controls.businessId, selectedRoutes);
+    setBusy(null);
+    if (!result.ok) { setNotice({ tone: 'error', text: result.reason }); return; }
+    setNotice({ tone: 'success', text: `${result.data} public meetup routes saved. Customers see these places without seeing distance from your service location.` });
+    await load();
+  };
+
+  const toggleResidence = async (enabled: boolean) => {
+    if (!controls || !neighborhoodSettings || busy) return;
+    if (enabled && !(await confirmAction({
+      title: 'Enable residence pickup?',
+      message: 'Public shopping centers are recommended. Your address stays out of the listing and chat, but a customer who accepts the caution can receive it in an expiring pickup card after you confirm that request. You are responsible for local law, personal safety, and site suitability.',
+      confirmLabel: 'Enable carefully',
+    }))) return;
+    setBusy('residence'); setNotice(null);
+    const result = await setNeighborhoodResidencePickup(controls.businessId, enabled);
+    setBusy(null);
+    if (!result.ok) { setNotice({ tone: 'error', text: result.reason }); return; }
+    setNeighborhoodSettings({ ...neighborhoodSettings, residencePickupEnabled: result.data });
+    setNotice({ tone: 'success', text: result.data ? 'Residence pickup is available as the last, caution-marked choice.' : 'Residence pickup disabled. Active residence details were revoked.' });
+  };
+
   if (!secureSession) return (
     <FocusAwareScreen><ScrollView contentContainerStyle={styles.content} style={styles.screen}><PageShell narrow>
       <View style={styles.topbar}><BrandMark /></View><View style={styles.gate}><FontAwesome6 color={palette.accentDeep} name="shield-halved" size={24} />
@@ -98,12 +137,21 @@ export default function BusinessMarketplaceScreen() {
   return (
     <FocusAwareScreen><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" style={styles.screen}><PageShell narrow>
       <View style={styles.topbar}><BrandMark /><Pressable accessibilityLabel="Close marketplace controls" accessibilityRole="button" onPress={() => router.back()} style={styles.close}><FontAwesome6 color={palette.ink} name="xmark" size={14} /></Pressable></View>
-      <View style={styles.intro}><Text style={styles.eyebrow}>Safe handoff</Text><Text accessibilityRole="header" style={styles.title}>Chat and pickup, managed clearly.</Text><Text style={styles.copy}>Neighborhood Kitchen never publishes a home address. Buyers receive an approved public meeting point only after a private request is authorized.</Text></View>
+      <View style={styles.intro}><Text style={styles.eyebrow}>Pickup preferences</Text><Text accessibilityRole="header" style={styles.title}>Clear choices. Private details.</Text><Text style={styles.copy}>Neighborhood Kitchen never publishes a home address. Choose fixed public meetup routes; residence pickup stays optional and caution-marked.</Text></View>
       {notice ? <View accessibilityLiveRegion="polite" accessibilityRole={notice.tone === 'error' ? 'alert' : undefined} style={[styles.notice, notice.tone === 'success' && styles.noticeGood]}><Text style={[styles.noticeText, notice.tone === 'success' && styles.noticeGoodText]}>{notice.text}</Text></View> : null}
       {loading ? <View style={styles.loading}><ActivityIndicator color={palette.accentDeep} /><Text style={styles.copy}>Loading protected controls…</Text></View> : controls ? <>
         <View style={styles.section}><View style={styles.sectionHeading}><View style={styles.headingCopy}><Text style={styles.kicker}>01 · Customer contact</Text><Text style={styles.sectionTitle}>{controls.businessName}</Text><Text style={styles.copy}>{controls.chatRequired ? 'Private chat is required for Neighborhood Kitchen listings.' : 'Choose whether customers can start private chat with this pop-up.'}</Text></View><Switch accessibilityLabel="Customer chat enabled" disabled={!controls.canToggleChat || busy === 'chat'} onValueChange={(value) => void toggleChat(value)} trackColor={{ false: palette.line, true: palette.mint }} thumbColor={controls.chatEnabled ? palette.success : palette.mutedLight} value={controls.chatEnabled} /></View>
           <View style={styles.statusLine}><View style={[styles.dot, controls.chatEnabled && styles.dotGood]} /><Text style={styles.statusText}>{controls.chatEnabled ? 'Chat available' : 'Chat paused'}</Text></View>
         </View>
+        {controls.businessKind === 'home_kitchen' ? <>
+          <View style={styles.section}><Text style={styles.kicker}>02 · Public routes</Text><Text style={styles.sectionTitle}>Choose 2–3 meetup places</Text><Text style={styles.copy}>Suggestions come from a licensed, current place feed near your private service location. Customers see public addresses, never their distance or direction from you.</Text>
+            {!meetingSuggestions.length ? <Text style={styles.empty}>No current provider-sourced shopping centers are available nearby. Public meetup selection stays unavailable until the feed is populated.</Text> : meetingSuggestions.map((place) => { const selected = selectedRoutes.includes(place.publicId); return <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selected, disabled: !selected && selectedRoutes.length >= 3 }} disabled={!selected && selectedRoutes.length >= 3} key={place.publicId} onPress={() => toggleRoute(place.publicId)} style={[styles.site, selected && styles.siteSelected]}><View style={styles.siteTop}><View style={styles.headingCopy}><Text style={styles.siteTitle}>{place.label}</Text><Text style={styles.address}>{place.addressLine} · {place.city}, {place.region} {place.postalCode ?? ''}</Text><Text style={styles.coordinates}>{place.distanceMeters < 1000 ? `${Math.round(place.distanceMeters)} m` : `${(place.distanceMeters / 1000).toFixed(1)} km`} from your private service pin · seller view only</Text></View><FontAwesome6 color={selected ? palette.success : palette.mutedLight} name={selected ? 'circle-check' : 'circle'} size={16} /></View></Pressable>; })}
+            <Pressable accessibilityRole="button" accessibilityState={{ disabled: selectedRoutes.length < 2 || Boolean(busy) }} disabled={selectedRoutes.length < 2 || Boolean(busy)} onPress={() => void saveRoutes()} style={[styles.primary, (selectedRoutes.length < 2 || Boolean(busy)) && styles.disabled]}>{busy === 'routes' ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}<Text style={styles.primaryText}>Save {selectedRoutes.length} routes</Text></Pressable>
+          </View>
+          <View style={styles.section}><View style={styles.sectionHeading}><View style={styles.headingCopy}><Text style={styles.kicker}>03 · Optional residence</Text><Text style={styles.sectionTitle}>Residence pickup</Text><Text style={styles.copy}>Public centers are recommended. If enabled, your address appears only in an expiring card after the customer accepts a caution and you confirm that request.</Text></View><Switch accessibilityLabel="Residence pickup enabled" disabled={!neighborhoodSettings?.serviceLocationReady || Boolean(busy)} onValueChange={(value) => void toggleResidence(value)} trackColor={{ false: palette.line, true: palette.warningSoft }} thumbColor={neighborhoodSettings?.residencePickupEnabled ? palette.warning : palette.mutedLight} value={neighborhoodSettings?.residencePickupEnabled ?? false} /></View>
+            {!neighborhoodSettings?.serviceLocationReady ? <Text style={styles.empty}>Complete the private primary service address before residence pickup can be enabled.</Text> : <Text style={styles.statusText}>{neighborhoodSettings.residencePickupEnabled ? 'Enabled as the final, caution-marked customer choice.' : 'Off by default.'}</Text>}
+          </View>
+        </> : <>
         <View style={styles.section}><Text style={styles.kicker}>02 · Approved places</Text><Text style={styles.sectionTitle}>Pickup sites</Text><Text style={styles.copy}>Only public meeting places and commercial sites are allowed. Exact details below are visible only to verified owners, managers, and authorized reviewers.</Text>
           {!sites.length ? <Text style={styles.empty}>No pickup sites submitted yet.</Text> : sites.map((site) => <View key={site.publicId} style={styles.site}><View style={styles.siteTop}><View style={styles.headingCopy}><Text style={styles.siteTitle}>{site.label}</Text><Text style={styles.address}>{site.addressLine} · {site.city}, {site.region} {site.postalCode ?? ''}</Text></View><Text style={[styles.badge, site.state === 'approved' && styles.badgeGood]}>{site.state}</Text></View><Text style={styles.coordinates}>{site.latitude.toFixed(5)}, {site.longitude.toFixed(5)}</Text><Pressable accessibilityRole="button" disabled={Boolean(busy)} onPress={() => void archive(site)} style={styles.textButton}>{busy === site.publicId ? <ActivityIndicator color={palette.accentDeep} size="small" /> : null}<Text style={styles.textButtonLabel}>Archive safely</Text></Pressable></View>)}
         </View>
@@ -117,6 +165,7 @@ export default function BusinessMarketplaceScreen() {
           <Pressable accessibilityRole="button" disabled={Boolean(busy)} onPress={() => void fillCurrentCoordinates()} style={styles.secondary}><FontAwesome6 color={palette.ink} name="location-crosshairs" size={13} /><Text style={styles.secondaryText}>{busy === 'location' ? 'Reading location…' : 'Use my current coordinates'}</Text></Pressable>
           <Pressable accessibilityRole="button" accessibilityState={{ busy: busy === 'submit', disabled: Boolean(busy) }} disabled={Boolean(busy)} onPress={() => void submit()} style={[styles.primary, Boolean(busy) && styles.disabled]}>{busy === 'submit' ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}<Text style={styles.primaryText}>Submit for safety review</Text></Pressable>
         </View>
+        </>}
       </> : null}
     </PageShell></ScrollView></FocusAwareScreen>
   );
@@ -133,6 +182,7 @@ const styles = StyleSheet.create({
   section: { borderTopColor: palette.line, borderTopWidth: 1, gap: spacing.md, paddingVertical: spacing.xxl }, sectionHeading: { alignItems: 'center', flexDirection: 'row', gap: spacing.lg, justifyContent: 'space-between' }, headingCopy: { flex: 1, gap: 5 }, kicker: { color: palette.accentDeep, fontFamily: 'SpaceMono', fontSize: 9, letterSpacing: .8, textTransform: 'uppercase' }, sectionTitle: { color: palette.ink, fontSize: 21, fontWeight: '900', letterSpacing: -.4 },
   statusLine: { alignItems: 'center', flexDirection: 'row', gap: 8 }, dot: { backgroundColor: palette.mutedLight, borderRadius: 99, height: 7, width: 7 }, dotGood: { backgroundColor: palette.success }, statusText: { color: palette.muted, fontSize: 11, fontWeight: '700' }, empty: { color: palette.muted, fontSize: 12, paddingVertical: spacing.lg },
   site: { borderTopColor: palette.line, borderTopWidth: 1, gap: 8, paddingVertical: spacing.lg }, siteTop: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.md, justifyContent: 'space-between' }, siteTitle: { color: palette.ink, fontSize: 15, fontWeight: '900' }, address: { color: palette.muted, fontSize: 12, lineHeight: 18 }, coordinates: { color: palette.mutedLight, fontFamily: 'SpaceMono', fontSize: 9 }, badge: { backgroundColor: palette.warningSoft, borderRadius: 99, color: palette.warning, fontSize: 9, fontWeight: '900', overflow: 'hidden', paddingHorizontal: 10, paddingVertical: 6, textTransform: 'uppercase' }, badgeGood: { backgroundColor: palette.successSoft, color: palette.success },
+  siteSelected: { backgroundColor: palette.successSoft, borderRadius: radii.md, borderTopColor: palette.successSoft, paddingHorizontal: spacing.md },
   textButton: { alignItems: 'center', alignSelf: 'flex-start', flexDirection: 'row', gap: 7, minHeight: 44 }, textButtonLabel: { color: palette.accentDeep, fontSize: 11, fontWeight: '900' }, choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }, choice: { borderColor: palette.line, borderRadius: 99, borderWidth: 1, minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md }, choiceActive: { backgroundColor: palette.ink, borderColor: palette.ink }, choiceText: { color: palette.ink, fontSize: 11, fontWeight: '800' }, choiceTextActive: { color: palette.surface },
   field: { gap: 7 }, label: { color: palette.ink, fontSize: 11, fontWeight: '800' }, input: { backgroundColor: palette.surface, borderColor: palette.line, borderRadius: radii.sm, borderWidth: 1, color: palette.ink, fontSize: 14, minHeight: 48, paddingHorizontal: spacing.md }, fieldRow: { flexDirection: 'row', gap: spacing.sm }, flex: { flex: 1 }, primary: { alignItems: 'center', alignSelf: 'flex-start', backgroundColor: palette.accentDeep, borderRadius: 99, flexDirection: 'row', gap: 8, justifyContent: 'center', minHeight: 48, paddingHorizontal: spacing.xl }, primaryText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' }, secondary: { alignItems: 'center', alignSelf: 'flex-start', borderColor: palette.line, borderRadius: 99, borderWidth: 1, flexDirection: 'row', gap: 8, minHeight: 44, paddingHorizontal: spacing.md }, secondaryText: { color: palette.ink, fontSize: 11, fontWeight: '800' }, disabled: { opacity: .55 },
 });

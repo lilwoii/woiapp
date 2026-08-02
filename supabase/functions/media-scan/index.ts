@@ -245,6 +245,13 @@ Deno.serve(async (request) => {
     });
     if (finalizeError) throw finalizeError;
 
+    // The clean, re-encoded output is now authoritative. Raw quarantine input
+    // is best-effort deleted here; the scheduled cleanup worker retries safely.
+    const { error: rawDeleteError } = await admin.storage
+      .from("spottr-media")
+      .remove([asset.storage_path]);
+    if (rawDeleteError) console.error("MEDIA_RAW_SOURCE_CLEANUP_DEFERRED");
+
     return jsonResponse({
       status: "clean_approved",
       asset_id: asset.id,

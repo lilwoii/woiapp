@@ -56,32 +56,59 @@ the authoritative database path. It is deliberately paired with the dedicated
 pickup-card flow and human moderation; pattern matching cannot identify every
 language, address format, coded disclosure, or text embedded inside a photo.
 
+## Neighborhood Kitchen pickup preferences
+
+Neighborhood Kitchen customers choose from two or three public shopping-center
+or market routes that the seller selected from a licensed, freshness-bounded
+place catalog. Nearby ranking is computed only in the seller's AAL2 controls;
+customers never receive a distance or bearing from the seller's private service
+location. If the provider catalog is unavailable or stale, public choices fail
+closed instead of using scraped or invented places.
+
+Residence pickup is off by default. Enabling it requires an AAL2 seller
+acknowledgment. The customer must separately accept a prominent caution, and the
+seller must confirm that specific pickup window before the address is copied to
+an expiring structured card. The residence address is never placed in a public
+listing, map pin, option row, or message body. Public centers are recommended;
+Spottr does not describe any location as inspected, safe, or guaranteed.
+
+Payment methods are seller-reported. Spottr does not process payment, collect
+fulfillment proof, or represent that a transaction occurred. Chat continues to
+block card, bank, identity, and precise-location text.
+
+“Clear from my inbox” is participant-specific. It hides history through the
+current sequence for that participant and revokes any active exact pickup card;
+the other participant is unchanged, a later message can make the thread
+reappear, and safety/legal retention can continue. It is not represented as an
+immediate server erasure.
+
 ## Exact pickup details
 
-No residential address is added to a listing or public pickup record. Sellers can
-submit only `public_meeting_place` or `commercial_site` candidates. Exact address
-and coordinates live in the `private` schema; coarse label/city/region and workflow
-state live in `public`. An AAL2 staff reviewer must approve a site before it can be
-used. Approval is a workflow gate, not a guarantee that a location is safe.
+No residential address is added to a listing or public pickup record. Legacy
+pop-up pickup sites remain a separately reviewed workflow. Neighborhood Kitchen
+does not accept seller-entered public coordinates: it uses the provider catalog
+and seller-selected routes described above. Exact residence details and consent
+receipts live only in the `private` schema.
 
 An exact pickup card is created only through this sequence:
 
-1. The customer requests a bounded pickup window in an eligible, unblocked chat.
-2. The assigned merchant authorizes that exact request with AAL2 and chooses a
-   previously approved non-residential site.
-3. A private address snapshot is revealed only to those two participants and
+1. The customer chooses one seller-configured public route or the optional
+   residence pseudo-option and requests a bounded window in an eligible chat.
+2. Residence selection requires the current buyer caution acknowledgment.
+3. The assigned merchant confirms the customer-selected choice with AAL2; the
+   merchant cannot silently substitute a different location.
+4. A private address snapshot is revealed only to those two participants and
    expires 12 hours after the pickup window.
-4. Cancellation, merchant revocation, a block, loss of site approval, or expiry
+5. Cancellation, merchant revocation, a block, seller residence disable, inbox
+   clear, provider-place expiry, or expiry
    fails closed. A service cleanup deletes expired address snapshots.
 
 Only one `pending` or `authorized` pickup request may exist per conversation. The
 database enforces this with a partial unique index, preventing hidden overlapping
-address disclosures even when a client bypasses the app UI. Public label, city,
-and region fields pass the same precise-location DLP both at submission and again
-at staff approval.
+address disclosures even when a client bypasses the app UI.
 
-The conversation UI exposes this workflow directly: customers choose a bounded
-pickup window, merchants with AAL2 select a staff-approved public option, and both
+The conversation UI exposes this workflow directly: customers choose the place
+and bounded pickup window, merchants with AAL2 confirm that choice, and both
 participants receive a dedicated expiring pickup card with a directions action.
 The exact destination is never inserted into ordinary message text.
 

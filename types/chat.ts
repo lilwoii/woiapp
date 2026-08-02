@@ -37,7 +37,7 @@ export type MarketplaceChatMessage = {
   };
   body?: string;
   attachments: MarketplaceChatAttachment[];
-  visibility: 'visible' | 'moderated' | 'removed';
+  visibility: 'visible' | 'held' | 'removed';
   sentAt: string;
   readAt?: string;
 };
@@ -58,6 +58,13 @@ export type MarketplacePickupRequest = {
   state: 'pending' | 'authorized' | 'declined' | 'cancelled' | 'expired';
   version: number;
   createdAt: string;
+  choice?: {
+    id: string;
+    kind: 'safe_meeting_place' | 'seller_residence';
+    label: string;
+    city: string;
+    region: string;
+  };
 };
 
 export type MarketplacePickupOption = {
@@ -65,14 +72,19 @@ export type MarketplacePickupOption = {
   label: string;
   city: string;
   region: string;
-  kind: 'public_meeting_place' | 'commercial_site';
+  kind: 'public_meeting_place' | 'commercial_site' | 'safe_meeting_place' | 'seller_residence';
+  address?: string;
+  postalCode?: string;
+  latitude?: number;
+  longitude?: number;
+  warningRequired?: boolean;
 };
 
 export type MarketplacePickupDetail = {
   requestId: string;
   siteId: string;
   label: string;
-  kind: 'public_meeting_place' | 'commercial_site';
+  kind: 'public_meeting_place' | 'commercial_site' | 'safe_meeting_place' | 'seller_residence';
   address: string;
   city: string;
   region: string;
@@ -82,4 +94,12 @@ export type MarketplacePickupDetail = {
   startsAt: string;
   endsAt: string;
   expiresAt: string;
+};
+
+export type MarketplaceConversationContext = {
+  businessCategory: BusinessCategory;
+  role: 'customer' | 'merchant';
+  actorProfileId?: string;
+  paymentMethods: string[];
+  platformPaymentEnabled: false;
 };

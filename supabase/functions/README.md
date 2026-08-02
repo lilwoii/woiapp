@@ -61,7 +61,12 @@ There is no generic Storage `INSERT` policy. Only signed staging tokens can
 create objects. A scheduled internal call to `media-cleanup`, authenticated by
 `SPOTTR_MEDIA_CLEANUP_SECRET`, removes unregistered objects after one hour,
 stalled scans after 24 hours, and rejected media after seven days. Pending or
-approved claim evidence is excluded from that sweep.
+approved claim evidence is excluded from that sweep. Clean, unlinked chat
+uploads older than 24 hours use a durable database claim and a shared row lock
+with message attachment before object deletion. A crashed worker retries the
+same claimed asset after its lease; it cannot silently reattach an object whose
+cleanup began. Successful scanning also deletes the raw quarantine input on a
+best-effort basis, with the scheduled worker handling retries.
 
 ## Scanner adapter
 

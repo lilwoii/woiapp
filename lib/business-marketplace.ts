@@ -13,6 +13,22 @@ export type MarketplaceControls = {
   canToggleChat: boolean;
 };
 
+export type NeighborhoodPickupSettings = {
+  residencePickupEnabled: boolean;
+  serviceLocationReady: boolean;
+};
+
+export type MeetingPlaceSuggestion = {
+  publicId: string;
+  label: string;
+  addressLine: string;
+  city: string;
+  region: string;
+  postalCode: string | null;
+  distanceMeters: number;
+  selectedOrdinal: number | null;
+};
+
 export type ManagedPickupSite = {
   publicId: string;
   label: string;
@@ -181,19 +197,85 @@ function failure<T>(error: unknown, fallback: string): BusinessMarketplaceResult
   return { ok: false, code: 'UNKNOWN', reason: fallback };
 }
 
-export async function loadBusinessMarketplace(businessId: string): Promise<BusinessMarketplaceResult<{ controls: MarketplaceControls; sites: ManagedPickupSite[] }>> {
+export async function loadBusinessMarketplace(businessId: string): Promise<BusinessMarketplaceResult<{ controls: MarketplaceControls; sites: ManagedPickupSite[]; neighborhoodSettings: NeighborhoodPickupSettings | null; meetingSuggestions: MeetingPlaceSuggestion[] }>> {
   try {
     if (!uuidPattern.test(businessId)) throw new Error('Invalid business reference');
     const client = await secureClient();
-    const [controls, sites] = await Promise.all([
-      client.rpc('get_business_marketplace_controls', { target_business_id: businessId }),
-      client.rpc('list_managed_marketplace_pickup_sites', { target_business_id: businessId, result_limit: 100, result_offset: 0 }),
-    ]);
+    const controls = await client.rpc('get_business_marketplace_controls', { target_business_id: businessId });
     if (controls.error) throw controls.error;
+    const mappedControls = mapMarketplaceControls(controls.data);
+    const [sites, settings, suggestions] = await Promise.all([
+      client.rpc('list_managed_marketplace_pickup_sites', { target_business_id: businessId, result_limit: 100, result_offset: 0 }),
+      mappedControls.businessKind === 'home_kitchen' ? client.rpc('get_neighborhood_pickup_settings', { target_business_id: businessId }) : Promise.resolve({ data: null, error: null }),
+      mappedControls.businessKind === 'home_kitchen' ? client.rpc('list_business_meeting_place_suggestions', { target_business_id: businessId }) : Promise.resolve({ data: [], error: null }),
+    ]);
     if (sites.error) throw sites.error;
-    return { ok: true, data: { controls: mapMarketplaceControls(controls.data), sites: mapManagedPickupSites(sites.data) } };
+    if (settings.error) throw settings.error;
+    if (suggestions.error) throw suggestions.error;
+    const settingsRow = settings.data && isRow(settings.data) ? settings.data : null;
+    const meetingSuggestions = Array.isArray(suggestions.data) ? suggestions.data.map((candidate) => {
+      if (!isRow(candidate)) throw new Error('Invalid meeting place suggestion');
+      const ordinal = candidate.selected_ordinal;
+      return {
+        publicId: uuidValue(candidate, 'choice_public_id'),
+        label: stringValue(candidate, 'label')!,
+        addressLine: stringValue(candidate, 'address_line')!,
+        city: stringValue(candidate, 'city')!,
+        region: stringValue(candidate, 'region')!,
+        postalCode: stringValue(candidate, 'postal_code', true),
+        distanceMeters: numberValue(candidate, 'distance_meters', 0, 25000),
+        selectedOrdinal: typeof ordinal === 'number' && Number.isInteger(ordinal) && ordinal >= 1 && ordinal <= 3 ? ordinal : null,
+      };
+    }) : [];
+    return { ok: true, data: {
+      controls: mappedControls,
+      sites: mappedControls.businessKind === 'pop_up' ? mapManagedPickupSites(sites.data) : [],
+      neighborhoodSettings: settingsRow ? {
+        residencePickupEnabled: settingsRow.residence_pickup_enabled === true,
+        serviceLocationReady: settingsRow.service_location_ready === true,
+      } : null,
+      meetingSuggestions,
+    } };
   } catch (error) {
     return failure(error, 'Marketplace controls could not be loaded. This category may not support private pickup chat.');
+  }
+}
+
+export async function setBusinessMeetingRoutes(businessId: string, choiceIds: string[]): Promise<BusinessMarketplaceResult<number>> {
+  try {
+    if (choiceIds.length < 2 || choiceIds.length > 3 || new Set(choiceIds).size !== choiceIds.length || choiceIds.some((id) => !uuidPattern.test(id))) {
+      throw new Error('Choose two or three public meeting places.');
+    }
+    const client = await secureClient();
+    const { data, error } = await client.rpc('set_business_meeting_routes', {
+      target_business_id: businessId,
+      selected_choice_public_ids: choiceIds,
+      accepted_attestation_version: '2026-08-01',
+      idempotency_key: createMarketplaceOperationsKey('routes'),
+    });
+    if (error) throw error;
+    const row = rowFrom(data);
+    return { ok: true, data: numberValue(row, 'selected_count', 2, 3) };
+  } catch (error) {
+    return failure(error, error instanceof Error ? error.message : 'Meeting places could not be saved.');
+  }
+}
+
+export async function setNeighborhoodResidencePickup(businessId: string, enabled: boolean): Promise<BusinessMarketplaceResult<boolean>> {
+  try {
+    const client = await secureClient();
+    const { data, error } = await client.rpc('set_neighborhood_residence_pickup', {
+      target_business_id: businessId,
+      should_enable: enabled,
+      accepted_terms_version: enabled ? '2026-08-01' : null,
+      idempotency_key: createMarketplaceOperationsKey('residence'),
+    });
+    if (error) throw error;
+    const row = rowFrom(data);
+    if (typeof row.residence_pickup_enabled !== 'boolean') throw new Error('Invalid residence setting receipt');
+    return { ok: true, data: row.residence_pickup_enabled };
+  } catch (error) {
+    return failure(error, 'Residence pickup could not be changed.');
   }
 }
 
