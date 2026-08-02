@@ -97,7 +97,8 @@ export default function AccountDataScreen() {
       title="Your data, available to you.">
       <InfoSection icon="file-arrow-down" title="What the export contains">
         Your profile, follows, notification settings, reviews, reports, business memberships, claims, blocked profiles,
-        and media records associated with your account.
+        media records, your marketplace conversations, messages you authored, pickup requests, and pickup sites you
+        submitted or own.
       </InfoSection>
       <InfoSection icon="lock" title="Secure delivery">
         Live exports require a current authenticator-protected session. Spottr creates the JSON directly for your

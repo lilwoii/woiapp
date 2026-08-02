@@ -84,7 +84,9 @@ Deno.test("chat photos reuse quarantine scanning and fail closed on stale access
     (mediaStage.match(/await requireChatAccess\(\)/g) ?? []).length,
     2,
   );
-  assert(mediaStage.includes('media_source: selectedPurpose === "review_photo" || selectedPurpose === "chat_photo"'));
+  assert(mediaStage.includes('rpc("register_quarantined_chat_media"'));
+  assert(mediaStage.includes('target_conversation_public_id: targetConversationId'));
+  assertMatch(migration, /asset\.source = 'chat_upload'/);
   assertMatch(migration, /asset\.owner_id = actor/);
   assertMatch(migration, /asset\.business_id = target_conversation\.business_id/);
   assertMatch(migration, /asset\.quarantine_state = 'clean'/);

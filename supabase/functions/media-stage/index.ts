@@ -205,13 +205,20 @@ Deno.serve(async (request) => {
         throw new HttpError(400, "INVALID_QUARANTINE_PATH");
       }
 
-      const { data: assetId, error } = await client.rpc("register_quarantined_media", {
-        target_storage_path: body.storagePath,
-        target_business_id: targetBusinessId,
-        media_source: selectedPurpose === "review_photo" || selectedPurpose === "chat_photo"
-          ? "review_upload"
-          : "owner_upload",
-      });
+      const registration = selectedPurpose === "chat_photo"
+        ? await client.rpc("register_quarantined_chat_media", {
+          target_storage_path: body.storagePath,
+          target_business_id: targetBusinessId,
+          target_conversation_public_id: targetConversationId,
+        })
+        : await client.rpc("register_quarantined_media", {
+          target_storage_path: body.storagePath,
+          target_business_id: targetBusinessId,
+          media_source: selectedPurpose === "review_photo"
+            ? "review_upload"
+            : "owner_upload",
+        });
+      const { data: assetId, error } = registration;
       if (error || !assetId) throw error ?? new Error("Unable to register media");
 
       return jsonResponse(

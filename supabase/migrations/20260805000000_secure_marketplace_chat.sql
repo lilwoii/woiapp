@@ -1062,7 +1062,7 @@ begin
     where asset.id = any(normalized_assets)
       and asset.owner_id = actor
       and asset.business_id = target_conversation.business_id
-      and asset.source in ('owner_upload', 'review_upload')
+      and asset.source = 'chat_upload'
       and asset.quarantine_state = 'clean'
       and asset.moderation = 'approved'
       and asset.processed_storage_path is not null

@@ -29,6 +29,12 @@ metadata-stripped, and associated with the same business. Processed objects have
 participant-only Storage policy; reported objects are additionally available to
 AAL2 platform staff while the report is open or under review.
 
+Chat images use the dedicated `chat_upload` source. Public eligibility now requires
+an explicit approved logo, gallery, review, or avatar link; a business association
+alone never publishes an asset, and anything linked to a chat message is expressly
+excluded. This prevents permissive public-media and participant Storage policies
+from combining into anonymous chat-photo access.
+
 Typing is a replaceable 10-second lease and read state is a monotonic sequence.
 Both are rate-limited RPC-only writes. They intentionally do not create durable
 audit events because that would turn transient behavioral data into permanent
@@ -37,6 +43,18 @@ telemetry.
 Chat is not end-to-end encrypted: Spottr must be able to moderate reported content.
 Production still requires verified TLS, encryption-at-rest configuration, secret
 rotation, retention/deletion jobs, abuse operations, and incident response.
+
+Direct table reads are denied to app users even when participant RLS would match.
+Clients receive narrow RPC projections so internal Auth IDs, staff fields, raw
+read-receipt rows, and typing identifiers do not cross the API boundary. Storage
+authorization uses private security-definer predicates instead of requiring raw
+chat-table grants.
+
+High-confidence message DLP rejects common street-address, precise-coordinate,
+payment-card, bank-credential, and government-ID patterns on both the client and
+the authoritative database path. It is deliberately paired with the dedicated
+pickup-card flow and human moderation; pattern matching cannot identify every
+language, address format, coded disclosure, or text embedded inside a photo.
 
 ## Exact pickup details
 
@@ -56,11 +74,38 @@ An exact pickup card is created only through this sequence:
 4. Cancellation, merchant revocation, a block, loss of site approval, or expiry
    fails closed. A service cleanup deletes expired address snapshots.
 
+Only one `pending` or `authorized` pickup request may exist per conversation. The
+database enforces this with a partial unique index, preventing hidden overlapping
+address disclosures even when a client bypasses the app UI. Public label, city,
+and region fields pass the same precise-location DLP both at submission and again
+at staff approval.
+
+The conversation UI exposes this workflow directly: customers choose a bounded
+pickup window, merchants with AAL2 select a staff-approved public option, and both
+participants receive a dedicated expiring pickup card with a directions action.
+The exact destination is never inserted into ordinary message text.
+
 The exact address is never put in a public projection, Realtime row intended for
 public consumption, message audit metadata, or marketplace map result. Product UI
-should present it as a dedicated pickup card and discourage copying precise
-locations into ordinary message text. Automated DLP and human moderation should be
-added before broad launch because no text filter can reliably detect every address.
+must present it as a dedicated pickup card and discourage copying precise
+locations into ordinary message text.
+
+## Export, deletion, and retention
+
+An AAL2 account export includes conversation metadata, messages authored by the
+requesting user, their pickup-request records, and exact pickup-site data only for
+sites they submitted or actively own. It does not include the counterpart's
+message bodies, internal Auth IDs, private staff notes, or moderation evidence.
+
+Account deletion first destroys every exact pickup disclosure attached to the
+user's conversations, cancels pending or authorized pickup requests, clears
+typing/read state, and closes each thread. Auth deletion then nulls participant and
+sender identifiers. A shared thread survives for the remaining participant as a
+closed conversation with a “Deleted account” identity; the deleting user's media
+objects are removed by the account deletion manifest. This is pseudonymization,
+not an assertion that every shared message body can always be erased immediately.
+The final public retention policy and legal-hold rules must define when shared
+message bodies, reports, and orphaned threads are destroyed.
 
 ## Launch evidence still required
 

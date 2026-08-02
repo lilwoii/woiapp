@@ -1,9 +1,13 @@
 import { toActionError } from '@/lib/errors';
+import { chatSafetyIssue, chatSafetyMessage } from '@/lib/chat-safety';
 import { supabase } from '@/lib/supabase';
 import type { ActionResult, BusinessCategory } from '@/types/marketplace';
 import type {
   MarketplaceChatMessage,
   MarketplaceConversation,
+  MarketplacePickupDetail,
+  MarketplacePickupOption,
+  MarketplacePickupRequest,
   MarketplaceTypingMember,
 } from '@/types/chat';
 
@@ -39,7 +43,17 @@ function numberValue(value: unknown) {
       : 0;
 }
 
-function chatIdempotencyKey(scope: 'start' | 'send' | 'close' | 'report') {
+function dateValue(value: unknown) {
+  const candidate = stringValue(value);
+  return candidate && Number.isFinite(Date.parse(candidate)) ? candidate : '';
+}
+
+function coordinateValue(value: unknown) {
+  const candidate = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(candidate) ? candidate : null;
+}
+
+function chatIdempotencyKey(scope: 'start' | 'send' | 'close' | 'report' | 'pickup') {
   const cryptoApi = globalThis.crypto;
   let nonce: string | undefined = cryptoApi?.randomUUID?.();
   if (!nonce && cryptoApi?.getRandomValues) {
@@ -112,7 +126,7 @@ export async function listMarketplaceConversations(): Promise<ActionResult<Marke
       const profileId = stringValue(row.counterpart_public_profile_id);
       const category = stringValue(row.business_kind) as BusinessCategory;
       const state = stringValue(row.conversation_state) as MarketplaceConversation['state'];
-      if (!uuidPattern.test(id) || !uuidPattern.test(businessId) || !uuidPattern.test(profileId) ||
+      if (!uuidPattern.test(id) || !uuidPattern.test(businessId) ||
           !categories.has(category) || !['open', 'closed_by_customer', 'closed_by_merchant', 'restricted'].includes(state)) return [];
       const avatarPath = stringValue(row.counterpart_avatar_path);
       return [{
@@ -122,8 +136,8 @@ export async function listMarketplaceConversations(): Promise<ActionResult<Marke
         businessCategory: category,
         state,
         counterpart: {
-          profileId,
-          name: stringValue(row.counterpart_name) || 'Spottr member',
+          ...(uuidPattern.test(profileId) ? { profileId } : {}),
+          name: stringValue(row.counterpart_name) || 'Deleted account',
           username: stringValue(row.counterpart_username),
           ...(urls.get(avatarPath) ? { avatarUrl: urls.get(avatarPath) } : {}),
         },
@@ -159,15 +173,15 @@ export async function getMarketplaceMessages(conversationId: string): Promise<Ac
     const messages = sourceRows.flatMap<MarketplaceChatMessage>((row) => {
       const id = stringValue(row.message_public_id);
       const profileId = stringValue(row.sender_public_profile_id);
-      if (!uuidPattern.test(id) || !uuidPattern.test(profileId)) return [];
+      if (!uuidPattern.test(id)) return [];
       const avatarPath = stringValue(row.sender_avatar_path);
       const visibility = stringValue(row.visibility) as MarketplaceChatMessage['visibility'];
       return [{
         id,
         sequence: Math.max(0, Math.floor(numberValue(row.sequence))),
         sender: {
-          profileId,
-          name: stringValue(row.sender_name) || 'Spottr member',
+          ...(uuidPattern.test(profileId) ? { profileId } : {}),
+          name: stringValue(row.sender_name) || 'Deleted account',
           username: stringValue(row.sender_username),
           ...(urls.get(avatarPath) ? { avatarUrl: urls.get(avatarPath) } : {}),
         },
@@ -206,6 +220,10 @@ export async function sendMarketplaceMessage(
   if (!uuidPattern.test(conversationId) || mediaAssetIds.some((id) => !uuidPattern.test(id))) {
     return { ok: false, code: 'INVALID', reason: 'The message contains an invalid reference.' };
   }
+  const safetyIssue = chatSafetyIssue(body);
+  if (safetyIssue) {
+    return { ok: false, code: 'INVALID', reason: chatSafetyMessage(safetyIssue) };
+  }
   try {
     const { error } = await client.rpc('send_marketplace_message', {
       target_conversation_public_id: conversationId,
@@ -216,6 +234,13 @@ export async function sendMarketplaceMessage(
     if (error) throw error;
     return { ok: true };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String((error as { message?: unknown } | null)?.message ?? '');
+    if (message.includes('SENSITIVE_PAYMENT_DATA_BLOCKED')) {
+      return { ok: false, code: 'INVALID', reason: chatSafetyMessage('sensitive_payment') };
+    }
+    if (message.includes('PRECISE_LOCATION_BLOCKED')) {
+      return { ok: false, code: 'INVALID', reason: chatSafetyMessage('precise_location') };
+    }
     return toActionError(error, 'This message could not be sent.');
   }
 }
@@ -276,5 +301,211 @@ export async function reportMarketplaceMessage(messageId: string): Promise<Actio
     return { ok: true, message: 'Message reported for staff review.' };
   } catch (error) {
     return toActionError(error, 'This message could not be reported.');
+  }
+}
+
+export async function getMarketplaceConversationRole(
+  conversationId: string
+): Promise<'customer' | 'merchant' | null> {
+  const client = supabase;
+  if (!client || !uuidPattern.test(conversationId)) return null;
+  const { data, error } = await client.rpc('get_marketplace_conversation_role', {
+    target_conversation_public_id: conversationId,
+  });
+  return !error && (data === 'customer' || data === 'merchant') ? data : null;
+}
+
+export async function listMarketplacePickupRequests(
+  conversationId: string
+): Promise<ActionResult<MarketplacePickupRequest[]>> {
+  const client = supabase;
+  if (!client) return unavailable();
+  if (!uuidPattern.test(conversationId)) return { ok: false, code: 'INVALID', reason: 'Choose a valid conversation.' };
+  try {
+    const { data, error } = await client.rpc('list_marketplace_pickup_requests', {
+      target_conversation_public_id: conversationId,
+    });
+    if (error) throw error;
+    return {
+      ok: true,
+      data: rows(data).flatMap<MarketplacePickupRequest>((row) => {
+        const requestId = stringValue(row.pickup_request_public_id);
+        const state = stringValue(row.request_state) as MarketplacePickupRequest['state'];
+        if (!uuidPattern.test(requestId) || !['pending', 'authorized', 'declined', 'cancelled', 'expired'].includes(state)) return [];
+        return [{
+          id: requestId,
+          startsAt: stringValue(row.pickup_starts_at),
+          endsAt: stringValue(row.pickup_ends_at),
+          ...(stringValue(row.request_note) ? { note: stringValue(row.request_note) } : {}),
+          state,
+          version: Math.max(1, Math.floor(numberValue(row.request_version))),
+          createdAt: stringValue(row.created_at),
+        }];
+      }),
+    };
+  } catch (error) {
+    return toActionError(error, 'Pickup requests could not be loaded.');
+  }
+}
+
+export async function requestMarketplacePickup(
+  conversationId: string,
+  startsAt: Date,
+  endsAt: Date,
+  note = ''
+): Promise<ActionResult> {
+  const client = supabase;
+  if (!client) return unavailable();
+  if (!uuidPattern.test(conversationId) || !Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime())) {
+    return { ok: false, code: 'INVALID', reason: 'Choose a valid pickup window.' };
+  }
+  const safetyIssue = chatSafetyIssue(note);
+  if (safetyIssue) return { ok: false, code: 'INVALID', reason: chatSafetyMessage(safetyIssue) };
+  try {
+    const { error } = await client.rpc('request_marketplace_pickup_detail', {
+      target_conversation_public_id: conversationId,
+      pickup_starts_at: startsAt.toISOString(),
+      pickup_ends_at: endsAt.toISOString(),
+      request_note: note,
+      idempotency_key: chatIdempotencyKey('pickup'),
+    });
+    if (error) throw error;
+    return { ok: true, message: 'Pickup window requested.' };
+  } catch (error) {
+    return toActionError(error, 'Pickup details could not be requested.');
+  }
+}
+
+export async function listMarketplacePickupOptions(
+  conversationId: string
+): Promise<ActionResult<MarketplacePickupOption[]>> {
+  const client = supabase;
+  if (!client) return unavailable();
+  if (!uuidPattern.test(conversationId)) return { ok: false, code: 'INVALID', reason: 'Choose a valid conversation.' };
+  try {
+    const { data, error } = await client.rpc('list_marketplace_pickup_options', {
+      target_conversation_public_id: conversationId,
+    });
+    if (error) throw error;
+    return {
+      ok: true,
+      data: rows(data).flatMap<MarketplacePickupOption>((row) => {
+        const optionId = stringValue(row.pickup_site_public_id);
+        const kind = stringValue(row.site_kind) as MarketplacePickupOption['kind'];
+        if (!uuidPattern.test(optionId) || !['public_meeting_place', 'commercial_site'].includes(kind)) return [];
+        return [{ id: optionId, label: stringValue(row.label), city: stringValue(row.city), region: stringValue(row.region), kind }];
+      }),
+    };
+  } catch (error) {
+    return toActionError(error, 'Approved pickup locations could not be loaded.');
+  }
+}
+
+export async function authorizeMarketplacePickup(
+  conversationId: string,
+  requestId: string,
+  siteId: string,
+  expectedVersion: number
+): Promise<ActionResult> {
+  const client = supabase;
+  if (!client) return unavailable();
+  if (![conversationId, requestId, siteId].every((value) => uuidPattern.test(value))) {
+    return { ok: false, code: 'INVALID', reason: 'Choose a valid pickup request and location.' };
+  }
+  try {
+    const { error } = await client.rpc('authorize_marketplace_pickup_detail', {
+      target_conversation_public_id: conversationId,
+      target_pickup_request_public_id: requestId,
+      target_pickup_site_public_id: siteId,
+      expected_version: Math.floor(expectedVersion),
+      idempotency_key: chatIdempotencyKey('pickup'),
+    });
+    if (error) throw error;
+    return { ok: true, message: 'Verified pickup details released.' };
+  } catch (error) {
+    return toActionError(error, 'Pickup details could not be authorized.');
+  }
+}
+
+export async function getAuthorizedMarketplacePickupDetail(
+  conversationId: string,
+  requestId: string
+): Promise<ActionResult<MarketplacePickupDetail>> {
+  const client = supabase;
+  if (!client) return unavailable();
+  if (![conversationId, requestId].every((value) => uuidPattern.test(value))) {
+    return { ok: false, code: 'INVALID', reason: 'Choose a valid pickup request.' };
+  }
+  try {
+    const { data, error } = await client.rpc('get_authorized_marketplace_pickup_detail', {
+      target_conversation_public_id: conversationId,
+      target_pickup_request_public_id: requestId,
+    });
+    if (error) throw error;
+    const row = (data && typeof data === 'object' && !Array.isArray(data) ? data : {}) as Row;
+    const requestPublicId = stringValue(row.pickup_request_public_id);
+    const siteId = stringValue(row.pickup_site_public_id);
+    const kind = stringValue(row.site_kind) as MarketplacePickupDetail['kind'];
+    const address = stringValue(row.address_line);
+    const city = stringValue(row.city);
+    const region = stringValue(row.region);
+    const latitude = coordinateValue(row.latitude);
+    const longitude = coordinateValue(row.longitude);
+    const startsAt = dateValue(row.pickup_starts_at);
+    const endsAt = dateValue(row.pickup_ends_at);
+    const expiresAt = dateValue(row.expires_at);
+    if (
+      !uuidPattern.test(requestPublicId) ||
+      !uuidPattern.test(siteId) ||
+      !['public_meeting_place', 'commercial_site'].includes(kind) ||
+      !address || !city || !region || !startsAt || !endsAt || !expiresAt ||
+      latitude === null || latitude < -90 || latitude > 90 ||
+      longitude === null || longitude < -180 || longitude > 180
+    ) {
+      throw new Error('INVALID_PICKUP_DETAIL_RESPONSE');
+    }
+    return { ok: true, data: {
+      requestId: requestPublicId,
+      siteId,
+      label: stringValue(row.label),
+      kind,
+      address,
+      city,
+      region,
+      ...(stringValue(row.postal_code) ? { postalCode: stringValue(row.postal_code) } : {}),
+      latitude,
+      longitude,
+      startsAt,
+      endsAt,
+      expiresAt,
+    } };
+  } catch (error) {
+    return toActionError(error, 'Verified pickup details are not available.');
+  }
+}
+
+export async function resolveMarketplacePickup(
+  conversationId: string,
+  requestId: string,
+  resolution: 'cancel' | 'decline' | 'revoke',
+  expectedVersion: number
+): Promise<ActionResult> {
+  const client = supabase;
+  if (!client) return unavailable();
+  if (![conversationId, requestId].every((value) => uuidPattern.test(value))) {
+    return { ok: false, code: 'INVALID', reason: 'Choose a valid pickup request.' };
+  }
+  try {
+    const { error } = await client.rpc('resolve_marketplace_pickup_request', {
+      target_conversation_public_id: conversationId,
+      target_pickup_request_public_id: requestId,
+      resolution,
+      expected_version: Math.floor(expectedVersion),
+      idempotency_key: chatIdempotencyKey('pickup'),
+    });
+    if (error) throw error;
+    return { ok: true, message: 'Pickup request updated.' };
+  } catch (error) {
+    return toActionError(error, 'Pickup request could not be updated.');
   }
 }

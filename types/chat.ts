@@ -7,7 +7,7 @@ export type MarketplaceConversation = {
   businessCategory: BusinessCategory;
   state: 'open' | 'closed_by_customer' | 'closed_by_merchant' | 'restricted';
   counterpart: {
-    profileId: string;
+    profileId?: string;
     name: string;
     username: string;
     avatarUrl?: string;
@@ -30,7 +30,7 @@ export type MarketplaceChatMessage = {
   id: string;
   sequence: number;
   sender: {
-    profileId: string;
+    profileId?: string;
     name: string;
     username: string;
     avatarUrl?: string;
@@ -47,5 +47,39 @@ export type MarketplaceTypingMember = {
   name: string;
   username: string;
   avatarUrl?: string;
+  expiresAt: string;
+};
+
+export type MarketplacePickupRequest = {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+  note?: string;
+  state: 'pending' | 'authorized' | 'declined' | 'cancelled' | 'expired';
+  version: number;
+  createdAt: string;
+};
+
+export type MarketplacePickupOption = {
+  id: string;
+  label: string;
+  city: string;
+  region: string;
+  kind: 'public_meeting_place' | 'commercial_site';
+};
+
+export type MarketplacePickupDetail = {
+  requestId: string;
+  siteId: string;
+  label: string;
+  kind: 'public_meeting_place' | 'commercial_site';
+  address: string;
+  city: string;
+  region: string;
+  postalCode?: string;
+  latitude: number;
+  longitude: number;
+  startsAt: string;
+  endsAt: string;
   expiresAt: string;
 };

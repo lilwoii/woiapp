@@ -497,15 +497,20 @@ export function AuthProvider({ children }: PropsWithChildren) {
         body: { confirmation: 'DELETE' },
       });
       if (error) throw error;
-      deletionIdempotencyKey.current = null;
-      await client.auth.signOut({ scope: 'local' });
       const processing =
         data && typeof data === 'object' && data.status === 'processing';
+      if (processing) {
+        return {
+          ok: false,
+          code: 'UNKNOWN',
+          reason: 'Deletion is still processing. Keep this verified session open and retry shortly.',
+        };
+      }
+      deletionIdempotencyKey.current = null;
+      await client.auth.signOut({ scope: 'local' });
       return {
         ok: true,
-        message: processing
-          ? 'Your deletion is already processing. This device has been signed out.'
-          : 'Your Spottr account and private account data were deleted.',
+        message: 'Your Spottr account and private account data were deleted.',
       };
     } catch (error) {
       return toActionError(

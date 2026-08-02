@@ -86,7 +86,9 @@ database matches this file.
 no-store JSON attachment directly to the authenticated user. The current export
 contains Auth account metadata, profile, business memberships and claims,
 reviews, follows, notification preferences, submitted reports, blocked public
-profiles, and owned-media metadata. It does not return credentials, private
+profiles, owned-media metadata, marketplace conversation metadata, authored
+messages, pickup requests, and pickup sites submitted or actively owned by the
+subject. It does not return credentials, counterpart message bodies, private
 moderation notes, or the platform audit log.
 
 `delete-account` accepts `DELETE` with:
@@ -98,13 +100,20 @@ moderation notes, or the platform audit log.
 
 The function first removes owned storage objects. It then archives a business
 for which the member is the only active owner, clears creator attribution,
-marks the profile deleted, and hard-deletes the Supabase Auth user. Auth-linked
+destroys exact marketplace pickup disclosures, cancels active pickup requests,
+clears ephemeral chat state, closes shared conversations, marks the profile
+deleted, and hard-deletes the Supabase Auth user. Chat participant and sender
+references become null so the other participant retains a closed, pseudonymized
+shared record. Auth-linked
 reviews, follows, notification preferences, reports, blocks, memberships,
 claims, owned media rows, and rate-limit/idempotency rows cascade with the Auth
 user. Business updates/responses and audit records may remain for marketplace
 integrity, with the deleted actor reference set to null. A private deletion
 receipt is idempotent and expires; failures return a retryable error rather than
-claiming completion.
+claiming completion. A per-user advisory lock and live-request unique index reuse
+one deletion receipt across devices. The client keeps its verified session open
+when a concurrent worker reports `processing`, allowing a safe retry instead of
+signing out before deletion is confirmed.
 
 The production privacy policy must disclose this behavior and the actual
 retention periods. The deletion drill in [RELEASE.md](RELEASE.md) must prove the

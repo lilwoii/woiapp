@@ -74,6 +74,7 @@
     "preset": "jest-expo",
     "collectCoverageFrom": [
       "lib/moderation.ts",
+      "lib/chat-safety.ts",
       "lib/errors.ts",
       "lib/discovery-filters.ts",
       "lib/ordering-domain.ts"
