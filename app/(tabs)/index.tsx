@@ -73,6 +73,9 @@ const distanceOptions = [1, 3, 5, 10, 25] as const;
 const ratingOptions = [4, 4.5, 4.8] as const;
 const priceOptions = [1, 2, 3, 4] as const;
 
+const webSectionHeading = Platform.OS === 'web'
+  ? ({ 'aria-level': 2 } as const)
+  : {};
 function viewportAroundPoint(
   latitude: number,
   longitude: number,
@@ -401,7 +404,7 @@ export default function DiscoverScreen() {
         {locationPanelOpen ? (
           <View style={styles.locationPanel}>
             <View style={styles.locationPanelCopy}>
-              <Text accessibilityRole="header" style={styles.locationPanelTitle}>Choose your search area</Text>
+              <Text accessibilityRole="header" {...webSectionHeading} style={styles.locationPanelTitle}>Choose your search area</Text>
               <Text style={styles.locationPanelDetail}>
                 Use your location once, or search without sharing it.
               </Text>
@@ -546,7 +549,7 @@ export default function DiscoverScreen() {
           <View accessibilityLabel="Discovery filters" style={styles.filterPanel}>
             <View style={styles.filterPanelHeader}>
               <View style={styles.filterPanelHeading}>
-                <Text accessibilityRole="header" style={styles.filterPanelTitle}>Find exactly what works</Text>
+                <Text accessibilityRole="header" {...webSectionHeading} style={styles.filterPanelTitle}>Find exactly what works</Text>
                 <Text style={styles.filterPanelDetail}>Every choice narrows the same organic results shown on the map.</Text>
               </View>
               {activeFilterCount ? (
@@ -744,7 +747,7 @@ export default function DiscoverScreen() {
             <View style={styles.emptyIcon}>
               <FontAwesome6 color={palette.accent} name="location-crosshairs" size={22} />
             </View>
-            <Text accessibilityRole="header" style={styles.emptyTitle}>
+            <Text accessibilityRole="header" {...webSectionHeading} style={styles.emptyTitle}>
               Start with your real search area
             </Text>
             <Text style={styles.emptyBody}>
@@ -827,7 +830,7 @@ export default function DiscoverScreen() {
             <View style={[styles.resultsColumn, wide && styles.resultsColumnWide]}>
               <View style={styles.resultsHeader}>
                 <View>
-                  <Text accessibilityRole="header" style={styles.resultsTitle}>
+                  <Text accessibilityRole="header" {...webSectionHeading} style={styles.resultsTitle}>
                     {category === 'food_truck' ? 'Trucks near you' : 'Places near you'}
                   </Text>
                   <Text accessibilityLiveRegion="polite" style={styles.resultsDetail}>
@@ -884,7 +887,7 @@ export default function DiscoverScreen() {
             <View style={styles.emptyIcon}>
               <FontAwesome6 color={palette.accent} name="location-dot" size={22} />
             </View>
-            <Text accessibilityRole="header" style={styles.emptyTitle}>
+            <Text accessibilityRole="header" {...webSectionHeading} style={styles.emptyTitle}>
               {places.length ? 'No matches in this area' : 'No verified listings here yet'}
             </Text>
             <Text style={styles.emptyBody}>

@@ -264,7 +264,7 @@ export default function AuthScreen() {
           <View style={styles.authCard}>
             <View style={styles.intro}>
               <Text style={styles.eyebrow}>One account, both sides</Text>
-              <Text style={styles.title}>{mode === 'signup' ? 'Join your local food map.' : 'Welcome back.'}</Text>
+              <Text accessibilityRole="header" style={styles.title}>{mode === 'signup' ? 'Join your local food map.' : 'Welcome back.'}</Text>
               <Text style={styles.subtitle}>
                 {mode === 'signup'
                   ? 'Follow places, review visits, or manage a verified business from the same secure account.'

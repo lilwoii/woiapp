@@ -71,7 +71,7 @@ export default function PickupOrderScreen() {
   }
 
   if (!featureFlags.pickupOrdering || !place || error || !place.pickup?.enabled) {
-    return <FocusAwareScreen><View style={styles.center}><FontAwesome6 color={palette.accentDeep} name="bag-shopping" size={24} /><Text accessibilityRole="header" style={styles.centerTitle}>Pickup ordering is unavailable.</Text><Text style={styles.centerText}>{error ?? 'This business is not accepting Spottr pickup orders.'}</Text><Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backPill}><Text style={styles.backPillText}>Back to listing</Text></Pressable></View></FocusAwareScreen>;
+    return <FocusAwareScreen><View role="main" style={styles.center}><FontAwesome6 color={palette.accentDeep} name="bag-shopping" size={24} /><Text accessibilityRole="header" style={styles.centerTitle}>Pickup ordering is unavailable.</Text><Text style={styles.centerText}>{error ?? 'This business is not accepting Spottr pickup orders.'}</Text><Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backPill}><Text style={styles.backPillText}>Back to listing</Text></Pressable></View></FocusAwareScreen>;
   }
 
   return (

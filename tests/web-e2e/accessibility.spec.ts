@@ -1,6 +1,19 @@
 import { AxeBuilder } from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 
+const pageErrors = new WeakMap<object, string[]>();
+
+test.beforeEach(async ({ page }) => {
+  const errors: string[] = [];
+  pageErrors.set(page, errors);
+  page.on('pageerror', (error) => errors.push(error.message));
+});
+
+test.afterEach(async ({ page }) => {
+  expect(pageErrors.get(page) ?? [], 'Unexpected uncaught browser errors').toEqual([]);
+  pageErrors.delete(page);
+});
+
 const acceptanceRoutes = [
   '/',
   '/auth',
@@ -37,6 +50,8 @@ for (const route of acceptanceRoutes) {
       (violation) => violation.impact === 'critical' || violation.impact === 'serious'
     );
     expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
+    await expect(page.getByRole('main')).toHaveCount(1);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
   });
 }
 
@@ -62,12 +77,19 @@ test('back navigation restores focus to the control that opened the route', asyn
 });
 
 
-test('discovery keeps keyboard traversal and rendered annotations bounded', async ({ page }) => {
+test('unconfigured discovery shell is explicit and keeps keyboard traversal bounded', async ({ page }) => {
   await page.goto('/', { waitUntil: 'networkidle' });
-  const sequentialFocusTargets = page.locator(
-    'a[href], button, input, select, textarea, [tabindex="0"]'
-  );
-  expect(await sequentialFocusTargets.count()).toBeLessThan(120);
+  await expect(page.getByText(/live spottr services are not configured/i).first()).toBeVisible();
+  const sequentialFocusTargetCount = await page
+    .locator('a[href], button, input, select, textarea, [tabindex]')
+    .evaluateAll((elements) => elements.filter((element) => {
+      if (!(element instanceof HTMLElement) || element.tabIndex < 0) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' &&
+        style.display !== 'none';
+    }).length);
+  expect(sequentialFocusTargetCount).toBeLessThan(120);
   await expect(page.locator('.maplibregl-marker button[tabindex="0"]')).toHaveCount(0);
 
   const visited = new Set<string>();

@@ -1,4 +1,5 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
+import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { StatusBar } from 'expo-status-bar';
 import { DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import Head from 'expo-router/head';
@@ -35,6 +36,7 @@ export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     ...FontAwesome.font,
+    ...FontAwesome6.font,
   });
 
   useEffect(() => {

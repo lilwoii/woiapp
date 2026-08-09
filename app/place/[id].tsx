@@ -137,7 +137,7 @@ export default function PlaceDetailScreen() {
 
   if (!place) {
     return (
-      <View style={styles.missing}>
+      <View role="main" style={styles.missing}>
         {listingLoading ? (
           <>
             <ActivityIndicator color={palette.accentDeep} />
@@ -146,7 +146,7 @@ export default function PlaceDetailScreen() {
         ) : (
           <>
             <FontAwesome6 color={palette.accent} name="location-dot" size={24} />
-            <Text accessibilityRole="alert" style={styles.missingTitle}>
+            <Text accessibilityLiveRegion="assertive" accessibilityRole="header" style={styles.missingTitle}>
               {listingError ?? 'This listing is unavailable.'}
             </Text>
             <Pressable accessibilityRole="button" onPress={() => router.replace('/')} style={styles.missingButton}>

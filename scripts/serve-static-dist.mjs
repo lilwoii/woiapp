@@ -3,7 +3,7 @@ import { access, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
 
-const root = path.resolve(process.cwd(), 'dist');
+const root = path.resolve(process.cwd(), process.env.SPOTTR_E2E_ROOT ?? 'dist');
 const port = Number.parseInt(process.env.SPOTTR_E2E_PORT ?? '4173', 10);
 const contentTypes = new Map([
   ['.css', 'text/css; charset=utf-8'],

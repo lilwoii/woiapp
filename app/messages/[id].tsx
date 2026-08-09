@@ -487,7 +487,7 @@ export default function ConversationScreen() {
               <FontAwesome6 color={palette.ink} name="arrow-left" size={14} />
             </Pressable>
             <View style={styles.headerCopy}>
-              <Text style={styles.headerTitle}>
+              <Text accessibilityRole="header" style={styles.headerTitle}>
                 {conversation?.counterpart.name ?? "Private conversation"}
               </Text>
               <Text style={styles.headerMeta}>

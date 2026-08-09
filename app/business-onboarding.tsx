@@ -169,7 +169,7 @@ export default function BusinessOnboardingScreen() {
 
   if (!auth.isConfigured) {
     return (
-      <View style={styles.authGate}>
+      <View role="main" style={styles.authGate}>
         <BrandMark />
         <View style={styles.authGateIcon}>
           <FontAwesome6 color={palette.accentDeep} name="server" size={21} />
@@ -186,7 +186,7 @@ export default function BusinessOnboardingScreen() {
 
   if (auth.status === 'loading') {
     return (
-      <View style={styles.authGate}>
+      <View role="main" style={styles.authGate}>
         <ActivityIndicator color={palette.accentDeep} />
         <Text style={styles.authGateDetail}>Checking secure business access…</Text>
       </View>
@@ -195,7 +195,7 @@ export default function BusinessOnboardingScreen() {
 
   if (auth.status !== 'authenticated') {
     return (
-      <View style={styles.authGate}>
+      <View role="main" style={styles.authGate}>
         <BrandMark />
         <View style={styles.authGateIcon}>
           <FontAwesome6 color={palette.accentDeep} name="user-shield" size={21} />
@@ -490,7 +490,7 @@ export default function BusinessOnboardingScreen() {
 
           <View style={styles.progressHeader}>
             <Text style={styles.progressEyebrow}>Business verification</Text>
-            <Text style={styles.title}>
+            <Text accessibilityRole="header" style={styles.title}>
               {step === 1 ? 'Tell us what you serve.' : step === 2 ? 'Where and how do you operate?' : 'Make it unmistakably yours.'}
             </Text>
             <Text style={styles.subtitle}>

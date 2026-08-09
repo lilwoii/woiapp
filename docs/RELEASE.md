@@ -71,9 +71,10 @@ dependency audit on Node 22.13.1. A passing workflow proves only those checks on
 that commit. The web build also fails when required routes, zoomable viewport
 metadata, main/H1 semantics, semantic focus targets, reduced-motion CSS, source-map
 exclusion, or compressed JavaScript/CSS/HTML budgets regress. Chromium acceptance
-then exercises serious WCAG violations, route focus/title behavior, bounded keyboard
-traversal, mobile overflow, and minimum primary-control target size against that
-exact generated artifact.
+then exercises serious WCAG violations across every unconfigured route shell,
+route focus/title and back-focus behavior, bounded fallback-state keyboard traversal,
+mobile overflow, and minimum primary-control target size against that exact generated
+artifact. Populated and authenticated production states still require staging evidence.
 
 Required independent evidence before public launch:
 

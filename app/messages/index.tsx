@@ -51,7 +51,7 @@ export default function MessagesScreen() {
           </View>
           <View style={styles.heading}>
             <Text style={styles.eyebrow}>PRIVATE MARKETPLACE CHAT</Text>
-            <Text style={styles.title}>Messages</Text>
+            <Text accessibilityRole="header" style={styles.title}>Messages</Text>
             <Text style={styles.subtitle}>Coordinate directly with verified Neighborhood Kitchens and participating pop-ups.</Text>
           </View>
 

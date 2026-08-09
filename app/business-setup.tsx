@@ -308,7 +308,7 @@ function Gate({
   busy?: boolean;
 }) {
   return (
-    <View style={styles.gate}>
+    <View role="main" style={styles.gate}>
       <BrandMark />
       <View style={styles.gateIcon}>
         {busy ? (
