@@ -14,8 +14,8 @@ begin
   with candidate as (
     select request.id
     from private.account_deletion_requests request
-    join private.account_deletion_freezes freeze
-      on freeze.request_id = request.id and freeze.user_id = request.user_id
+    join private.account_deletion_freezes deletion_freeze
+      on deletion_freeze.request_id = request.id and deletion_freeze.user_id = request.user_id
     where request.user_id is not null
       and (
         request.state in ('started', 'failed', 'storage_deleted')

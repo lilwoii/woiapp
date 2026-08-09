@@ -191,7 +191,7 @@ as $$
 declare
   actor uuid := auth.uid();
   choices uuid[] := coalesce(selected_choice_public_ids, '{}'::uuid[]);
-  origin geography(point, 4326);
+  origin public.geography(point, 4326);
   key_hash text;
   request_hash text;
   prior_response jsonb;

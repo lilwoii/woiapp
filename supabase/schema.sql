@@ -99,7 +99,7 @@ $$;
 create table if not exists public.profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   public_id uuid not null default gen_random_uuid() unique,
-  username citext not null unique,
+  username public.citext not null unique,
   display_name text not null,
   avatar_path text,
   status text not null default 'active' check (status in ('active', 'restricted', 'suspended', 'deleted')),
@@ -118,7 +118,7 @@ create table if not exists public.businesses (
   id uuid primary key default gen_random_uuid(),
   kind public.business_kind not null,
   name text not null,
-  slug citext not null unique,
+  slug public.citext not null unique,
   description text not null default '',
   cuisine_labels text[] not null default '{}',
   price_level smallint not null default 2 check (price_level between 1 and 4),
@@ -144,7 +144,7 @@ create table if not exists public.businesses (
 create table if not exists public.business_private_details (
   business_id uuid primary key references public.businesses(id) on delete cascade,
   legal_name text,
-  business_email citext,
+  business_email public.citext,
   business_phone text,
   website_url text,
   submitted_address_line text,
@@ -226,7 +226,7 @@ create table if not exists public.business_locations (
   city text not null,
   region text not null,
   postal_code text,
-  point geography(point, 4326) not null,
+  point public.geography(point, 4326) not null,
   is_primary boolean not null default false,
   is_approximate boolean not null default false,
   public_address boolean not null default true,
@@ -239,8 +239,8 @@ create table if not exists public.business_locations (
   constraint business_locations_region_length check (char_length(btrim(region)) between 1 and 80),
   constraint business_locations_postal_length check (postal_code is null or char_length(postal_code) <= 24),
   constraint business_locations_coordinate_bounds check (
-    public.st_y(point::geometry) between -90 and 90
-    and public.st_x(point::geometry) between -180 and 180
+    public.st_y(point::public.geometry) between -90 and 90
+    and public.st_x(point::public.geometry) between -180 and 180
   ),
   unique (id, business_id)
 );
@@ -691,7 +691,7 @@ create table if not exists private.business_invitations (
   id uuid primary key default gen_random_uuid(),
   business_id uuid not null references public.businesses(id) on delete cascade,
   target_type text not null check (target_type in ('email', 'username')),
-  target_normalized citext not null,
+  target_normalized public.citext not null,
   target_hint text not null,
   target_user_id uuid references auth.users(id) on delete set null,
   role public.member_role not null check (role in ('manager', 'staff')),
@@ -1708,7 +1708,7 @@ begin
     raise exception using errcode = '22023', message = 'INVALID_IDEMPOTENCY_KEY';
   end if;
 
-  return pg_catalog.encode(public.digest(normalized_key, 'sha256'), 'hex');
+  return pg_catalog.encode(extensions.digest(normalized_key, 'sha256'), 'hex');
 end;
 $$;
 
@@ -1720,7 +1720,7 @@ security definer
 set search_path = ''
 as $$
   select pg_catalog.encode(
-    public.digest(coalesce(payload, 'null'::jsonb)::text, 'sha256'),
+    extensions.digest(coalesce(payload, 'null'::jsonb)::text, 'sha256'),
     'hex'
   );
 $$;
@@ -1862,7 +1862,7 @@ as $$
     and not exists (
       select 1
       from public.profiles p
-      where p.username = btrim(candidate)::citext
+      where p.username = btrim(candidate)::public.citext
     );
 $$;
 
@@ -1958,7 +1958,7 @@ begin
   perform private.consume_rate_limit(actor, 'profile_update', 20, 3600);
 
   update public.profiles p
-  set username = next_username::citext,
+  set username = next_username::public.citext,
       display_name = next_display_name,
       avatar_path = next_avatar_path
   where p.user_id = actor;
@@ -2018,7 +2018,7 @@ begin
     raise exception using errcode = '42501', message = 'Avatar must reference approved media';
   end if;
 
-  new.username := btrim(new.username::text)::citext;
+  new.username := btrim(new.username::text)::public.citext;
   new.display_name := btrim(new.display_name);
   if not private.username_is_valid(new.username::text)
     or not private.content_is_professional(new.username::text)
@@ -3552,7 +3552,7 @@ begin
     select p.user_id
     into resolved_target_user_id
     from public.profiles p
-    where p.username = normalized_target::citext
+    where p.username = normalized_target::public.citext
     limit 1;
   end if;
 
@@ -3616,7 +3616,7 @@ begin
   values (
     target_business_id,
     resolved_target_type,
-    normalized_target::citext,
+    normalized_target::public.citext,
     masked_target,
     resolved_target_user_id,
     invite_role,
@@ -3738,8 +3738,8 @@ begin
     and bi.expires_at > now()
     and (
       bi.target_user_id = actor
-      or (bi.target_type = 'email' and bi.target_normalized = actor_email::citext)
-      or (bi.target_type = 'username' and bi.target_normalized = actor_username::citext)
+      or (bi.target_type = 'email' and bi.target_normalized = actor_email::public.citext)
+      or (bi.target_type = 'username' and bi.target_normalized = actor_username::public.citext)
     )
   order by bi.created_at desc, bi.id;
 end;
@@ -3794,11 +3794,11 @@ begin
     invitation.target_user_id = actor
     or (
       invitation.target_type = 'email'
-      and invitation.target_normalized = actor_email::citext
+      and invitation.target_normalized = actor_email::public.citext
     )
     or (
       invitation.target_type = 'username'
-      and invitation.target_normalized = actor_username::citext
+      and invitation.target_normalized = actor_username::public.citext
     )
   ) then
     raise exception using errcode = '22023', message = 'Invitation not found';
@@ -4869,7 +4869,7 @@ begin
       public.st_setsrid(
         public.st_makepoint(location_longitude, location_latitude),
         4326
-      )::geography,
+      )::public.geography,
       25
     )
   order by bl.updated_at desc
@@ -4905,7 +4905,7 @@ begin
     public.st_setsrid(
       public.st_makepoint(location_longitude, location_latitude),
       4326
-    )::geography,
+    )::public.geography,
     false,
     location_is_approximate,
     location_public_address,
@@ -4947,7 +4947,7 @@ declare
   target_name text;
   target_description text;
   target_cuisines text[];
-  target_email citext;
+  target_email public.citext;
   target_phone text;
   target_website text;
   target_address text;
@@ -4990,7 +4990,7 @@ begin
     raise exception using errcode = '22023', message = 'Payload contains unsupported fields';
   end if;
 
-  request_hash := pg_catalog.encode(public.digest(payload::text, 'sha256'), 'hex');
+  request_hash := pg_catalog.encode(extensions.digest(payload::text, 'sha256'), 'hex');
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended(actor::text || ':create_business_draft:' || request_hash, 0)
   );
@@ -5016,7 +5016,7 @@ begin
   target_kind := (payload ->> 'kind')::public.business_kind;
   target_name := btrim(coalesce(payload ->> 'name', ''));
   target_description := btrim(coalesce(payload ->> 'description', ''));
-  target_email := nullif(btrim(payload ->> 'business_email'), '')::citext;
+  target_email := nullif(btrim(payload ->> 'business_email'), '')::public.citext;
   target_phone := nullif(btrim(payload ->> 'business_phone'), '');
   target_website := nullif(btrim(payload ->> 'website_url'), '');
   target_address := nullif(btrim(payload ->> 'address_line'), '');
@@ -5244,7 +5244,7 @@ declare
   next_cuisines text[];
   next_price_level smallint;
   next_timezone text;
-  next_business_email citext;
+  next_business_email public.citext;
   next_business_phone text;
   next_website_url text;
   next_show_phone boolean;
@@ -5347,7 +5347,7 @@ begin
     next_timezone := btrim(coalesce(payload ->> 'timezone', ''));
   end if;
   if payload ? 'business_email' then
-    next_business_email := nullif(btrim(payload ->> 'business_email'), '')::citext;
+    next_business_email := nullif(btrim(payload ->> 'business_email'), '')::public.citext;
   end if;
   if payload ? 'business_phone' then
     next_business_phone := nullif(btrim(payload ->> 'business_phone'), '');
@@ -5905,7 +5905,7 @@ begin
     update public.business_private_details bpd
     set business_email = case
           when contacts_patch ? 'business_email'
-          then nullif(btrim(contacts_patch ->> 'business_email'), '')::citext
+          then nullif(btrim(contacts_patch ->> 'business_email'), '')::public.citext
           else bpd.business_email
         end,
         business_phone = case
@@ -6136,7 +6136,7 @@ begin
               (location_patch ->> 'latitude')::double precision
             ),
             4326
-          )::geography,
+          )::public.geography,
           coalesce((location_patch ->> 'is_primary')::boolean, false),
           coalesce((location_patch ->> 'is_approximate')::boolean, false),
           coalesce((location_patch ->> 'public_address')::boolean, true),
@@ -6155,7 +6155,7 @@ begin
                 (location_patch ->> 'latitude')::double precision
               ),
               4326
-            )::geography,
+            )::public.geography,
             is_primary = coalesce((location_patch ->> 'is_primary')::boolean, false),
             is_approximate = coalesce((location_patch ->> 'is_approximate')::boolean, false),
             public_address = coalesce((location_patch ->> 'public_address')::boolean, true),
@@ -8093,8 +8093,8 @@ as $$
                 'city', bl.city,
                 'region', bl.region,
                 'postal_code', bl.postal_code,
-                'latitude', public.st_y(bl.point::geometry),
-                'longitude', public.st_x(bl.point::geometry),
+                'latitude', public.st_y(bl.point::public.geometry),
+                'longitude', public.st_x(bl.point::public.geometry),
                 'is_primary', bl.is_primary,
                 'is_approximate', bl.is_approximate,
                 'public_address', bl.public_address,
@@ -8339,7 +8339,7 @@ begin
   where adr.expires_at < now();
 
   fingerprint := pg_catalog.encode(
-    public.digest(target_user_id::text || ':' || request_key, 'sha256'),
+    extensions.digest(target_user_id::text || ':' || request_key, 'sha256'),
     'hex'
   );
 
@@ -9452,8 +9452,8 @@ with redacted as (
     end as postal_code,
     case
       when b.kind = 'home_kitchen' or not bl.public_address or bl.is_approximate then
-        public.st_snaptogrid(bl.point::geometry, 0.05)
-      else bl.point::geometry
+        public.st_snaptogrid(bl.point::public.geometry, 0.05)
+      else bl.point::public.geometry
     end as safe_point,
     (bl.is_approximate or not bl.public_address or b.kind = 'home_kitchen') as is_approximate,
     bl.is_primary
@@ -9753,7 +9753,7 @@ as $$
       public.st_setsrid(
         public.st_makepoint(search_lng, search_lat),
         4326
-      )::geography as search_point,
+      )::public.geography as search_point,
       least(greatest(coalesce(radius_meters, 16093), 500), 80467)::double precision
         as exact_radius
     where search_lat between -90 and 90
@@ -9777,7 +9777,7 @@ as $$
       bl.region,
       case
         when b.kind = 'home_kitchen' or not bl.public_address or bl.is_approximate
-          then public.st_snaptogrid(bl.point::geometry, 0.05)::geography
+          then public.st_snaptogrid(bl.point::public.geometry, 0.05)::public.geography
         else bl.point
       end as safe_point,
       (bl.is_approximate or not bl.public_address or b.kind = 'home_kitchen')
@@ -9828,8 +9828,8 @@ as $$
       coarse.location_label,
       coarse.city,
       coarse.region,
-      public.st_y(coarse.safe_point::geometry) as latitude,
-      public.st_x(coarse.safe_point::geometry) as longitude,
+      public.st_y(coarse.safe_point::public.geometry) as latitude,
+      public.st_x(coarse.safe_point::public.geometry) as longitude,
       public.st_distance(coarse.safe_point, p.search_point) as distance_meters,
       coarse.is_approximate,
       row_number() over (

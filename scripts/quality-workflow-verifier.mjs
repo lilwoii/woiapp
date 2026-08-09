@@ -20,9 +20,26 @@ export function validatePostgresCommands(workflow) {
   return errors;
 }
 
+export function validateFullRuntimeGate(workflow) {
+  const errors = [];
+  if (!/^  full-supabase-db:\s*$/m.test(workflow)) {
+    errors.push('Quality workflow must include the full Supabase database runtime job.');
+  }
+  if (!workflow.includes('uses: supabase/setup-cli@v2')) {
+    errors.push('Full database runtime must use the official Supabase CLI action.');
+  }
+  if (!/^\s+version: 2\.84\.2\s*$/m.test(workflow)) {
+    errors.push('Supabase CLI runtime version must remain pinned to 2.84.2.');
+  }
+  if (!workflow.includes('run: npm run test:db-runtime')) {
+    errors.push('Quality workflow must execute the full database runtime gate.');
+  }
+  return errors;
+}
+
 export async function verifyQualityWorkflow(projectRoot = PROJECT_ROOT) {
   const workflow = await readFile(path.join(projectRoot, '.github', 'workflows', 'quality.yml'), 'utf8');
-  const errors = validatePostgresCommands(workflow);
+  const errors = [...validatePostgresCommands(workflow), ...validateFullRuntimeGate(workflow)];
   if (errors.length) throw new Error(errors.join('\n'));
 }
 

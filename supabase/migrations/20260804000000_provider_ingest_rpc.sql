@@ -164,7 +164,7 @@ language sql
 immutable
 set search_path = ''
 as $$
-  select encode(public.digest(candidate::text, 'sha256'), 'hex');
+  select encode(extensions.digest(candidate::text, 'sha256'), 'hex');
 $$;
 
 create or replace function private.validate_licensed_provider_payload(
@@ -1133,7 +1133,7 @@ begin
     raise exception using errcode = '54000', message = 'PROVIDER_RATE_LIMITED';
   end if;
 
-  receipt_key_hash := encode(public.digest(idempotency_key, 'sha256'), 'hex');
+  receipt_key_hash := encode(extensions.digest(idempotency_key, 'sha256'), 'hex');
   select
     receipt.request_sha256,
     receipt.batch_id,
@@ -1168,7 +1168,7 @@ begin
     ) values (
       provider_slug,
       'batch_replayed',
-      encode(public.digest(idempotency_key, 'sha256'), 'hex'),
+      encode(extensions.digest(idempotency_key, 'sha256'), 'hex'),
       (stored_safe_response->>'accepted_records')::integer,
       (stored_safe_response->>'inactive_records')::integer,
       '{}'::jsonb
@@ -1348,7 +1348,7 @@ begin
       target_slug := 'provider-'
         || replace(provider_slug, '_', '-')
         || '-'
-        || encode(public.digest(record_external_id, 'sha256'), 'hex');
+        || encode(extensions.digest(record_external_id, 'sha256'), 'hex');
       insert into public.businesses (
         kind,
         name,
@@ -2144,11 +2144,11 @@ begin
       ) values (
         provider_slug,
         'snapshot_completed',
-        encode(public.digest(idempotency_key, 'sha256'), 'hex'),
+        encode(extensions.digest(idempotency_key, 'sha256'), 'hex'),
         accepted_records,
         inactive_records,
         jsonb_build_object(
-          'snapshot_id_hash', encode(public.digest(sync_snapshot_id, 'sha256'), 'hex'),
+          'snapshot_id_hash', encode(extensions.digest(sync_snapshot_id, 'sha256'), 'hex'),
           'final_page_index', sync_page_index,
           'missing_sources', missing_source_count
         )
@@ -2186,7 +2186,7 @@ begin
   ) values (
     provider_slug,
     'batch_applied',
-    encode(public.digest(idempotency_key, 'sha256'), 'hex'),
+    encode(extensions.digest(idempotency_key, 'sha256'), 'hex'),
     accepted_records,
     inactive_records,
     jsonb_build_object(

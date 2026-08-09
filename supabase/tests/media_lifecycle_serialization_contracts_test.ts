@@ -90,7 +90,7 @@ Deno.test("account deletion freezes first and seals every storage checkpoint", (
   assertMatch(migration, /update public\.profiles set status = 'deleted'/);
   assertMatch(
     migration,
-    /state in \('issued', 'registered'\) and grant\.expires_at > now\(\)/,
+    /state in \('issued', 'registered'\) and stage_grant\.expires_at > now\(\)/,
   );
   assertMatch(
     migration,

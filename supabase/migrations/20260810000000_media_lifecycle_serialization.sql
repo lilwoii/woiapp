@@ -141,8 +141,8 @@ set search_path = ''
 as $$
   select target_user_id is not null
     and not exists (
-      select 1 from private.account_deletion_freezes freeze
-      where freeze.user_id = target_user_id
+      select 1 from private.account_deletion_freezes deletion_freeze
+      where deletion_freeze.user_id = target_user_id
     )
     and exists (
       select 1
@@ -238,9 +238,9 @@ begin
     pg_catalog.hashtextextended(new.storage_path, 7741903)
   );
 
-  select grant.* into grant_row
-  from private.media_stage_grants grant
-  where grant.storage_path = new.storage_path
+  select stage_grant.* into grant_row
+  from private.media_stage_grants stage_grant
+  where stage_grant.storage_path = new.storage_path
   for update;
 
   if not found or grant_row.owner_id <> new.owner_id
@@ -255,8 +255,8 @@ begin
       where item.storage_path = new.storage_path and item.state <> 'finalized'
     )
     or exists (
-      select 1 from private.account_deletion_freezes freeze
-      where freeze.user_id = new.owner_id
+      select 1 from private.account_deletion_freezes deletion_freeze
+      where deletion_freeze.user_id = new.owner_id
     )
   then
     raise exception using errcode = '55000', message = 'MEDIA_STAGE_GRANT_UNAVAILABLE';
@@ -303,7 +303,7 @@ begin
   if asset.quarantine_state in ('clean', 'rejected') then
     return jsonb_build_object('status', asset.quarantine_state, 'asset_id', asset.id);
   end if;
-  if exists (select 1 from private.account_deletion_freezes freeze where freeze.user_id = asset.owner_id)
+  if exists (select 1 from private.account_deletion_freezes deletion_freeze where deletion_freeze.user_id = asset.owner_id)
     or exists (select 1 from private.media_cleanup_items item where item.asset_id = asset.id and item.state <> 'finalized')
   then raise exception using errcode = '55000', message = 'MEDIA_ASSET_FROZEN'; end if;
 
@@ -356,7 +356,7 @@ begin
   for update;
   if not found or claim.attempt_token <> target_attempt_token or claim.lease_expires_at <= now()
     or target_output_path !~ ('^published/[A-Za-z0-9/_-]+/' || target_asset_id::text || '/' || target_attempt_token::text || '\.(jpg|jpeg|png|webp)$')
-    or exists (select 1 from private.account_deletion_freezes freeze where freeze.user_id = claim.owner_id)
+    or exists (select 1 from private.account_deletion_freezes deletion_freeze where deletion_freeze.user_id = claim.owner_id)
   then raise exception using errcode = '55000', message = 'MEDIA_SCAN_CLAIM_INVALID'; end if;
   update private.media_scan_claims set planned_output_path = target_output_path
   where asset_id = target_asset_id;
@@ -397,7 +397,7 @@ begin
     or (scan_state = 'clean' and claim.planned_output_path is distinct from clean_storage_path)
   then raise exception using errcode = '55000', message = 'MEDIA_SCAN_CLAIM_INVALID'; end if;
 
-  if exists (select 1 from private.account_deletion_freezes freeze where freeze.user_id = claim.owner_id) then
+  if exists (select 1 from private.account_deletion_freezes deletion_freeze where deletion_freeze.user_id = claim.owner_id) then
     if claim.planned_output_path is not null then
       insert into private.media_orphan_paths (storage_path, owner_id, reason)
       values (claim.planned_output_path, claim.owner_id, 'failed_scan_output')
@@ -472,9 +472,9 @@ begin
         select 1 from public.media_assets asset where asset.storage_path = object.name
       )
       and not exists (
-        select 1 from private.media_stage_grants grant
-        where grant.storage_path = object.name
-          and grant.state not in ('cancelled', 'expired')
+        select 1 from private.media_stage_grants stage_grant
+        where stage_grant.storage_path = object.name
+          and stage_grant.state not in ('cancelled', 'expired')
       )
       and not exists (
         select 1 from public.business_claims claim
@@ -494,10 +494,10 @@ begin
       'unregistered_upload'
     from storage.objects object
     left join public.media_assets asset on asset.storage_path = object.name
-    left join private.media_stage_grants grant on grant.storage_path = object.name
+    left join private.media_stage_grants stage_grant on stage_grant.storage_path = object.name
     where object.bucket_id = 'spottr-media' and object.name = target_storage_path
       and asset.id is null
-      and (grant.id is null or grant.state in ('cancelled', 'expired'))
+      and (stage_grant.id is null or stage_grant.state in ('cancelled', 'expired'))
       and object.created_at < now() - interval '1 hour'
       and not exists (
         select 1 from public.business_claims claim
@@ -594,9 +594,9 @@ begin
 
   delete from private.media_orphan_paths orphan using private.media_cleanup_items item
   where item.batch_id = target_batch_id and item.state = 'claimed' and orphan.storage_path = item.storage_path;
-  delete from private.media_stage_grants grant using private.media_cleanup_items item
+  delete from private.media_stage_grants stage_grant using private.media_cleanup_items item
   where item.batch_id = target_batch_id and item.state = 'claimed'
-    and grant.storage_path = item.storage_path and grant.state in ('cancelled', 'expired');
+    and stage_grant.storage_path = item.storage_path and stage_grant.state in ('cancelled', 'expired');
   update private.media_cleanup_items set state = 'finalized', finalized_at = now(), lease_expires_at = null
   where batch_id = target_batch_id and state = 'claimed';
   return jsonb_build_object('batch_id', target_batch_id, 'deleted_asset_records', deleted_assets);
@@ -637,7 +637,7 @@ begin
   order by request.created_at limit 1;
 
   if request_id is null then
-    fingerprint := pg_catalog.encode(public.digest(target_user_id::text || ':' || request_key, 'sha256'), 'hex');
+    fingerprint := pg_catalog.encode(extensions.digest(target_user_id::text || ':' || request_key, 'sha256'), 'hex');
     insert into private.account_deletion_requests as request (user_id, request_fingerprint, state)
     values (target_user_id, fingerprint, 'started')
     on conflict (request_fingerprint) do update set user_id = request.user_id
@@ -671,7 +671,7 @@ declare paths text[]; wait_seconds integer := 0; pending_count integer;
 begin
   if not exists (
     select 1 from private.account_deletion_requests request
-    join private.account_deletion_freezes freeze on freeze.request_id = request.id and freeze.user_id = request.user_id
+    join private.account_deletion_freezes deletion_freeze on deletion_freeze.request_id = request.id and deletion_freeze.user_id = request.user_id
     where request.id = target_request_id and request.user_id = target_user_id
       and request.state in ('processing', 'storage_deleted') and request.expires_at > now()
   ) then raise exception using errcode = '42501', message = 'ACCOUNT_DELETION_CLAIM_REQUIRED'; end if;
@@ -684,8 +684,8 @@ begin
   select greatest(0, ceil(extract(epoch from max(blocked_until - now())))::integer)
   into wait_seconds
   from (
-    select grant.expires_at as blocked_until from private.media_stage_grants grant
-    where grant.owner_id = target_user_id and grant.state in ('issued', 'registered') and grant.expires_at > now()
+    select stage_grant.expires_at as blocked_until from private.media_stage_grants stage_grant
+    where stage_grant.owner_id = target_user_id and stage_grant.state in ('issued', 'registered') and stage_grant.expires_at > now()
     union all
     select claim.lease_expires_at + interval '15 minutes' from private.media_scan_claims claim
     where claim.owner_id = target_user_id
@@ -708,7 +708,7 @@ begin
     where object.bucket_id = 'spottr-media' and object.name like ('quarantine/' || target_user_id::text || '/%')
     union select asset.storage_path from public.media_assets asset where asset.owner_id = target_user_id
     union select asset.processed_storage_path from public.media_assets asset where asset.owner_id = target_user_id and asset.processed_storage_path is not null
-    union select grant.storage_path from private.media_stage_grants grant where grant.owner_id = target_user_id
+    union select stage_grant.storage_path from private.media_stage_grants stage_grant where stage_grant.owner_id = target_user_id
     union select orphan.storage_path from private.media_orphan_paths orphan where orphan.owner_id = target_user_id
     union select profile.avatar_path from public.profiles profile where profile.user_id = target_user_id and profile.avatar_path ~ '^(quarantine|published)/'
     union select claim.evidence_private_path from public.business_claims claim where claim.claimant_id = target_user_id and claim.evidence_private_path is not null
@@ -754,8 +754,8 @@ begin
       )
     )
     or not exists (
-      select 1 from private.account_deletion_freezes freeze
-      where freeze.user_id = target_user_id and freeze.request_id = target_request_id
+      select 1 from private.account_deletion_freezes deletion_freeze
+      where deletion_freeze.user_id = target_user_id and deletion_freeze.request_id = target_request_id
     )
   then raise exception using errcode = '22023', message = 'INVALID_ACCOUNT_DELETION_STORAGE_RECEIPT'; end if;
 
@@ -787,17 +787,17 @@ begin
   if new.state = 'storage_deleted' and old.state <> 'storage_deleted' then
     if old.user_id is null
       or not exists (
-        select 1 from private.account_deletion_freezes freeze
-        where freeze.user_id = old.user_id and freeze.request_id = old.id
+        select 1 from private.account_deletion_freezes deletion_freeze
+        where deletion_freeze.user_id = old.user_id and deletion_freeze.request_id = old.id
       )
       or exists (
         select 1 from private.account_deletion_storage_items item
         where item.request_id = old.id and item.state <> 'deleted'
       )
       or exists (
-        select 1 from private.media_stage_grants grant
-        where grant.owner_id = old.user_id
-          and grant.state in ('issued', 'registered') and grant.expires_at > now()
+        select 1 from private.media_stage_grants stage_grant
+        where stage_grant.owner_id = old.user_id
+          and stage_grant.state in ('issued', 'registered') and stage_grant.expires_at > now()
       )
       or exists (
         select 1 from private.media_scan_claims claim
@@ -841,8 +841,8 @@ as $$
 begin
   if not exists (
     select 1 from private.account_deletion_requests request
-    join private.account_deletion_freezes freeze
-      on freeze.request_id = request.id and freeze.user_id = request.user_id
+    join private.account_deletion_freezes deletion_freeze
+      on deletion_freeze.request_id = request.id and deletion_freeze.user_id = request.user_id
     where request.id = target_request_id and request.user_id = target_user_id
       and request.state = 'storage_deleted'
   )
@@ -851,9 +851,9 @@ begin
       where item.request_id = target_request_id and item.state <> 'deleted'
     )
     or exists (
-      select 1 from private.media_stage_grants grant
-      where grant.owner_id = target_user_id
-        and grant.state in ('issued', 'registered') and grant.expires_at > now()
+      select 1 from private.media_stage_grants stage_grant
+      where stage_grant.owner_id = target_user_id
+        and stage_grant.state in ('issued', 'registered') and stage_grant.expires_at > now()
     )
     or exists (
       select 1 from private.media_scan_claims claim
@@ -992,4 +992,3 @@ revoke all on function public.submit_business_claim(uuid, text, text)
   from public, anon;
 grant execute on function public.submit_business_claim(uuid, text, text)
   to authenticated;
-

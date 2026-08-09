@@ -467,8 +467,8 @@ begin
     detail_city := place.city;
     detail_region := place.region;
     detail_postal := place.postal_code;
-    detail_lat := public.st_y(place.point::geometry);
-    detail_lon := public.st_x(place.point::geometry);
+    detail_lat := public.st_y(place.point::public.geometry);
+    detail_lon := public.st_x(place.point::public.geometry);
   else
     if not exists (
         select 1 from private.marketplace_consent_receipts receipt
@@ -503,8 +503,8 @@ begin
     detail_city := residence.city;
     detail_region := residence.region;
     detail_postal := residence.postal_code;
-    detail_lat := public.st_y(residence.point::geometry);
-    detail_lon := public.st_x(residence.point::geometry);
+    detail_lat := public.st_y(residence.point::public.geometry);
+    detail_lon := public.st_x(residence.point::public.geometry);
   end if;
 
   key_hash := private.idempotency_key_hash(idempotency_key);

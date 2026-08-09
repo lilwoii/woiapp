@@ -99,7 +99,7 @@ begin
     join pg_catalog.pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
       and p.proname = 'create_business_draft'
-      and pg_catalog.pg_get_functiondef(p.oid) like '%public.digest%'
+      and pg_catalog.pg_get_functiondef(p.oid) like '%extensions.digest%'
   ) then
     raise exception 'create_business_draft does not schema-qualify digest';
   end if;
@@ -374,7 +374,7 @@ begin
       and pg_catalog.pg_get_functiondef(p.oid) like
         '%''owned_businesses''%'
       and pg_catalog.pg_get_functiondef(p.oid) like
-        '%public.st_y(bl.point::geometry)%'
+        '%public.st_y(bl.point::public.geometry)%'
       and pg_catalog.pg_get_functiondef(p.oid) not like '%confirmed_by%'
   ) then
     raise exception 'Account export omits owned business data or leaks staff attribution';

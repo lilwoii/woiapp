@@ -1044,7 +1044,7 @@ begin
   end if;
 
   fingerprint := pg_catalog.encode(
-    public.digest(target_user_id::text || ':' || request_key, 'sha256'),
+    extensions.digest(target_user_id::text || ':' || request_key, 'sha256'),
     'hex'
   );
 

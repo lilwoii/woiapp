@@ -110,11 +110,15 @@ not just the file:
   approved, while reports/blocks affect public reads;
 - rate limits and idempotency behave correctly under concurrency.
 
-CI runs its PostgreSQL fixture, migration, and RLS test through
+CI runs its focused PostgreSQL fixture, migration, and RLS test through
 `psql -X -v ON_ERROR_STOP=1 -1` and first proves that an intentional
 middle-statement error is
-fatal. This closes false-green SQL execution; it does not replace the full fresh-project
-migration-chain and staging acceptance required below.
+fatal. A separate pinned Supabase-native runtime then creates an empty local
+database, applies `schema.sql`, runs the baseline schema contracts, applies every
+timestamped migration in its own fail-fast transaction, and executes post-chain
+anon/authenticated/AAL1 security checks. This proves fresh local reproducibility;
+it does not replace protected live-staging migration, RLS, MFA, concurrency, and
+operational acceptance required below.
 
 Then apply the reviewed map, provider-ingest, and chat migrations in timestamp
 order. The chat migration requires participant/RLS, Realtime authorization,

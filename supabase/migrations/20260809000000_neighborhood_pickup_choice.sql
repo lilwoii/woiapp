@@ -13,7 +13,7 @@ create table if not exists private.safe_meeting_places (
   city text not null,
   region text not null,
   postal_code text,
-  point geography(point, 4326) not null,
+  point public.geography(point, 4326) not null,
   place_kind text not null check (place_kind in ('shopping_center', 'public_market')),
   active boolean not null default true,
   verified_at timestamptz not null,
@@ -309,7 +309,7 @@ stable
 security definer
 set search_path = ''
 as $$
-declare actor uuid := auth.uid(); origin geography(point, 4326);
+declare actor uuid := auth.uid(); origin public.geography(point, 4326);
 begin
   if not private.is_active_user(actor) then raise exception using errcode = '42501', message = 'ACTIVE_ACCOUNT_REQUIRED'; end if;
   perform private.require_aal2();
@@ -348,7 +348,7 @@ as $$
 declare
   actor uuid := auth.uid();
   choices uuid[] := coalesce(selected_choice_public_ids, '{}'::uuid[]);
-  origin geography(point, 4326);
+  origin public.geography(point, 4326);
   key_hash text; request_hash text; prior_response jsonb; response jsonb;
 begin
   if not private.is_active_user(actor) then raise exception using errcode = '42501', message = 'ACTIVE_ACCOUNT_REQUIRED'; end if;
@@ -407,7 +407,7 @@ as $$
 declare
   actor uuid := auth.uid();
   target_conversation public.marketplace_conversations%rowtype;
-  origin geography(point, 4326);
+  origin public.geography(point, 4326);
 begin
   select conversation.* into target_conversation
   from public.marketplace_conversations conversation
@@ -426,7 +426,7 @@ begin
   return query
   select place.public_id, 'safe_meeting_place'::text, place.label,
     place.address_line, place.city, place.region, place.postal_code,
-    public.st_y(place.point::geometry), public.st_x(place.point::geometry),
+    public.st_y(place.point::public.geometry), public.st_x(place.point::public.geometry),
     false
   from private.safe_meeting_places place
   join private.business_meeting_routes route
@@ -658,7 +658,7 @@ begin
     if not found then raise exception using errcode = '55000', message = 'PICKUP_CHOICE_UNAVAILABLE'; end if;
     choice_id := place.public_id; detail_label := place.label; detail_address := place.address_line;
     detail_city := place.city; detail_region := place.region; detail_postal := place.postal_code;
-    detail_lat := public.st_y(place.point::geometry); detail_lon := public.st_x(place.point::geometry);
+    detail_lat := public.st_y(place.point::public.geometry); detail_lon := public.st_x(place.point::public.geometry);
   else
     if target_request.buyer_terms_version <> '2026-08-01' or target_request.buyer_acknowledged_at is null
       or not exists (select 1 from private.neighborhood_pickup_settings setting where setting.business_id = target_conversation.business_id and setting.residence_pickup_enabled and setting.seller_terms_version = '2026-08-01')
@@ -670,7 +670,7 @@ begin
     select business.public_id into choice_id from public.businesses business where business.id = target_conversation.business_id;
     detail_label := 'Seller residence'; detail_address := residence.address_line;
     detail_city := residence.city; detail_region := residence.region; detail_postal := residence.postal_code;
-    detail_lat := public.st_y(residence.point::geometry); detail_lon := public.st_x(residence.point::geometry);
+    detail_lat := public.st_y(residence.point::public.geometry); detail_lon := public.st_x(residence.point::public.geometry);
   end if;
 
   key_hash := private.idempotency_key_hash(idempotency_key);
