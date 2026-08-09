@@ -22,6 +22,65 @@ type ScannerResult = {
   sha256?: unknown;
 };
 
+type ScanClaim = {
+  status: "claimed";
+  assetId: string;
+  attemptToken: string;
+  businessId: string | null;
+  storagePath: string;
+  source: "owner_upload" | "review_upload" | "chat_upload" | "licensed_provider";
+};
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function parseScanClaim(
+  value: unknown,
+): ScanClaim | { status: "clean" | "rejected"; assetId: string } {
+  if (!value || typeof value !== "object") throw new HttpError(502, "INVALID_SCAN_CLAIM");
+  const claim = value as Record<string, unknown>;
+  if (
+    (claim.status === "clean" || claim.status === "rejected") &&
+    typeof claim.asset_id === "string" &&
+    UUID_PATTERN.test(claim.asset_id)
+  ) {
+    return { status: claim.status, assetId: claim.asset_id };
+  }
+  if (
+    claim.status !== "claimed" ||
+    typeof claim.asset_id !== "string" ||
+    !UUID_PATTERN.test(claim.asset_id) ||
+    typeof claim.attempt_token !== "string" ||
+    !UUID_PATTERN.test(claim.attempt_token) ||
+    (claim.business_id !== null &&
+      claim.business_id !== undefined &&
+      (typeof claim.business_id !== "string" || !UUID_PATTERN.test(claim.business_id))) ||
+    typeof claim.storage_path !== "string" ||
+    !/^quarantine\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|png|webp)$/i.test(claim.storage_path) ||
+    !["owner_upload", "review_upload", "chat_upload", "licensed_provider"].includes(
+      String(claim.source),
+    )
+  ) {
+    throw new HttpError(502, "INVALID_SCAN_CLAIM");
+  }
+  return {
+    status: "claimed",
+    assetId: claim.asset_id,
+    attemptToken: claim.attempt_token,
+    businessId: typeof claim.business_id === "string" ? claim.business_id : null,
+    storagePath: claim.storage_path,
+    source: claim.source as ScanClaim["source"],
+  };
+}
+
+function scanFinalizationStatus(value: unknown): string {
+  if (!value || typeof value !== "object") throw new HttpError(502, "INVALID_SCAN_FINALIZATION");
+  const status = (value as Record<string, unknown>).status;
+  if (status !== "clean" && status !== "rejected" && status !== "abandoned_for_account_deletion") {
+    throw new HttpError(502, "INVALID_SCAN_FINALIZATION");
+  }
+  return status;
+}
+
 const MIME_EXTENSION: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -96,34 +155,27 @@ Deno.serve(async (request) => {
     }
 
     const admin = adminClient();
-    const { data: asset, error: assetError } = await admin
-      .from("media_assets")
-      .select("id,business_id,storage_path,source,quarantine_state")
-      .eq("id", body.assetId)
-      .maybeSingle();
-    if (assetError || !asset) throw new HttpError(404, "MEDIA_ASSET_NOT_FOUND");
-    if (asset.quarantine_state === "clean" || asset.quarantine_state === "rejected") {
-      return jsonResponse({ status: asset.quarantine_state, asset_id: asset.id });
+    const { data: rawClaim, error: claimError } = await admin.rpc(
+      "claim_media_scan_attempt",
+      { target_asset_id: body.assetId },
+    );
+    if (claimError) {
+      if (claimError.message.includes("MEDIA_SCAN_IN_PROGRESS")) {
+        return jsonResponse({ status: "processing", asset_id: body.assetId }, 202);
+      }
+      if (claimError.message.includes("MEDIA_ASSET_NOT_FOUND")) {
+        throw new HttpError(404, "MEDIA_ASSET_NOT_FOUND");
+      }
+      throw claimError;
     }
-
-    if (asset.quarantine_state === "uploaded") {
-      const { error: scanningError } = await admin.rpc("record_media_scan_result", {
-        target_asset_id: asset.id,
-        scan_state: "scanning",
-        clean_storage_path: null,
-        clean_mime_type: null,
-        clean_width: null,
-        clean_height: null,
-        clean_byte_size: null,
-        clean_sha256: null,
-        scan_rejection_reason: null,
-      });
-      if (scanningError) throw scanningError;
+    const asset = parseScanClaim(rawClaim);
+    if (asset.status !== "claimed") {
+      return jsonResponse({ status: asset.status, asset_id: asset.assetId });
     }
 
     const { data: signedInput, error: signError } = await admin.storage
       .from("spottr-media")
-      .createSignedUrl(asset.storage_path, 300);
+      .createSignedUrl(asset.storagePath, 300);
     if (signError || !signedInput) throw new HttpError(503, "MEDIA_INPUT_UNAVAILABLE");
 
     const scanResponse = await fetch(scanner.url, {
@@ -134,7 +186,7 @@ Deno.serve(async (request) => {
       },
       body: JSON.stringify({
         schemaVersion: "2026-07-29",
-        assetId: asset.id,
+        assetId: asset.assetId,
         inputUrl: signedInput.signedUrl,
         policy: {
           allowedMimeTypes: Object.keys(MIME_EXTENSION),
@@ -168,8 +220,9 @@ Deno.serve(async (request) => {
           /^[A-Z0-9_]{3,80}$/.test(result.reasonCode)
         ? result.reasonCode
         : "CONTENT_POLICY_REJECTED";
-      const { error } = await admin.rpc("record_media_scan_result", {
-        target_asset_id: asset.id,
+      const { data: finalized, error } = await admin.rpc("finalize_media_scan_attempt", {
+        target_asset_id: asset.assetId,
+        target_attempt_token: asset.attemptToken,
         scan_state: "rejected",
         clean_storage_path: null,
         clean_mime_type: null,
@@ -180,7 +233,13 @@ Deno.serve(async (request) => {
         scan_rejection_reason: reasonCode,
       });
       if (error) throw error;
-      return jsonResponse({ status: "rejected", asset_id: asset.id }, 200);
+      if (scanFinalizationStatus(finalized) === "abandoned_for_account_deletion") {
+        return jsonResponse(
+          { status: "account_deletion_in_progress", asset_id: asset.assetId },
+          202,
+        );
+      }
+      return jsonResponse({ status: "rejected", asset_id: asset.assetId }, 200);
     }
 
     if (
@@ -218,43 +277,65 @@ Deno.serve(async (request) => {
     }
 
     const namespace = asset.source === "review_upload"
-      ? `reviews/${asset.business_id ?? "unscoped"}`
-      : asset.business_id
-      ? `businesses/${asset.business_id}`
+      ? `reviews/${asset.businessId ?? "unscoped"}`
+      : asset.source === "chat_upload"
+      ? `chat/${asset.businessId ?? "unscoped"}`
+      : asset.businessId
+      ? `businesses/${asset.businessId}`
       : "profiles";
-    const cleanPath = `published/${namespace}/${asset.id}.${MIME_EXTENSION[result.mimeType]}`;
+    const cleanPath = `published/${namespace}/${asset.assetId}/${asset.attemptToken}.${
+      MIME_EXTENSION[result.mimeType]
+    }`;
+
+    const { error: planError } = await admin.rpc("plan_media_scan_output", {
+      target_asset_id: asset.assetId,
+      target_attempt_token: asset.attemptToken,
+      target_output_path: cleanPath,
+    });
+    if (planError) throw planError;
+
     const { error: uploadError } = await admin.storage
       .from("spottr-media")
       .upload(cleanPath, bytes, {
         cacheControl: "31536000",
         contentType: result.mimeType,
-        upsert: true,
+        upsert: false,
       });
     if (uploadError) throw new HttpError(503, "MEDIA_OUTPUT_STORE_FAILED");
 
-    const { error: finalizeError } = await admin.rpc("record_media_scan_result", {
-      target_asset_id: asset.id,
-      scan_state: "clean",
-      clean_storage_path: cleanPath,
-      clean_mime_type: result.mimeType,
-      clean_width: result.width,
-      clean_height: result.height,
-      clean_byte_size: bytes.byteLength,
-      clean_sha256: computedHash,
-      scan_rejection_reason: null,
-    });
+    const { data: finalized, error: finalizeError } = await admin.rpc(
+      "finalize_media_scan_attempt",
+      {
+        target_asset_id: asset.assetId,
+        target_attempt_token: asset.attemptToken,
+        scan_state: "clean",
+        clean_storage_path: cleanPath,
+        clean_mime_type: result.mimeType,
+        clean_width: result.width,
+        clean_height: result.height,
+        clean_byte_size: bytes.byteLength,
+        clean_sha256: computedHash,
+        scan_rejection_reason: null,
+      },
+    );
     if (finalizeError) throw finalizeError;
+    if (scanFinalizationStatus(finalized) === "abandoned_for_account_deletion") {
+      return jsonResponse(
+        { status: "account_deletion_in_progress", asset_id: asset.assetId },
+        202,
+      );
+    }
 
     // The clean, re-encoded output is now authoritative. Raw quarantine input
     // is best-effort deleted here; the scheduled cleanup worker retries safely.
     const { error: rawDeleteError } = await admin.storage
       .from("spottr-media")
-      .remove([asset.storage_path]);
+      .remove([asset.storagePath]);
     if (rawDeleteError) console.error("MEDIA_RAW_SOURCE_CLEANUP_DEFERRED");
 
     return jsonResponse({
       status: "clean_approved",
-      asset_id: asset.id,
+      asset_id: asset.assetId,
     });
   } catch (error) {
     return publicError(error);

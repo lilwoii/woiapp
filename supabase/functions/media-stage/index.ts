@@ -156,10 +156,33 @@ Deno.serve(async (request) => {
 
       const extension = EXTENSION_BY_MIME[body.mimeType];
       const path = `quarantine/${user.id}/${crypto.randomUUID()}.${extension}`;
+      const { data: grantId, error: grantError } = await admin.rpc(
+        "create_media_stage_grant",
+        {
+          target_user_id: user.id,
+          target_storage_path: path,
+          media_purpose: selectedPurpose,
+          target_business_id: targetBusinessId,
+          target_conversation_public_id: targetConversationId,
+          target_mime_type: body.mimeType,
+          target_byte_size: body.byteSize,
+        },
+      );
+      if (grantError || typeof grantId !== "string") {
+        throw grantError ?? new Error("Unable to reserve media upload");
+      }
+
       const { data, error } = await admin.storage
         .from("spottr-media")
         .createSignedUploadUrl(path);
-      if (error || !data) throw error ?? new Error("Unable to create upload URL");
+      if (error || !data) {
+        const { error: cancelError } = await admin.rpc("cancel_media_stage_grant", {
+          target_grant_id: grantId,
+          target_user_id: user.id,
+        });
+        if (cancelError) console.error("MEDIA_STAGE_GRANT_CANCEL_FAILED");
+        throw error ?? new Error("Unable to create upload URL");
+      }
 
       return jsonResponse(
         {
@@ -214,9 +237,7 @@ Deno.serve(async (request) => {
         : await client.rpc("register_quarantined_media", {
           target_storage_path: body.storagePath,
           target_business_id: targetBusinessId,
-          media_source: selectedPurpose === "review_photo"
-            ? "review_upload"
-            : "owner_upload",
+          media_source: selectedPurpose === "review_photo" ? "review_upload" : "owner_upload",
         });
       const { data: assetId, error } = registration;
       if (error || !assetId) throw error ?? new Error("Unable to register media");

@@ -5,11 +5,7 @@ import {
   jsonResponse,
   publicError,
 } from "../_shared/http.ts";
-import {
-  chunkPaths,
-  parseCleanupBatch,
-  parseLegacyCleanupPaths,
-} from "./contract.ts";
+import { chunkPaths, parseCleanupBatch } from "./contract.ts";
 
 async function removePaths(admin: ReturnType<typeof adminClient>, paths: string[]) {
   for (const chunk of chunkPaths(paths)) {
@@ -40,23 +36,26 @@ Deno.serve(async (request) => {
     if (chatFinalizeError) throw chatFinalizeError;
 
     const { data: manifest, error: manifestError } = await admin.rpc(
-      "media_quarantine_cleanup_manifest",
+      "prepare_media_cleanup_batch",
     );
     if (manifestError) throw manifestError;
-    const paths = parseLegacyCleanupPaths(manifest);
-    await removePaths(admin, paths);
+    const batch = parseCleanupBatch(manifest);
+    await removePaths(admin, batch.paths);
 
-    const { data: deletedRecords, error: finalizeError } = await admin.rpc(
-      "finalize_media_quarantine_cleanup",
-      { target_storage_paths: paths },
+    const { data: finalized, error: finalizeError } = await admin.rpc(
+      "finalize_media_cleanup_batch",
+      {
+        target_batch_id: batch.batchId,
+        deleted_storage_paths: batch.paths,
+      },
     );
     if (finalizeError) throw finalizeError;
 
     return jsonResponse({
       status: "complete",
-      deleted_objects: chatBatch.paths.length + paths.length,
+      deleted_objects: chatBatch.paths.length + batch.paths.length,
       deleted_chat_asset_records: chatFinalized?.deleted_asset_records ?? 0,
-      deleted_quarantine_asset_records: deletedRecords ?? 0,
+      deleted_quarantine_asset_records: finalized?.deleted_asset_records ?? 0,
     });
   } catch (error) {
     return publicError(error);

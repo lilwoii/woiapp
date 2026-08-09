@@ -6,6 +6,9 @@ verify_jwt = true
 [functions.delete-account]
 verify_jwt = true
 
+[functions.delete-account-worker]
+verify_jwt = false
+
 [functions.media-stage]
 verify_jwt = true
 

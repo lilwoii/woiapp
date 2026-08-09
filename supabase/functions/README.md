@@ -1,8 +1,8 @@
 # Spottr Edge Function contracts
 
-All public functions are fail-closed and return `Cache-Control: no-store`. Browser
-origins must appear in the comma-separated `SPOTTR_ALLOWED_ORIGINS` environment
-variable. Native requests may omit `Origin`.
+All public functions are fail-closed and return `Cache-Control: no-store`.
+Browser origins must appear in the comma-separated `SPOTTR_ALLOWED_ORIGINS`
+environment variable. Native requests may omit `Origin`.
 
 ## Text moderation
 
@@ -11,8 +11,8 @@ The database profanity filter is only an early rejection layer, never an
 approval signal. A moderator or administrator at `aal2` reads the public-ID-only
 queue through `list_pending_content_moderation` and decides an unchanged row
 through `decide_content_moderation`; stale timestamps fail with
-`MODERATION_TARGET_CHANGED`. Review approval also requires every linked image
-to have completed the clean scanner path. All decisions are rate-limited and
+`MODERATION_TARGET_CHANGED`. Review approval also requires every linked image to
+have completed the clean scanner path. All decisions are rate-limited and
 audited.
 
 ## Account export
@@ -30,43 +30,56 @@ without other users' Auth UUIDs or private moderator attribution.
 `DELETE /functions/v1/delete-account` requires:
 
 - a valid `aal2` bearer JWT;
-- an `Idempotency-Key` of 16–128 characters;
+- an `Idempotency-Key` of 16Ã¢â‚¬â€œ128 characters;
 - `X-Spottr-Delete-Confirmation: DELETE`; and
 - JSON `{ "confirmation": "DELETE" }`.
 
-The function removes owned storage objects, archives a sole-owned business,
-anonymizes retained audit attribution, deletes the Auth user, and records a
-short-lived idempotency receipt. A failed storage or Auth operation returns a
-retryable error without claiming completion.
+The function freezes account mutations before storage discovery, waits for
+outstanding signed upload capabilities and scan leases, checkpoints owned
+storage objects in durable request-scoped batches, archives a sole-owned
+business, anonymizes retained audit attribution, and only then deletes the Auth
+user. A failed storage or Auth operation leaves the request frozen and retryable
+without claiming completion.
+
+The service-only `delete-account-worker` continues frozen deletion requests
+without relying on the user's browser session. Invoke it on a recurring schedule
+with `SPOTTR_ACCOUNT_DELETE_WORKER_SECRET`; it claims one request at a time and
+uses the same durable storage seal as the user-facing function. Do not launch
+account deletion until that schedule, secret rotation, alerts, and retry drills
+are operational.
 
 ## Media staging
 
 Media is disabled unless `SPOTTR_MEDIA_UPLOADS_ENABLED=true`.
 `POST /functions/v1/media-stage` uses one of two actions:
 
-1. `stage`: `{ action, purpose, businessId?, conversationId?, mimeType, byteSize }` returns a
-   one-time signed upload URL under `quarantine/<auth-user-id>/<random-id>`.
-2. `register`: `{ action, purpose, businessId?, conversationId?, storagePath }` verifies the
-   uploaded object's server metadata and returns an asset in `uploaded/pending`.
+1. `stage`:
+   `{ action, purpose, businessId?, conversationId?, mimeType, byteSize }`
+   returns a one-time signed upload URL under
+   `quarantine/<auth-user-id>/<random-id>`.
+2. `register`: `{ action, purpose, businessId?, conversationId?, storagePath }`
+   verifies the uploaded object's server metadata and returns an asset in
+   `uploaded/pending`.
 
 Owner/profile purposes require `aal2`; review photos require an active account.
 `chat_photo` requires both the public conversation ID and business ID, and the
 participant/write-eligibility check runs at staging and registration so a block,
 closure, or eligibility change fails closed. Chat media still must complete the
 same scan, metadata-stripping, re-encoding, and approval pipeline before an RPC
-can attach it to a message.
-No staged or merely scanned asset is public.
+can attach it to a message. No staged or merely scanned asset is public.
 
-There is no generic Storage `INSERT` policy. Only signed staging tokens can
-create objects. A scheduled internal call to `media-cleanup`, authenticated by
-`SPOTTR_MEDIA_CLEANUP_SECRET`, removes unregistered objects after one hour,
-stalled scans after 24 hours, and rejected media after seven days. Pending or
-approved claim evidence is excluded from that sweep. Clean, unlinked chat
-uploads older than 24 hours use a durable database claim and a shared row lock
-with message attachment before object deletion. A crashed worker retries the
-same claimed asset after its lease; it cannot silently reattach an object whose
-cleanup began. Successful scanning also deletes the raw quarantine input on a
-best-effort basis, with the scheduled worker handling retries.
+There is no generic Storage `INSERT` policy. Before a signed staging token is
+minted, its exact path, owner, purpose, metadata, and expiry are persisted.
+Registration consumes that grant under the same owner lifecycle lock used by
+account deletion. A scheduled internal call to `media-cleanup`, authenticated by
+`SPOTTR_MEDIA_CLEANUP_SECRET`, persists generic cleanup items before removing
+Storage objects and finalizes database rows only after a complete receipt. It
+handles unregistered objects after one hour, stalled scans after 24 hours, and
+rejected media after seven days. Pending or approved claim evidence is excluded.
+Clean, unlinked chat uploads older than 24 hours retain their stricter database
+claim and shared row lock with message attachment. Crashed workers retry claimed
+items after their leases. Successful scanning deletes the raw quarantine input
+on a best-effort basis.
 
 ## Scanner adapter
 
@@ -97,13 +110,18 @@ decode/re-encode the file. Its synchronous JSON response is:
 ```
 
 A rejection uses `{ "verdict": "rejected", "reasonCode": "SAFE_ENUM_CODE" }`.
-Spottr independently checks size, magic bytes, dimensions, and SHA-256 before
-writing a deterministic processed path. Because the adapter requires both a
-malware-clean and content-safe verdict plus a metadata-stripped re-encode, a
-successful internal finalization marks that asset approved. Review text and
-owner-authored updates/responses always remain pending for a human moderator;
-clean review photos only make the submission eligible for approval, while one
-rejected photo rejects the review. Nominated business logos remain private
-until approved and publication readiness rechecks them. Production launch must keep uploads
-disabled until a real scanner, content-safety provider, moderation appeals
-process, retention policy, and deletion drill are configured and verified.
+Spottr independently checks size, magic bytes, dimensions, and SHA-256. One
+leased scanner owns an asset at a time, reserves an attempt-specific immutable
+processed path, uploads with overwrite disabled, and finalizes through a token
+comparison. Because the adapter requires both a malware-clean and content-safe
+verdict plus a metadata-stripped re-encode, a successful internal finalization
+marks that asset approved. Review text and owner-authored updates/responses
+always remain pending for a human moderator; clean review photos only make the
+submission eligible for approval, while one rejected photo rejects the review.
+Nominated business logos remain private until approved and publication readiness
+rechecks them. Production launch must keep uploads disabled until a real
+scanner, content-safety provider, moderation appeals process, retention policy,
+and deletion drill are configured and verified.
+
+The complete rollout and failure-recovery contract is documented in
+[`docs/MEDIA_LIFECYCLE.md`](../../docs/MEDIA_LIFECYCLE.md).

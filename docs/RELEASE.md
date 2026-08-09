@@ -37,8 +37,8 @@ Configure Sites Worker values through Sites:
 
 Configure Edge Function values from
 [supabase/functions/.env.example](../supabase/functions/.env.example) in
-Supabase. Service-role, scanner, moderation, provider, SMTP, and push credentials
-must never enter an `EXPO_PUBLIC_*` value or a committed `.env`.
+Supabase. Service-role, scanner, moderation, provider, SMTP, and push
+credentials must never enter an `EXPO_PUBLIC_*` value or a committed `.env`.
 
 The production configuration gate in [app.config.ts](../app.config.ts) rejects
 missing/placeholder Supabase, app URL, EAS, Android map, web-map style, and
@@ -66,11 +66,11 @@ Record:
 - iOS and Android Metro export hashes.
 
 [The CI quality workflow](../.github/workflows/quality.yml) runs locked install,
-Expo alignment, application and Edge Function type-checks, lint,
-coverage-gated application tests, Edge Function contract tests, Expo Doctor,
-fail-closed production-config verification, web build, and a high-severity
-production dependency audit on Node 22.13.1. A passing workflow proves only
-those checks on that commit.
+Expo alignment, application and Edge Function type-checks, lint, coverage-gated
+application tests, Edge Function contract tests, Expo Doctor, fail-closed
+production-config verification, web build, and a high-severity production
+dependency audit on Node 22.13.1. A passing workflow proves only those checks on
+that commit.
 
 Required independent evidence before public launch:
 
@@ -106,18 +106,27 @@ order. The chat migration requires participant/RLS, Realtime authorization,
 message sequencing, read/typing races, block/report behavior, clean-media state,
 and expiring pickup-disclosure tests against the target PostgreSQL project. The
 provider migration requires same-key concurrency, rollback, snapshot recovery,
-owner-precedence, PostGIS materialization, and maximum-batch query-plan evidence.
+owner-precedence, PostGIS materialization, and maximum-batch query-plan
+evidence.
 
 Deploy and test:
 
 - `export-account`
 - `delete-account`
+- `delete-account-worker`
 - `media-stage`
 - `media-scan`
 - `media-cleanup`
 
-The three media functions may be deployed while their gates remain false.
-Deployment does not authorize uploads.
+Migration `20260810000000_media_lifecycle_serialization.sql` and the last four
+functions above are one controlled release unit. Keep both media gates false,
+pause cleanup and deletion workers, drain legacy signed URLs for their full TTL
+plus scanner grace (or invalidate them), apply the migrations, deploy all
+matching functions, configure the internal deletion worker on a five-minute or
+shorter schedule, refresh the PostgREST schema cache, and run the concurrency
+evidence in [MEDIA_LIFECYCLE.md](MEDIA_LIFECYCLE.md) before resuming workers.
+The media functions may be deployed while their gates remain false; deployment
+does not authorize uploads.
 
 Supabase production acceptance also requires verified-email policy, exact
 redirect allowlists, CAPTCHA/rate limits, breached-password protection where
@@ -173,8 +182,8 @@ store, legal, and support access.
 
 ### Media
 
-Keep `EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED`,
-`SPOTTR_MEDIA_UPLOADS_ENABLED`, and `SPOTTR_MEDIA_PIPELINE_ENABLED` false until:
+Keep `EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED`, `SPOTTR_MEDIA_UPLOADS_ENABLED`, and
+`SPOTTR_MEDIA_PIPELINE_ENABLED` false until:
 
 - a real malware/content-safety scanner produces decoded, re-encoded,
   metadata-stripped derivatives;
@@ -188,26 +197,25 @@ Keep `EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED`,
 
 ### Provider inventory
 
-There is no licensed provider ingestion in this repository. Before enabling
-one, retain the signed agreement and field-by-field rules for attribution,
-display, caching, refresh, correction, user deletion, termination, and
-geographic scope. Imported listings and menus remain drafts until reviewed.
-Never scrape or clone third-party directories, marketplaces, reviews, photos,
-or menus.
+There is no licensed provider ingestion in this repository. Before enabling one,
+retain the signed agreement and field-by-field rules for attribution, display,
+caching, refresh, correction, user deletion, termination, and geographic scope.
+Imported listings and menus remain drafts until reviewed. Never scrape or clone
+third-party directories, marketplaces, reviews, photos, or menus.
 
 ### Home kitchens
 
 Keep `EXPO_PUBLIC_HOME_KITCHENS_ENABLED=false` until each enabled jurisdiction
 has signed legal approval, permit verification/renewal, allowed-food rules,
 privacy testing, food-safety escalation, suspension-on-expiry, insurance/tax
-review, and a named operator. Public residence addresses and precise
-coordinates are prohibited.
+review, and a named operator. Public residence addresses and precise coordinates
+are prohibited.
 
 ### Push
 
 Keep `EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED=false` until APNs/FCM credentials,
-permission/consent UX, quiet hours, per-business preferences, unsubscribe,
-token deletion, delivery telemetry, abuse controls, and incident revocation are
+permission/consent UX, quiet hours, per-business preferences, unsubscribe, token
+deletion, delivery telemetry, abuse controls, and incident revocation are
 verified.
 
 ### UGC
@@ -215,8 +223,7 @@ verified.
 Before accepting public UGC, verify report and block controls on every relevant
 surface, moderation and appeal queues, repeat-offender controls, emergency
 escalation, copyright and food-safety intake, evidence retention, and published
-response targets. Professional-language automation is a filter, not a
-guarantee.
+response targets. Professional-language automation is a filter, not a guarantee.
 
 Marketplace chat additionally requires staffed message-report operations,
 scheduled ephemeral cleanup, address/DLP controls, retention and privacy-export
@@ -229,14 +236,14 @@ Production sponsored placement and ordering remain disabled until the separate
 acceptance programs in [MONETIZATION.md](MONETIZATION.md) and
 [ORDERING_ARCHITECTURE.md](ORDERING_ARCHITECTURE.md) are complete. In
 particular, a client interface, state machine, database schema, processor
-sandbox, or unsigned build is not evidence of billing, settlement, tax,
-refund, store-policy, or marketplace-liability readiness.
+sandbox, or unsigned build is not evidence of billing, settlement, tax, refund,
+store-policy, or marketplace-liability readiness.
 
 Paid inventory must be individually labelled `Sponsored ad`, remain separate
 from organic ranking, match every explicit filter, and support hide/report and
-plain-language explanation controls. Consumer food checkout and merchant
-digital purchases have different Apple/Google payment-policy boundaries; the
-exact regional implementation requires current store and legal review.
+plain-language explanation controls. Consumer food checkout and merchant digital
+purchases have different Apple/Google payment-policy boundaries; the exact
+regional implementation requires current store and legal review.
 
 The phase-O1 shadow-order migration is deliberately zero-money and employee
 only. Apply and review
@@ -258,14 +265,15 @@ conversation with a clean attachment and expired pickup disclosure.
 
 1. Call `GET export-account` and verify the no-store JSON includes only the
    documented account/profile/membership/claim/review/follow/preference/report/
-   block/media/chat data plus Auth account metadata. Verify credentials, moderation
-   notes, other users' private data, and platform audit logs are absent.
+   block/media/chat data plus Auth account metadata. Verify credentials,
+   moderation notes, other users' private data, and platform audit logs are
+   absent.
 2. Call `DELETE delete-account` with the required AAL2 session, idempotency key,
    confirmation header, and confirmation body.
 3. Verify owned storage objects are gone before Auth deletion; Auth access is
    revoked; the profile and Auth user are gone; reviews, follows, preferences,
-   reports, blocks, claims, memberships, chat participant data, owned media rows, and private rate
-   records cascade.
+   reports, blocks, claims, memberships, chat participant data, owned media
+   rows, and private rate records cascade.
 4. Verify a solely owned business is archived. For a business with another
    active owner, verify the business remains and deleted-user attribution on
    retained business updates/responses/audit records is null.
@@ -316,8 +324,8 @@ The repository cannot supply or invent:
 - legal entity, effective terms/privacy/safety policies, retention schedule,
   trademark clearance, and real support/privacy/security contacts;
 - APNs/FCM, email-provider, map-provider, or observability credentials;
-- Apple/Google developer accounts, signing keys, signed builds, store review,
-  or approval;
+- Apple/Google developer accounts, signing keys, signed builds, store review, or
+  approval;
 - independent penetration, legal, privacy, accessibility, and load-test
   sign-off.
 
