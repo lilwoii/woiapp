@@ -10,6 +10,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '@/context/auth-context';
 import { MarketplaceStoreProvider } from '@/context/marketplace-store';
+import { RouteFocusManager } from '@/components/route-focus-manager';
 export { RootErrorBoundary as ErrorBoundary } from '@/components/root-error-boundary';
 
 export const unstable_settings = {
@@ -60,6 +61,7 @@ export default function RootLayout() {
                 <title>Spottr · Live local food, mapped</title>
               </Head>
               <StatusBar style="dark" />
+              <RouteFocusManager />
               <Stack
                 screenOptions={{
                   headerShadowVisible: false,

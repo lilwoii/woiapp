@@ -567,6 +567,7 @@ export default function ConversationScreen() {
               <View style={styles.center}>
                 <Text style={styles.centerTitle}>Sign in required</Text>
                 <Pressable
+                  accessibilityRole="button"
                   onPress={() => router.replace("/auth")}
                   style={styles.sendButton}
                 >

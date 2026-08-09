@@ -70,6 +70,9 @@ jobs:
       - name: Test build-asset verifier
         run: npm run test:build-asset-tools
 
+      - name: Test web quality verifier
+        run: npm run test:web-quality-tools
+
       - name: Verify Expo dependency alignment
         run: npx expo install --check
 

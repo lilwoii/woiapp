@@ -1,11 +1,17 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import maplibregl, { LngLatBounds, Map as MapLibreMap, Marker } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { palette, radii } from '@/constants/theme';
-import { clusterPlaces, normalizeLongitude, viewportIsLiveInventoryEligible } from '@/lib/map-clustering';
+import {
+  clusterInventoryFeatures,
+  clusterPlaces,
+  normalizeLongitude,
+  viewportIsLiveInventoryEligible,
+} from '@/lib/map-clustering';
+import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 import { Place } from '@/types/marketplace';
 
@@ -71,6 +77,7 @@ function markerElement(
 ) {
   const element = document.createElement('button');
   element.type = 'button';
+  element.tabIndex = -1;
   element.setAttribute(
     'aria-label',
     `${place.name}, ${place.categoryLabel}${
@@ -175,6 +182,7 @@ function updateMarkerSelection(element: HTMLButtonElement, selected: boolean) {
 function clusterElement(feature: { count: number }) {
   const element = document.createElement('button');
   element.type = 'button';
+  element.tabIndex = -1;
   element.setAttribute('aria-label', `${feature.count} food places in this area. Zoom in to explore.`);
   element.style.alignItems = 'center';
   element.style.background = palette.accentDeep;
@@ -249,9 +257,22 @@ export default function MapLibreMapView({
   const initialPlaces = useRef(places);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const [mapZoom, setMapZoom] = useState(11.5);
   const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
   const userMovedMap = useRef(false);
+  const renderedInventoryFeatures = useMemo(
+    () => clusterInventoryFeatures(inventoryFeatures, mapZoom),
+    [inventoryFeatures, mapZoom]
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updatePreference = () => setReduceMotion(media.matches);
+    updatePreference();
+    media.addEventListener('change', updatePreference);
+    return () => media.removeEventListener('change', updatePreference);
+  }, []);
 
   useEffect(() => {
     onSelectRef.current = onSelect;
@@ -341,9 +362,9 @@ export default function MapLibreMapView({
     if (!map || !ready) return;
 
     currentPlaces.current = new Map(places.map((place) => [place.id, place]));
-    const features = inventoryFeatures.length ? [] : clusterPlaces(places, mapZoom);
-    const renderedIds = inventoryFeatures.length
-      ? inventoryFeatures.map((feature) => feature.id)
+    const features = renderedInventoryFeatures.length ? [] : clusterPlaces(places, mapZoom);
+    const renderedIds = renderedInventoryFeatures.length
+      ? renderedInventoryFeatures.map((feature) => feature.id)
       : features.map((feature) => feature.id);
     const nextIds = new Set(renderedIds);
     markerRefs.current.forEach(({ marker }, id) => {
@@ -352,7 +373,7 @@ export default function MapLibreMapView({
         markerRefs.current.delete(id);
       }
     });
-    for (const inventoryFeature of inventoryFeatures) {
+    for (const inventoryFeature of renderedInventoryFeatures) {
       const signature = inventoryFeature.type === 'cluster'
         ? `cluster:${inventoryFeature.count}:${inventoryFeature.dominantCategory}`
         : `place:${inventoryFeature.businessId ?? ''}:${inventoryFeature.name ?? ''}:${inventoryFeature.logoUrl ?? ''}`;
@@ -385,7 +406,7 @@ export default function MapLibreMapView({
           userMovedMap.current = true;
           map.easeTo({
             center: [inventoryFeature.longitude, inventoryFeature.latitude],
-            duration: 380,
+            duration: motionDuration(reduceMotion, 380),
             zoom: Math.min(18, map.getZoom() + 2),
           });
           return;
@@ -421,7 +442,7 @@ export default function MapLibreMapView({
           userMovedMap.current = true;
           map.easeTo({
             center: [feature.longitude, feature.latitude],
-            duration: 380,
+            duration: motionDuration(reduceMotion, 380),
             zoom: Math.min(18, map.getZoom() + 2),
           });
           return;
@@ -447,16 +468,16 @@ export default function MapLibreMapView({
       if (places.length === 1) {
         map.easeTo({
           center: [places[0].longitude, places[0].latitude],
-          duration: 450,
+          duration: motionDuration(reduceMotion, 450),
           zoom: 13,
         });
       } else if (places.length > 1) {
         const bounds = new LngLatBounds();
         places.forEach((place) => bounds.extend([place.longitude, place.latitude]));
-        map.fitBounds(bounds, { duration: 450, maxZoom: 14, padding: 70 });
+        map.fitBounds(bounds, { duration: motionDuration(reduceMotion, 450), maxZoom: 14, padding: 70 });
       }
     }
-  }, [inventoryFeatures, mapZoom, places, ready, selectedId]);
+  }, [mapZoom, places, ready, reduceMotion, renderedInventoryFeatures, selectedId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -467,10 +488,10 @@ export default function MapLibreMapView({
     if (!map || !selected || !ready) return;
     map.easeTo({
       center: [selected.longitude, selected.latitude],
-      duration: 380,
+      duration: motionDuration(reduceMotion, 380),
       zoom: Math.max(map.getZoom(), 13),
     });
-  }, [places, ready, selectedId]);
+  }, [places, ready, reduceMotion, selectedId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -514,7 +535,7 @@ export default function MapLibreMapView({
           accessibilityRole="button"
           onPress={() => {
             userMovedMap.current = true;
-            mapRef.current?.zoomIn({ duration: 180 });
+            mapRef.current?.zoomIn({ duration: motionDuration(reduceMotion, 180) });
           }}
           style={styles.controlButton}>
           <FontAwesome6 color={palette.ink} name="plus" size={13} />
@@ -524,7 +545,7 @@ export default function MapLibreMapView({
           accessibilityRole="button"
           onPress={() => {
             userMovedMap.current = true;
-            mapRef.current?.zoomOut({ duration: 180 });
+            mapRef.current?.zoomOut({ duration: motionDuration(reduceMotion, 180) });
           }}
           style={styles.controlButton}>
           <FontAwesome6 color={palette.ink} name="minus" size={13} />

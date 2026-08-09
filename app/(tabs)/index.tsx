@@ -466,13 +466,15 @@ export default function DiscoverScreen() {
             value={query}
           />
           {query ? (
-            <Pressable accessibilityLabel="Clear search" hitSlop={12} onPress={() => setQuery('')}>
+            <Pressable accessibilityLabel="Clear search" accessibilityRole="button" hitSlop={12} onPress={() => setQuery('')}>
               <FontAwesome6 color={palette.muted} name="circle-xmark" size={16} solid />
             </Pressable>
           ) : null}
         </View>
 
         <ScrollView
+          accessibilityLabel="Business category"
+          accessibilityRole="radiogroup"
           contentContainerStyle={styles.categoryRow}
           horizontal
           showsHorizontalScrollIndicator={false}>
@@ -498,7 +500,7 @@ export default function DiscoverScreen() {
         </ScrollView>
 
         <View style={styles.filterLine}>
-          <View style={styles.sortSwitch}>
+          <View accessibilityLabel="Sort results" accessibilityRole="radiogroup" style={styles.sortSwitch}>
             {sortModes.map((mode) => (
               <Pressable
                 accessibilityRole="radio"
@@ -881,6 +883,7 @@ export default function DiscoverScreen() {
                 : 'Try another area or check back as local businesses join Spottr.'}
             </Text>
             <Pressable
+              accessibilityRole="button"
               onPress={() => {
                 setQuery('');
                 setCategory('all');

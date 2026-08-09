@@ -136,7 +136,7 @@ export default function ProfileScreen() {
             <Text style={styles.avatarText}>{initials || 'S'}</Text>
           </View>
           <View style={styles.profileCopy}>
-            <Text style={styles.displayName}>{account.displayName}</Text>
+            <Text accessibilityRole="header" style={styles.displayName}>{account.displayName}</Text>
             <Text style={styles.username}>@{account.username}</Text>
           </View>
           <Pressable

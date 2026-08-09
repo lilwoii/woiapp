@@ -12,10 +12,10 @@ export default function NotFoundScreen() {
       <View style={styles.icon}>
         <FontAwesome6 color={palette.accent} name="location-dot" size={23} />
       </View>
-      <Text style={styles.title}>We couldn’t find that stop.</Text>
+      <Text accessibilityRole="header" style={styles.title}>We couldn’t find that stop.</Text>
       <Text style={styles.detail}>The listing may have moved, expired, or changed its public link.</Text>
       <Link href="/" asChild>
-        <Pressable style={styles.button}>
+        <Pressable accessibilityRole="button" style={styles.button}>
           <Text style={styles.buttonText}>Back to discovery</Text>
         </Pressable>
       </Link>

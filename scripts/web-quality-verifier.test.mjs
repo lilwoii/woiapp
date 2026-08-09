@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  validateBundleBudgets,
+  validateRouteHtml,
+} from './web-quality-verifier.mjs';
+
+const VALID_HTML = `<!doctype html><html lang="en"><head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Spottr route">
+  <style>@media (prefers-reduced-motion: reduce) { * { transition: none; } }</style>
+  </head><body><main role="main"><h1>Spottr</h1><button>Open</button></main></body></html>`;
+
+test('route verifier accepts a zoomable semantic document', () => {
+  assert.deepEqual(validateRouteHtml('index.html', VALID_HTML), []);
+});
+
+test('route verifier rejects zoom locks and focusable role-less divs', () => {
+  const invalid = VALID_HTML
+    .replace('initial-scale=1', 'initial-scale=1, maximum-scale=1, user-scalable=no')
+    .replace('<button>Open</button>', '<div tabindex="0">Open</div>');
+  const errors = validateRouteHtml('index.html', invalid);
+  assert.ok(errors.some((error) => error.includes('disable zoom')));
+  assert.ok(errors.some((error) => error.includes('semantic role')));
+});
+
+test('route verifier requires main and H1 landmarks', () => {
+  const invalid = VALID_HTML.replace('<main role="main"><h1>', '<div><h2>').replace('</h1>', '</h2>');
+  const errors = validateRouteHtml('profile.html', invalid);
+  assert.ok(errors.some((error) => error.includes('main landmark')));
+  assert.ok(errors.some((error) => error.includes('route-level H1')));
+});
+
+test('bundle budgets fail closed when a JavaScript regression crosses a ceiling', () => {
+  const errors = validateBundleBudgets({
+    entryBytes: 3_200_001,
+    entryGzipBytes: 700_000,
+    mapBytes: 900_000,
+    mapGzipBytes: 250_000,
+    allJsBytes: 4_100_000,
+    allJsGzipBytes: 1_000_000,
+    allCssBytes: 80_000,
+    largestRouteBytes: 60_000,
+    allRouteBytes: 1_500_000,
+  });
+  assert.ok(errors.some((error) => error.includes('entry JavaScript exceeds')));
+});

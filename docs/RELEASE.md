@@ -68,7 +68,9 @@ Expo alignment, application and Edge Function type-checks, lint, coverage-gated
 application tests, Edge Function contract tests, Expo Doctor, fail-closed
 production-config verification, web build, and a high-severity production
 dependency audit on Node 22.13.1. A passing workflow proves only those checks on
-that commit.
+that commit. The web build also fails when required routes, zoomable viewport
+metadata, main/H1 semantics, semantic focus targets, reduced-motion CSS, source-map
+exclusion, or compressed JavaScript/CSS/HTML budgets regress.
 
 Required independent evidence before public launch:
 

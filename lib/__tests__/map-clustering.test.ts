@@ -1,5 +1,6 @@
 import { seedPlaces } from '@/data/places';
 import {
+  clusterInventoryFeatures,
   clusterPlaces,
   normalizeLongitude,
   viewportIsLiveInventoryEligible,
@@ -49,5 +50,23 @@ describe('map clustering', () => {
   it('bounds live inventory requests while supporting antimeridian viewports', () => {
     expect(viewportIsLiveInventoryEligible({ west: 170, south: -2, east: -178, north: 2 })).toBe(true);
     expect(viewportIsLiveInventoryEligible({ west: -20, south: -2, east: 20, north: 2 })).toBe(false);
+  });
+
+  it('bounds a 1,200-feature viewport without losing represented places', () => {
+    const features = Array.from({ length: 1_200 }, (_, index) => ({
+      type: 'place' as const,
+      id: `place:${index}`,
+      count: 1,
+      latitude: 34.02 + (index % 40) * 0.001,
+      longitude: -118.28 + Math.floor(index / 40) * 0.001,
+      categoryCounts: { food_truck: 1 },
+      dominantCategory: 'food_truck' as const,
+      businessId: `business:${index}`,
+      name: `Truck ${index}`,
+    }));
+
+    const rendered = clusterInventoryFeatures(features, 14, 300);
+    expect(rendered.length).toBeLessThanOrEqual(300);
+    expect(rendered.reduce((count, feature) => count + feature.count, 0)).toBe(1_200);
   });
 });

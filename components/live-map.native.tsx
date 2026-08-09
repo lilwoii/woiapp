@@ -1,15 +1,17 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Marker, type Region } from 'react-native-maps';
 
 import { palette, radii } from '@/constants/theme';
 import {
+  clusterInventoryFeatures,
   clusterPlaces,
   normalizeLongitude,
   viewportIsLiveInventoryEligible,
   zoomFromLongitudeDelta,
 } from '@/lib/map-clustering';
+import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 import { Place } from '@/types/marketplace';
 
@@ -75,16 +77,27 @@ export function LiveMap({
       : initialRegion
   );
   const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const userMovedMap = useRef(false);
   const inventoryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clientFeatures = useMemo(
     () => clusterPlaces(places, zoomFromLongitudeDelta(region.longitudeDelta)),
     [places, region.longitudeDelta]
   );
+  const renderedInventoryFeatures = useMemo(
+    () => clusterInventoryFeatures(inventoryFeatures, zoomFromLongitudeDelta(region.longitudeDelta)),
+    [inventoryFeatures, region.longitudeDelta]
+  );
   const placesById = useMemo(
     () => new Map(places.map((place) => [place.id, place])),
     [places]
   );
+
+  useEffect(() => {
+    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => () => {
     if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
@@ -95,9 +108,9 @@ export function LiveMap({
     if (!selected) return;
     mapRef.current?.animateCamera(
       { center: { latitude: selected.latitude, longitude: selected.longitude }, zoom: 14 },
-      { duration: 380 }
+      { duration: motionDuration(reduceMotion, 380) }
     );
-  }, [places, selectedId]);
+  }, [places, reduceMotion, selectedId]);
 
   return (
     <View style={styles.frame}>
@@ -132,7 +145,7 @@ export function LiveMap({
       }}
       showsUserLocation={Boolean(userCoordinates)}
       style={styles.map}>
-      {inventoryFeatures.map((feature) => {
+      {renderedInventoryFeatures.map((feature) => {
         if (feature.type === 'cluster') {
           return (
             <Marker
@@ -142,7 +155,7 @@ export function LiveMap({
                 userMovedMap.current = true;
                 mapRef.current?.animateCamera(
                   { center: { latitude: feature.latitude, longitude: feature.longitude }, zoom: Math.min(18, zoomFromLongitudeDelta(region.longitudeDelta) + 2) },
-                  { duration: 380 }
+                  { duration: motionDuration(reduceMotion, 380) }
                 );
               }}
               tracksViewChanges={false}>
@@ -187,7 +200,7 @@ export function LiveMap({
               userMovedMap.current = true;
               mapRef.current?.animateCamera(
                   { center: { latitude: feature.latitude, longitude: feature.longitude }, zoom: Math.min(18, zoomFromLongitudeDelta(region.longitudeDelta) + 2) },
-                  { duration: 380 }
+                  { duration: motionDuration(reduceMotion, 380) }
                 );
               }}
               tracksViewChanges={false}>
