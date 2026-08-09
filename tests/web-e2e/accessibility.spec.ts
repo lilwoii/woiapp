@@ -90,7 +90,7 @@ test('unconfigured discovery shell is explicit and keeps keyboard traversal boun
         style.display !== 'none';
     }).length);
   expect(sequentialFocusTargetCount).toBeLessThan(120);
-  await expect(page.locator('.maplibregl-marker button[tabindex="0"]')).toHaveCount(0);
+  await expect(page.locator('.maplibregl-marker[tabindex="0"]')).toHaveCount(0);
 
   const visited = new Set<string>();
   for (let index = 0; index < 30; index += 1) {

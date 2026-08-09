@@ -19,10 +19,20 @@ export default defineConfig({
     { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'mobile-chromium', use: { ...devices['Pixel 5'] } },
   ],
-  webServer: {
-    command: 'node scripts/serve-static-dist.mjs',
-    url: 'http://127.0.0.1:4173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 20_000,
-  },
+  webServer: [
+    {
+      command: 'node scripts/serve-static-dist.mjs',
+      env: { SPOTTR_E2E_PORT: '4173', SPOTTR_E2E_ROOT: 'dist' },
+      url: 'http://127.0.0.1:4173',
+      reuseExistingServer: !process.env.CI,
+      timeout: 20_000,
+    },
+    {
+      command: 'node scripts/serve-static-dist.mjs',
+      env: { SPOTTR_E2E_PORT: '4174', SPOTTR_E2E_ROOT: 'dist-e2e' },
+      url: 'http://127.0.0.1:4174',
+      reuseExistingServer: !process.env.CI,
+      timeout: 20_000,
+    },
+  ],
 });

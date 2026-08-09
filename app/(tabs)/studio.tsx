@@ -800,6 +800,7 @@ export default function StudioScreen() {
                         <Text style={styles.menuPrice}>{currency.format(item.price)}</Text>
                         <Pressable
                           accessibilityRole="switch"
+                          aria-checked={soldOut}
                           accessibilityState={{
                             busy: menuPendingIds.includes(item.id),
                             checked: soldOut,

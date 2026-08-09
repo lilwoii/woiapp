@@ -74,7 +74,12 @@ exclusion, or compressed JavaScript/CSS/HTML budgets regress. Chromium acceptanc
 then exercises serious WCAG violations across every unconfigured route shell,
 route focus/title and back-focus behavior, bounded fallback-state keyboard traversal,
 mobile overflow, and minimum primary-control target size against that exact generated
-artifact. Populated and authenticated production states still require staging evidence.
+artifact. A separately exported, non-deployable browser artifact uses a fail-closed
+synthetic Supabase-compatible fixture to exercise manual-area discovery, a 1,200-feature
+map response, real password sign-in, customer hydration, synthetic AAL2 owner-session
+hydration, Studio, and private-conversation listing. These are application-integration
+fixtures, not proof of an MFA ceremony or database RLS;
+populated production data and authorization still require live staging evidence.
 
 Required independent evidence before public launch:
 

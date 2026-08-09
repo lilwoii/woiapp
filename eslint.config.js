@@ -5,6 +5,9 @@ module.exports = defineConfig([
   {
     ignores: [
       'dist/**',
+      'dist-android/**',
+      'dist-e2e/**',
+      'dist-ios/**',
       '.expo/**',
       '.openai/**',
       'node_modules/**',
