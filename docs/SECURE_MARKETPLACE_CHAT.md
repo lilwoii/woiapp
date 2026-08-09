@@ -78,7 +78,7 @@ Payment methods are seller-reported. Spottr does not process payment, collect
 fulfillment proof, or represent that a transaction occurred. Chat continues to
 block card, bank, identity, and precise-location text.
 
-â€œClear from my inboxâ€ is participant-specific. It hides history through the
+“Clear from my inbox” is participant-specific. It hides history through the
 current sequence for that participant and revokes any active exact pickup card;
 the other participant is unchanged, a later message can make the thread
 reappear, and safety/legal retention can continue. It is not represented as an
@@ -86,10 +86,11 @@ immediate server erasure.
 
 ## Exact pickup details
 
-No residential address is added to a listing or public pickup record. Legacy
-pop-up pickup sites remain a separately reviewed workflow. Neighborhood Kitchen
-does not accept seller-entered public coordinates: it uses the provider catalog
-and seller-selected routes described above. Exact residence details and consent
+No residential address is added to a listing or public pickup record. Pop-up
+businesses use the public location on their listing; the legacy free-form,
+staff-approved pickup-site workflow is retired. Neighborhood Kitchen does not
+accept seller-entered public coordinates: it uses the provider catalog and
+seller-selected routes described above. Exact residence details and consent
 receipts live only in the `private` schema.
 
 An exact pickup card is created only through this sequence:
@@ -100,7 +101,8 @@ An exact pickup card is created only through this sequence:
 3. The assigned merchant confirms the customer-selected choice with AAL2; the
    merchant cannot silently substitute a different location.
 4. A private address snapshot is revealed only to those two participants and
-   expires 12 hours after the pickup window.
+   expires no later than two hours after the pickup window and never later than
+   24 hours after authorization.
 5. Cancellation, merchant revocation, a block, seller residence disable, inbox
    clear, provider-place expiry, or expiry fails closed. A service cleanup
    deletes expired address snapshots.

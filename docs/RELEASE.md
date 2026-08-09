@@ -109,6 +109,14 @@ provider migration requires same-key concurrency, rollback, snapshot recovery,
 owner-precedence, PostGIS materialization, and maximum-batch query-plan
 evidence.
 
+Treat migrations 20260812000000 through 20260816000000 as one Neighborhood
+Kitchen meetup release unit. Verify retired pickup-site RPC grants, private
+consent receipts, DLP on pickup notes, route/provider revocation, attachment
+hiding after clear, and residence disablement at account-deletion begin.
+Schedule cleanup_unavailable_meeting_place_requests at least every five minutes
+and retain the evidence required by
+[NEIGHBORHOOD_MEETUP_OPERATIONS.md](NEIGHBORHOOD_MEETUP_OPERATIONS.md).
+
 Deploy and test:
 
 - `export-account`

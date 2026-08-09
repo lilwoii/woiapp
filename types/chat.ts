@@ -1,11 +1,11 @@
-import type { BusinessCategory } from '@/types/marketplace';
+import type { BusinessCategory } from "@/types/marketplace";
 
 export type MarketplaceConversation = {
   id: string;
   businessId: string;
   businessName: string;
   businessCategory: BusinessCategory;
-  state: 'open' | 'closed_by_customer' | 'closed_by_merchant' | 'restricted';
+  state: "open" | "closed_by_customer" | "closed_by_merchant" | "restricted";
   counterpart: {
     profileId?: string;
     name: string;
@@ -37,7 +37,7 @@ export type MarketplaceChatMessage = {
   };
   body?: string;
   attachments: MarketplaceChatAttachment[];
-  visibility: 'visible' | 'held' | 'removed';
+  visibility: "visible" | "held" | "removed";
   sentAt: string;
   readAt?: string;
 };
@@ -55,12 +55,12 @@ export type MarketplacePickupRequest = {
   startsAt: string;
   endsAt: string;
   note?: string;
-  state: 'pending' | 'authorized' | 'declined' | 'cancelled' | 'expired';
+  state: "pending" | "authorized" | "declined" | "cancelled" | "expired";
   version: number;
   createdAt: string;
   choice?: {
     id: string;
-    kind: 'safe_meeting_place' | 'seller_residence';
+    kind: "safe_meeting_place" | "seller_residence";
     label: string;
     city: string;
     region: string;
@@ -72,7 +72,11 @@ export type MarketplacePickupOption = {
   label: string;
   city: string;
   region: string;
-  kind: 'public_meeting_place' | 'commercial_site' | 'safe_meeting_place' | 'seller_residence';
+  kind:
+    | "public_meeting_place"
+    | "commercial_site"
+    | "safe_meeting_place"
+    | "seller_residence";
   address?: string;
   postalCode?: string;
   latitude?: number;
@@ -84,7 +88,11 @@ export type MarketplacePickupDetail = {
   requestId: string;
   siteId: string;
   label: string;
-  kind: 'public_meeting_place' | 'commercial_site' | 'safe_meeting_place' | 'seller_residence';
+  kind:
+    | "public_meeting_place"
+    | "commercial_site"
+    | "safe_meeting_place"
+    | "seller_residence";
   address: string;
   city: string;
   region: string;
@@ -98,8 +106,9 @@ export type MarketplacePickupDetail = {
 
 export type MarketplaceConversationContext = {
   businessCategory: BusinessCategory;
-  role: 'customer' | 'merchant';
+  role: "customer" | "merchant";
   actorProfileId?: string;
   paymentMethods: string[];
+  paymentMethodsConfirmedAt?: string;
   platformPaymentEnabled: false;
 };

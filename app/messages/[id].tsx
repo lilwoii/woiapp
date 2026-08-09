@@ -1,8 +1,8 @@
-import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import * as ImagePicker from 'expo-image-picker';
-import * as Linking from 'expo-linking';
-import { router, useIsFocused, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import FontAwesome6 from "@expo/vector-icons/FontAwesome6";
+import * as ImagePicker from "expo-image-picker";
+import * as Linking from "expo-linking";
+import { router, useIsFocused, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -14,42 +14,53 @@ import {
   Text,
   TextInput,
   View,
-} from 'react-native';
+} from "react-native";
 
-import { FocusAwareScreen } from '@/components/focus-aware-screen';
-import { PageShell } from '@/components/page-shell';
-import { palette, radii, spacing } from '@/constants/theme';
-import { useAuth } from '@/context/auth-context';
-import { chatSafetyIssue, chatSafetyMessage } from '@/lib/chat-safety';
+import { FocusAwareScreen } from "@/components/focus-aware-screen";
+import { PageShell } from "@/components/page-shell";
+import { palette, radii, spacing } from "@/constants/theme";
+import { useAuth } from "@/context/auth-context";
+import { chatSafetyIssue, chatSafetyMessage } from "@/lib/chat-safety";
 import {
-  getMarketplaceMessages,
-  getAuthorizedMarketplacePickupDetail,
+  authorizeNeighborhoodPickupChoice,
+  clearMarketplaceConversation,
   getAuthorizedNeighborhoodPickupDetail,
   getMarketplaceConversationContext,
   getMarketplaceConversationRole,
+  getMarketplaceMessages,
   getMarketplaceTyping,
-  listMarketplacePickupOptions,
-  listNeighborhoodPickupChoices,
-  listMarketplacePickupRequests,
   listMarketplaceConversations,
+  listMarketplacePickupRequests,
+  listNeighborhoodPickupChoices,
   markMarketplaceConversationRead,
   reportMarketplaceMessage,
-  requestMarketplacePickup,
   requestNeighborhoodPickupChoice,
   resolveMarketplacePickup,
   sendMarketplaceMessage,
   setMarketplaceTyping,
-  authorizeMarketplacePickup,
-  authorizeNeighborhoodPickupChoice,
-  clearMarketplaceConversation,
-} from '@/lib/marketplace-chat';
-import { blockUser } from '@/lib/marketplace-api';
-import { mediaProcessingStates, stageMediaUpload } from '@/lib/media-upload';
-import { confirmAction, showMessage } from '@/lib/platform-dialog';
-import type { MarketplaceChatMessage, MarketplaceConversation, MarketplaceConversationContext, MarketplacePickupDetail, MarketplacePickupOption, MarketplacePickupRequest, MarketplaceTypingMember } from '@/types/chat';
+} from "@/lib/marketplace-chat";
+import { blockUser } from "@/lib/marketplace-api";
+import { mediaProcessingStates, stageMediaUpload } from "@/lib/media-upload";
+import { confirmAction, showMessage } from "@/lib/platform-dialog";
+import type {
+  MarketplaceChatMessage,
+  MarketplaceConversation,
+  MarketplaceConversationContext,
+  MarketplacePickupDetail,
+  MarketplacePickupOption,
+  MarketplacePickupRequest,
+  MarketplaceTypingMember,
+} from "@/types/chat";
 
-const sentTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-const pickupTime = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+const sentTime = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+const pickupTime = new Intl.DateTimeFormat(undefined, {
+  weekday: "short",
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 function pickupWindowFromNow(minutesFromNow: number) {
   const startsAt = new Date(Date.now() + minutesFromNow * 60_000);
@@ -64,33 +75,56 @@ export default function ConversationScreen() {
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pickupDetailRequestRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<MarketplaceChatMessage[]>([]);
-  const [conversation, setConversation] = useState<MarketplaceConversation | null>(null);
+  const [conversation, setConversation] = useState<
+    MarketplaceConversation | null
+  >(null);
   const [typing, setTyping] = useState<MarketplaceTypingMember[]>([]);
-  const [pickupRole, setPickupRole] = useState<'customer' | 'merchant' | null>(null);
-  const [chatContext, setChatContext] = useState<MarketplaceConversationContext | null>(null);
-  const [pickupRequests, setPickupRequests] = useState<MarketplacePickupRequest[]>([]);
-  const [pickupOptions, setPickupOptions] = useState<MarketplacePickupOption[]>([]);
-  const [selectedPickupOption, setSelectedPickupOption] = useState<MarketplacePickupOption | null>(null);
-  const [pickupDetail, setPickupDetail] = useState<MarketplacePickupDetail | null>(null);
+  const [pickupRole, setPickupRole] = useState<"customer" | "merchant" | null>(
+    null,
+  );
+  const [chatContext, setChatContext] = useState<
+    MarketplaceConversationContext | null
+  >(null);
+  const [pickupRequests, setPickupRequests] = useState<
+    MarketplacePickupRequest[]
+  >([]);
+  const [pickupOptions, setPickupOptions] = useState<MarketplacePickupOption[]>(
+    [],
+  );
+  const [selectedPickupOption, setSelectedPickupOption] = useState<
+    MarketplacePickupOption | null
+  >(null);
+  const [pickupDetail, setPickupDetail] = useState<
+    MarketplacePickupDetail | null
+  >(null);
   const [pickupBusy, setPickupBusy] = useState(false);
-  const [photos, setPhotos] = useState<{ assetId: string; uri: string; state: 'pending' | 'approved' | 'rejected' }[]>([]);
-  const [draft, setDraft] = useState('');
+  const [photos, setPhotos] = useState<
+    {
+      assetId: string;
+      uri: string;
+      state: "pending" | "approved" | "rejected";
+    }[]
+  >([]);
+  const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const draftSafetyIssue = chatSafetyIssue(draft);
-  const threadClosed = Boolean(conversation && conversation.state !== 'open');
-  const activePickup = pickupRequests.find((request) => request.state === 'pending' || request.state === 'authorized');
+  const threadClosed = Boolean(conversation && conversation.state !== "open");
+  const activePickup = pickupRequests.find((request) =>
+    request.state === "pending" || request.state === "authorized"
+  );
 
   const refresh = useCallback(async (quiet = false) => {
     if (!id) return;
     if (!quiet) setLoading(true);
-    const [messageResult, typingMembers, requestResult, contextResult] = await Promise.all([
-      getMarketplaceMessages(id),
-      getMarketplaceTyping(id),
-      listMarketplacePickupRequests(id),
-      getMarketplaceConversationContext(id),
-    ]);
+    const [messageResult, typingMembers, requestResult, contextResult] =
+      await Promise.all([
+        getMarketplaceMessages(id),
+        getMarketplaceTyping(id),
+        listMarketplacePickupRequests(id),
+        getMarketplaceConversationContext(id),
+      ]);
     if (!quiet) setLoading(false);
     if (!messageResult.ok) {
       setError(messageResult.reason);
@@ -107,45 +141,50 @@ export default function ConversationScreen() {
     if (requestResult.ok) {
       const nextRequests = requestResult.data ?? [];
       setPickupRequests(nextRequests);
-      const authorized = nextRequests.find((request) => request.state === 'authorized');
-      if (authorized && pickupDetailRequestRef.current !== authorized.id) {
-        const detailResult = context?.businessCategory === 'home_kitchen'
-          ? await getAuthorizedNeighborhoodPickupDetail(id, authorized.id)
-          : await getAuthorizedMarketplacePickupDetail(id, authorized.id);
-        if (detailResult.ok) {
-          pickupDetailRequestRef.current = authorized.id;
-          setPickupDetail(detailResult.data ?? null);
-        } else {
-          pickupDetailRequestRef.current = authorized.id;
-          setPickupDetail(null);
-        }
-      } else {
-        if (!authorized) {
-          pickupDetailRequestRef.current = null;
-          setPickupDetail(null);
-        }
+      const authorized = nextRequests.find((request) =>
+        request.state === "authorized"
+      );
+      if (
+        context?.businessCategory === "home_kitchen" &&
+        authorized && pickupDetailRequestRef.current !== authorized.id
+      ) {
+        const detailResult = await getAuthorizedNeighborhoodPickupDetail(
+          id,
+          authorized.id,
+        );
+        pickupDetailRequestRef.current = authorized.id;
+        setPickupDetail(detailResult.ok ? detailResult.data ?? null : null);
+      } else if (!authorized || context?.businessCategory !== "home_kitchen") {
+        pickupDetailRequestRef.current = null;
+        setPickupDetail(null);
       }
     }
-    if (context?.businessCategory === 'home_kitchen' && role === 'customer') {
+    if (context?.businessCategory === "home_kitchen" && role === "customer") {
       const optionResult = await listNeighborhoodPickupChoices(id);
       if (optionResult.ok) {
         const nextOptions = optionResult.data ?? [];
         setPickupOptions(nextOptions);
-        setSelectedPickupOption((current) => nextOptions.find((option) => option.id === current?.id) ?? null);
+        setSelectedPickupOption((current) =>
+          nextOptions.find((option) => option.id === current?.id) ?? null
+        );
       }
-    } else if (role === 'merchant' && context?.businessCategory !== 'home_kitchen') {
-      const optionResult = await listMarketplacePickupOptions(id);
-      if (optionResult.ok) setPickupOptions(optionResult.data ?? []);
+    } else {
+      setPickupOptions([]);
+      setSelectedPickupOption(null);
     }
     const latest = nextMessages.at(-1)?.sequence ?? 0;
     if (latest) void markMarketplaceConversationRead(id, latest);
   }, [id]);
 
   useEffect(() => {
-    if (!focused || auth.status !== 'authenticated') return;
+    if (!focused || auth.status !== "authenticated") return;
     const initialTimer = setTimeout(() => {
       void listMarketplaceConversations().then((result) => {
-        if (result.ok) setConversation((result.data ?? []).find((entry) => entry.id === id) ?? null);
+        if (result.ok) {
+          setConversation(
+            (result.data ?? []).find((entry) => entry.id === id) ?? null,
+          );
+        }
       });
       void refresh();
     }, 0);
@@ -157,7 +196,9 @@ export default function ConversationScreen() {
   }, [auth.status, focused, id, refresh]);
 
   useEffect(() => {
-    const pendingIds = photos.filter((photo) => photo.state === 'pending').map((photo) => photo.assetId);
+    const pendingIds = photos.filter((photo) => photo.state === "pending").map((
+      photo,
+    ) => photo.assetId);
     if (!focused || !pendingIds.length) return;
     const check = async () => {
       if (!id) return;
@@ -197,7 +238,10 @@ export default function ConversationScreen() {
 
   useEffect(() => {
     if (!loading && messages.length) {
-      const timer = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 30);
+      const timer = setTimeout(
+        () => scrollRef.current?.scrollToEnd({ animated: false }),
+        30,
+      );
       return () => clearTimeout(timer);
     }
   }, [loading, messages.length]);
@@ -207,13 +251,21 @@ export default function ConversationScreen() {
     if (!id) return;
     if (typingTimer.current) clearTimeout(typingTimer.current);
     void setMarketplaceTyping(id, Boolean(value.trim()));
-    typingTimer.current = setTimeout(() => void setMarketplaceTyping(id, false), 2_500);
+    typingTimer.current = setTimeout(
+      () => void setMarketplaceTyping(id, false),
+      2_500,
+    );
   };
 
   const send = async () => {
-    const body = draft.replace(/\s+/g, ' ').trim();
-    const approvedAssets = photos.filter((photo) => photo.state === 'approved').map((photo) => photo.assetId);
-    if (!id || draftSafetyIssue || threadClosed || (!body && !approvedAssets.length) || photos.some((photo) => photo.state === 'pending') || sending) return;
+    const body = draft.replace(/\s+/g, " ").trim();
+    const approvedAssets = photos.filter((photo) => photo.state === "approved")
+      .map((photo) => photo.assetId);
+    if (
+      !id || draftSafetyIssue || threadClosed ||
+      (!body && !approvedAssets.length) ||
+      photos.some((photo) => photo.state === "pending") || sending
+    ) return;
     setSending(true);
     const result = await sendMarketplaceMessage(id, body, approvedAssets);
     setSending(false);
@@ -221,7 +273,7 @@ export default function ConversationScreen() {
       setError(result.reason);
       return;
     }
-    setDraft('');
+    setDraft("");
     setPhotos([]);
     void setMarketplaceTyping(id, false);
     await refresh(true);
@@ -232,91 +284,103 @@ export default function ConversationScreen() {
     if (!id || !conversation || threadClosed || photos.length >= 4) return;
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      showMessage('Photo access needed', 'Allow photo access to attach an image to this conversation.');
+      showMessage(
+        "Photo access needed",
+        "Allow photo access to attach an image to this conversation.",
+      );
       return;
     }
     const selection = await ImagePicker.launchImageLibraryAsync({
       allowsMultipleSelection: false,
-      mediaTypes: ['images'],
+      mediaTypes: ["images"],
       quality: 0.9,
     });
     if (selection.canceled || !selection.assets[0]) return;
     const selected = selection.assets[0];
     const result = await stageMediaUpload(
-      { uri: selected.uri, mimeType: selected.mimeType, fileSize: selected.fileSize },
-      'chat_photo',
+      {
+        uri: selected.uri,
+        mimeType: selected.mimeType,
+        fileSize: selected.fileSize,
+      },
+      "chat_photo",
       conversation.businessId,
-      id
+      id,
     );
     if (!result.ok || !result.data) {
-      showMessage('Photo unavailable', result.ok ? 'This photo could not be staged.' : result.reason);
+      showMessage(
+        "Photo unavailable",
+        result.ok ? "This photo could not be staged." : result.reason,
+      );
       return;
     }
-    setPhotos((current) => [...current, { assetId: result.data!.assetId, uri: selected.uri, state: 'pending' }]);
+    setPhotos((
+      current,
+    ) => [...current, {
+      assetId: result.data!.assetId,
+      uri: selected.uri,
+      state: "pending",
+    }]);
   };
 
   const requestPickupWindow = async (minutesFromNow: number) => {
-    if (!id || pickupBusy || pickupRole !== 'customer') return;
+    if (
+      !id || pickupBusy || pickupRole !== "customer" ||
+      chatContext?.businessCategory !== "home_kitchen"
+    ) return;
     const { startsAt, endsAt } = pickupWindowFromNow(minutesFromNow);
     setPickupBusy(true);
-    const result = chatContext?.businessCategory === 'home_kitchen'
-      ? selectedPickupOption
-        ? await requestNeighborhoodPickupChoice(
-          id,
-          selectedPickupOption,
-          startsAt,
-          endsAt,
-          selectedPickupOption.kind === 'seller_residence'
-        )
-        : { ok: false as const, reason: 'Choose a pickup location first.' }
-      : await requestMarketplacePickup(id, startsAt, endsAt);
+    const result = selectedPickupOption
+      ? await requestNeighborhoodPickupChoice(
+        id,
+        selectedPickupOption,
+        startsAt,
+        endsAt,
+        selectedPickupOption.kind === "seller_residence",
+      )
+      : { ok: false as const, reason: "Choose a pickup location first." };
     setPickupBusy(false);
     if (!result.ok) {
-      showMessage('Pickup request unavailable', result.reason);
+      showMessage("Pickup request unavailable", result.reason);
       return;
     }
     await refresh(true);
   };
 
-  const authorizePickup = async (request: MarketplacePickupRequest, option: MarketplacePickupOption) => {
-    if (!id || pickupBusy || pickupRole !== 'merchant') return;
-    if (auth.assuranceLevel !== 'aal2') {
-      showMessage('Verification required', 'Verify an authenticator code before releasing exact pickup details.');
-      router.push('/security');
+  const acceptNeighborhoodPickup = async (
+    request: MarketplacePickupRequest,
+  ) => {
+    if (!id || pickupBusy || pickupRole !== "merchant") return;
+    if (auth.assuranceLevel !== "aal2") {
+      showMessage(
+        "Verification required",
+        "Verify an authenticator code before releasing pickup details.",
+      );
+      router.push("/security");
       return;
     }
     setPickupBusy(true);
-    const result = await authorizeMarketplacePickup(id, request.id, option.id, request.version);
+    const result = await authorizeNeighborhoodPickupChoice(
+      id,
+      request.id,
+      request.version,
+    );
     setPickupBusy(false);
     if (!result.ok) {
-      showMessage('Pickup authorization unavailable', result.reason);
+      showMessage("Pickup preference unavailable", result.reason);
       return;
     }
-    pickupDetailRequestRef.current = null;
-    await refresh(true);
-  };
-
-  const acceptNeighborhoodPickup = async (request: MarketplacePickupRequest) => {
-    if (!id || pickupBusy || pickupRole !== 'merchant') return;
-    if (auth.assuranceLevel !== 'aal2') {
-      showMessage('Verification required', 'Verify an authenticator code before releasing pickup details.');
-      router.push('/security');
-      return;
-    }
-    setPickupBusy(true);
-    const result = await authorizeNeighborhoodPickupChoice(id, request.id, request.version);
-    setPickupBusy(false);
-    if (!result.ok) { showMessage('Pickup preference unavailable', result.reason); return; }
     pickupDetailRequestRef.current = null;
     await refresh(true);
   };
 
   const choosePickupOption = async (option: MarketplacePickupOption) => {
-    if (option.kind === 'seller_residence') {
+    if (option.kind === "seller_residence") {
       const accepted = await confirmAction({
-        title: 'Residence pickup caution',
-        message: 'Spottr recommends a public shopping center. If you choose the seller residence, tell someone where you are going, meet in daylight when possible, and leave if anything feels wrong. Spottr does not inspect or guarantee the location or transaction.',
-        confirmLabel: 'I understand',
+        title: "Residence pickup caution",
+        message:
+          "Spottr recommends a public shopping center. If you choose the seller residence, tell someone where you are going, meet in daylight when possible, and leave if anything feels wrong. Spottr does not inspect or guarantee the location or transaction.",
+        confirmLabel: "I understand",
       });
       if (!accepted) return;
     }
@@ -326,27 +390,35 @@ export default function ConversationScreen() {
   const clearInbox = async () => {
     if (!id) return;
     const confirmed = await confirmAction({
-      title: 'Clear from your inbox?',
-      message: 'This hides the current history for you and cancels any active pickup detail. The other participant keeps their copy, and Spottr may retain records under its safety and legal policy. A new message can make this chat reappear.',
-      confirmLabel: 'Clear inbox',
+      title: "Clear from your inbox?",
+      message:
+        "This hides the current history for you and cancels any active pickup detail. The other participant keeps their copy, and Spottr may retain records under its safety and legal policy. A new message can make this chat reappear.",
+      confirmLabel: "Clear inbox",
       destructive: true,
     });
     if (!confirmed) return;
     const result = await clearMarketplaceConversation(id);
-    if (result.ok) router.replace('/messages' as never);
-    else showMessage('Conversation not cleared', result.reason);
+    if (result.ok) router.replace("/messages" as never);
+    else showMessage("Conversation not cleared", result.reason);
   };
 
   const resolvePickup = async (request: MarketplacePickupRequest) => {
     if (!id || pickupBusy) return;
-    const resolution = pickupRole === 'customer'
-      ? 'cancel'
-      : request.state === 'authorized' ? 'revoke' : 'decline';
+    const resolution = pickupRole === "customer"
+      ? "cancel"
+      : request.state === "authorized"
+      ? "revoke"
+      : "decline";
     setPickupBusy(true);
-    const result = await resolveMarketplacePickup(id, request.id, resolution, request.version);
+    const result = await resolveMarketplacePickup(
+      id,
+      request.id,
+      resolution,
+      request.version,
+    );
     setPickupBusy(false);
     if (!result.ok) {
-      showMessage('Pickup update unavailable', result.reason);
+      showMessage("Pickup update unavailable", result.reason);
       return;
     }
     pickupDetailRequestRef.current = null;
@@ -356,22 +428,30 @@ export default function ConversationScreen() {
   const openPickupDirections = async () => {
     if (!pickupDetail) return;
     const destination = `${pickupDetail.latitude},${pickupDetail.longitude}`;
-    const url = Platform.OS === 'ios'
-      ? `https://maps.apple.com/?daddr=${encodeURIComponent(destination)}&dirflg=d`
-      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
+    const url = Platform.OS === "ios"
+      ? `https://maps.apple.com/?daddr=${
+        encodeURIComponent(destination)
+      }&dirflg=d`
+      : `https://www.google.com/maps/dir/?api=1&destination=${
+        encodeURIComponent(destination)
+      }`;
     await Linking.openURL(url);
   };
 
   const safetyAction = async (message: MarketplaceChatMessage) => {
     const shouldReport = await confirmAction({
-      title: 'Report this message?',
-      message: 'Spottr staff will review the message. You can block this member separately from Safety controls.',
-      confirmLabel: 'Report',
+      title: "Report this message?",
+      message:
+        "Spottr staff will review the message. You can block this member separately from Safety controls.",
+      confirmLabel: "Report",
       destructive: true,
     });
     if (!shouldReport) return;
     const result = await reportMarketplaceMessage(message.id);
-    showMessage(result.ok ? 'Report received' : 'Report unavailable', result.ok ? 'Spottr staff will review this message.' : result.reason);
+    showMessage(
+      result.ok ? "Report received" : "Report unavailable",
+      result.ok ? "Spottr staff will review this message." : result.reason,
+    );
   };
 
   const blockCounterpart = async () => {
@@ -379,217 +459,682 @@ export default function ConversationScreen() {
     if (!counterpart?.profileId) return;
     const confirmed = await confirmAction({
       title: `Block ${counterpart.name}?`,
-      message: 'Blocking stops new chat activity and hides this member across Spottr.',
-      confirmLabel: 'Block member',
+      message:
+        "Blocking stops new chat activity and hides this member across Spottr.",
+      confirmLabel: "Block member",
       destructive: true,
     });
     if (!confirmed) return;
     const result = await blockUser(counterpart.profileId);
-    if (result.ok) router.replace('/messages' as never);
-    else showMessage('Could not block member', result.reason);
+    if (result.ok) router.replace("/messages" as never);
+    else showMessage("Could not block member", result.reason);
   };
 
   return (
     <FocusAwareScreen>
       <PageShell>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.page}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.page}
+        >
           <View style={styles.header}>
-            <Pressable accessibilityLabel="Back to messages" accessibilityRole="button" onPress={() => router.replace('/messages' as never)} style={styles.iconButton}>
+            <Pressable
+              accessibilityLabel="Back to messages"
+              accessibilityRole="button"
+              onPress={() => router.replace("/messages" as never)}
+              style={styles.iconButton}
+            >
               <FontAwesome6 color={palette.ink} name="arrow-left" size={14} />
             </Pressable>
             <View style={styles.headerCopy}>
-              <Text style={styles.headerTitle}>{conversation?.counterpart.name ?? 'Private conversation'}</Text>
-              <Text style={styles.headerMeta}>{conversation ? `${conversation.counterpart.username ? `@${conversation.counterpart.username} · ` : ''}${conversation.businessName}` : 'Encrypted in transit · participant-only access'}</Text>
+              <Text style={styles.headerTitle}>
+                {conversation?.counterpart.name ?? "Private conversation"}
+              </Text>
+              <Text style={styles.headerMeta}>
+                {conversation
+                  ? `${
+                    conversation.counterpart.username
+                      ? `@${conversation.counterpart.username} · `
+                      : ""
+                  }${conversation.businessName}`
+                  : "Encrypted in transit · participant-only access"}
+              </Text>
             </View>
-            <Pressable accessibilityLabel="Clear conversation from my inbox" accessibilityRole="button" onPress={() => void clearInbox()} style={styles.iconButton}>
+            <Pressable
+              accessibilityLabel="Clear conversation from my inbox"
+              accessibilityRole="button"
+              onPress={() => void clearInbox()}
+              style={styles.iconButton}
+            >
               <FontAwesome6 color={palette.ink} name="broom" size={13} />
             </Pressable>
-            <Pressable accessibilityLabel="Block conversation member" accessibilityRole="button" accessibilityState={{ disabled: !conversation?.counterpart.profileId }} disabled={!conversation?.counterpart.profileId} onPress={() => void blockCounterpart()} style={[styles.iconButton, !conversation?.counterpart.profileId && styles.iconButtonDisabled]}>
-              <FontAwesome6 color={palette.accentDeep} name="user-slash" size={13} />
+            <Pressable
+              accessibilityLabel="Block conversation member"
+              accessibilityRole="button"
+              accessibilityState={{
+                disabled: !conversation?.counterpart.profileId,
+              }}
+              disabled={!conversation?.counterpart.profileId}
+              onPress={() => void blockCounterpart()}
+              style={[
+                styles.iconButton,
+                !conversation?.counterpart.profileId &&
+                styles.iconButtonDisabled,
+              ]}
+            >
+              <FontAwesome6
+                color={palette.accentDeep}
+                name="user-slash"
+                size={13}
+              />
             </Pressable>
           </View>
 
           <View style={styles.privacyBanner}>
-            <FontAwesome6 color={palette.success} name="shield-halved" size={13} />
-            <Text style={styles.privacyText}>Do not post addresses, card, bank, or identity details. Structured pickup details expire automatically. Spottr does not process or guarantee the transaction.</Text>
+            <FontAwesome6
+              color={palette.success}
+              name="shield-halved"
+              size={13}
+            />
+            <Text style={styles.privacyText}>
+              Do not post addresses, card, bank, or identity details. Structured
+              pickup details expire automatically. Spottr does not process or
+              guarantee the transaction.
+            </Text>
           </View>
-          {chatContext?.paymentMethods.length ? <View style={styles.paymentLine}><Text style={styles.paymentText}>Seller-reported: {chatContext.paymentMethods.map((method) => method.replaceAll('_', ' ')).join(' · ')}. Pay the seller directly.</Text></View> : null}
-
-          {auth.status !== 'authenticated' ? (
-            <View style={styles.center}>
-              <Text style={styles.centerTitle}>Sign in required</Text>
-              <Pressable onPress={() => router.replace('/auth')} style={styles.sendButton}><Text style={styles.sendText}>Sign in</Text></Pressable>
-            </View>
-          ) : loading ? (
-            <View accessibilityLiveRegion="polite" style={styles.center}>
-              <ActivityIndicator color={palette.accentDeep} />
-              <Text style={styles.centerBody}>Loading private messages…</Text>
-            </View>
-          ) : error && !messages.length ? (
-            <View accessibilityRole="alert" style={styles.center}>
-              <FontAwesome6 color={palette.accentDeep} name="triangle-exclamation" size={20} />
-              <Text style={styles.centerTitle}>Conversation unavailable</Text>
-              <Text style={styles.centerBody}>{error}</Text>
-            </View>
-          ) : (
-            <>
-              <ScrollView
-                contentContainerStyle={styles.messages}
-                keyboardShouldPersistTaps="handled"
-                ref={scrollRef}>
-                {messages.map((message) => {
-                  const mine = Boolean(chatContext?.actorProfileId && message.sender.profileId === chatContext.actorProfileId);
-                  return (
-                    <View key={message.id} style={[styles.messageRow, mine && styles.messageRowMine]}>
-                      {!mine ? (
-                        message.sender.avatarUrl ? <Image source={{ uri: message.sender.avatarUrl }} style={styles.avatar} /> :
-                          <View style={styles.avatarFallback}><Text style={styles.avatarText}>{message.sender.name.slice(0, 1).toUpperCase()}</Text></View>
-                      ) : null}
-                      <View style={[styles.bubbleWrap, mine && styles.bubbleWrapMine]}>
-                        {!mine ? <Text style={styles.senderName}>{message.sender.name}{message.sender.username ? ` · @${message.sender.username}` : ''}</Text> : null}
-                        <View style={[styles.bubble, mine && styles.bubbleMine]}>
-                          {message.body ? <Text style={[styles.body, mine && styles.bodyMine]}>{message.body}</Text> : null}
-                          {message.attachments.map((attachment) => (
-                            <Image accessibilityLabel="Chat photo" key={attachment.assetId} source={{ uri: attachment.url }} style={styles.attachment} />
-                          ))}
-                        </View>
-                        <View style={[styles.metaLine, mine && styles.metaLineMine]}>
-                          <Text style={styles.messageTime}>{sentTime.format(new Date(message.sentAt))}</Text>
-                          {mine ? <Text style={styles.readState}>{message.readAt ? 'Read' : 'Sent'}</Text> : (
-                            <Pressable accessibilityLabel="Report message" hitSlop={10} onPress={() => void safetyAction(message)}>
-                              <Text style={styles.reportText}>Report</Text>
-                            </Pressable>
-                          )}
-                        </View>
-                      </View>
-                    </View>
-                  );
-                })}
-              </ScrollView>
-              <View accessibilityLiveRegion="polite" style={styles.typingLine}>
-                <Text style={styles.typingText}>{typing.length ? `${typing[0].name} is typing…` : ' '}</Text>
+          {chatContext?.paymentMethods.length
+            ? (
+              <View style={styles.paymentLine}>
+                <Text style={styles.paymentText}>
+                  Seller-reported: {chatContext.paymentMethods.map((method) =>
+                    method.replaceAll("_", " ")
+                  ).join(" · ")}
+                  {chatContext.paymentMethodsConfirmedAt
+                    ? ` · confirmed ${
+                      sentTime.format(
+                        new Date(chatContext.paymentMethodsConfirmedAt),
+                      )
+                    }`
+                    : " · confirmation date unavailable"}. Pay the seller
+                  directly.
+                </Text>
               </View>
-              <View style={styles.pickupSection}>
-                <View style={styles.pickupHeading}>
-                  <FontAwesome6 color={palette.accentDeep} name="location-dot" size={12} />
-                  <View style={styles.pickupHeadingCopy}>
-                    <Text style={styles.pickupTitle}>Pickup details</Text>
-                    <Text style={styles.pickupSubtitle}>Choose a meetup preference, agree on timing, and keep precise details in the expiring card.</Text>
-                  </View>
-                </View>
-                {activePickup?.state === 'authorized' && pickupDetail ? (
-                  <View style={styles.pickupDetail}>
-                    <View style={styles.pickupDetailCopy}>
-                      <Text style={styles.pickupLocation}>{pickupDetail.label}</Text>
-                      <Text style={styles.pickupAddress}>{pickupDetail.address}, {pickupDetail.city}, {pickupDetail.region}{pickupDetail.postalCode ? ` ${pickupDetail.postalCode}` : ''}</Text>
-                      <Text style={styles.pickupWindow}>{pickupTime.format(new Date(pickupDetail.startsAt))}–{pickupTime.format(new Date(pickupDetail.endsAt))} · expires {sentTime.format(new Date(pickupDetail.expiresAt))}</Text>
-                    </View>
-                    <Pressable accessibilityLabel="Get pickup directions" accessibilityRole="button" onPress={() => void openPickupDirections()} style={styles.pickupPrimary}>
-                      <Text style={styles.pickupPrimaryText}>Get directions</Text>
-                      <FontAwesome6 color="#FFFFFF" name="diamond-turn-right" size={11} />
-                    </Pressable>
-                    <Pressable accessibilityRole="button" disabled={pickupBusy} onPress={() => void resolvePickup(activePickup)} style={styles.pickupLink}>
-                      <Text style={styles.pickupLinkText}>{pickupRole === 'merchant' ? 'Revoke details' : 'Cancel pickup'}</Text>
-                    </Pressable>
-                  </View>
-                ) : activePickup?.state === 'authorized' ? (
-                  <View style={styles.pickupDetail}>
-                    <Text accessibilityLiveRegion="polite" style={styles.pickupWarning}>Exact details are unavailable or expired. They have not been copied into this chat.</Text>
-                    <Pressable accessibilityRole="button" disabled={pickupBusy} onPress={() => void resolvePickup(activePickup)} style={styles.pickupLink}>
-                      <Text style={styles.pickupLinkText}>{pickupRole === 'merchant' ? 'Revoke request' : 'Cancel request'}</Text>
-                    </Pressable>
-                  </View>
-                ) : activePickup?.state === 'pending' && pickupRole === 'merchant' ? (
-                  <View style={styles.pickupDetail}>
-                    <Text style={styles.pickupStatus}>Customer requested {pickupTime.format(new Date(activePickup.startsAt))}–{pickupTime.format(new Date(activePickup.endsAt))}{activePickup.choice ? ` at ${activePickup.choice.label}` : ''}.</Text>
-                    {chatContext?.businessCategory === 'home_kitchen' && activePickup.choice ? (
-                      <View style={styles.pickupOption}>
-                        <View style={styles.pickupDetailCopy}>
-                          <Text style={styles.pickupLocation}>{activePickup.choice.label}</Text>
-                          <Text style={styles.pickupAddress}>{activePickup.choice.city}, {activePickup.choice.region}{activePickup.choice.kind === 'seller_residence' ? ' · customer accepted residence caution' : ' · customer-selected public place'}</Text>
-                        </View>
-                        <Pressable accessibilityRole="button" disabled={pickupBusy} onPress={() => void acceptNeighborhoodPickup(activePickup)} style={styles.pickupPrimary}><Text style={styles.pickupPrimaryText}>Accept</Text></Pressable>
-                      </View>
-                    ) : pickupOptions.length ? pickupOptions.slice(0, 3).map((option) => (
-                      <Pressable accessibilityRole="button" disabled={pickupBusy} key={option.id} onPress={() => void authorizePickup(activePickup, option)} style={styles.pickupOption}>
-                        <View style={styles.pickupDetailCopy}>
-                          <Text style={styles.pickupLocation}>{option.label}</Text>
-                          <Text style={styles.pickupAddress}>{option.city}, {option.region} · public meeting place</Text>
-                        </View>
-                        <FontAwesome6 color={palette.accentDeep} name="arrow-right" size={11} />
-                      </Pressable>
-                    )) : <Text style={styles.pickupWarning}>This pickup preference is no longer available. Decline it and ask the customer to choose again.</Text>}
-                    {pickupOptions.length > 3 ? <Text style={styles.pickupStatus}>Showing the first 3 of {pickupOptions.length} approved locations.</Text> : null}
-                    <Pressable accessibilityRole="button" disabled={pickupBusy} onPress={() => void resolvePickup(activePickup)} style={styles.pickupLink}><Text style={styles.pickupLinkText}>Decline request</Text></Pressable>
-                  </View>
-                ) : activePickup?.state === 'pending' ? (
-                  <View style={styles.pickupDetail}>
-                    <Text style={styles.pickupStatus}>Waiting for the seller to confirm {activePickup.choice?.label ?? 'the pickup preference'} for {pickupTime.format(new Date(activePickup.startsAt))}.</Text>
-                    <Pressable accessibilityRole="button" disabled={pickupBusy} onPress={() => void resolvePickup(activePickup)} style={styles.pickupLink}><Text style={styles.pickupLinkText}>Cancel request</Text></Pressable>
-                  </View>
-                ) : pickupRole === 'customer' && !threadClosed ? (
-                  <View style={styles.pickupDetail}>
-                    {chatContext?.businessCategory === 'home_kitchen' ? (
-                      pickupOptions.length ? pickupOptions.map((option) => (
-                        <Pressable accessibilityRole="radio" accessibilityState={{ checked: selectedPickupOption?.id === option.id }} key={option.id} onPress={() => void choosePickupOption(option)} style={[styles.pickupOption, selectedPickupOption?.id === option.id && styles.pickupOptionSelected]}>
-                          <View style={styles.pickupDetailCopy}>
-                            <Text style={styles.pickupLocation}>{option.label}</Text>
-                            <Text style={styles.pickupAddress}>{option.address ? `${option.address} · ` : ''}{option.city}, {option.region}{option.warningRequired ? ' · extra caution' : ' · recommended public place'}</Text>
+            )
+            : null}
+
+          {auth.status !== "authenticated"
+            ? (
+              <View style={styles.center}>
+                <Text style={styles.centerTitle}>Sign in required</Text>
+                <Pressable
+                  onPress={() => router.replace("/auth")}
+                  style={styles.sendButton}
+                >
+                  <Text style={styles.sendText}>Sign in</Text>
+                </Pressable>
+              </View>
+            )
+            : loading
+            ? (
+              <View accessibilityLiveRegion="polite" style={styles.center}>
+                <ActivityIndicator color={palette.accentDeep} />
+                <Text style={styles.centerBody}>Loading private messages…</Text>
+              </View>
+            )
+            : error && !messages.length
+            ? (
+              <View accessibilityRole="alert" style={styles.center}>
+                <FontAwesome6
+                  color={palette.accentDeep}
+                  name="triangle-exclamation"
+                  size={20}
+                />
+                <Text style={styles.centerTitle}>Conversation unavailable</Text>
+                <Text style={styles.centerBody}>{error}</Text>
+              </View>
+            )
+            : (
+              <>
+                <ScrollView
+                  contentContainerStyle={styles.messages}
+                  keyboardShouldPersistTaps="handled"
+                  ref={scrollRef}
+                >
+                  {messages.map((message) => {
+                    const mine = Boolean(
+                      chatContext?.actorProfileId &&
+                        message.sender.profileId === chatContext.actorProfileId,
+                    );
+                    return (
+                      <View
+                        key={message.id}
+                        style={[
+                          styles.messageRow,
+                          mine && styles.messageRowMine,
+                        ]}
+                      >
+                        {!mine
+                          ? (
+                            message.sender.avatarUrl
+                              ? (
+                                <Image
+                                  source={{ uri: message.sender.avatarUrl }}
+                                  style={styles.avatar}
+                                />
+                              )
+                              : (
+                                <View style={styles.avatarFallback}>
+                                  <Text style={styles.avatarText}>
+                                    {message.sender.name.slice(0, 1)
+                                      .toUpperCase()}
+                                  </Text>
+                                </View>
+                              )
+                          )
+                          : null}
+                        <View
+                          style={[
+                            styles.bubbleWrap,
+                            mine && styles.bubbleWrapMine,
+                          ]}
+                        >
+                          {!mine
+                            ? (
+                              <Text style={styles.senderName}>
+                                {message.sender.name}
+                                {message.sender.username
+                                  ? ` · @${message.sender.username}`
+                                  : ""}
+                              </Text>
+                            )
+                            : null}
+                          <View
+                            style={[styles.bubble, mine && styles.bubbleMine]}
+                          >
+                            {message.body
+                              ? (
+                                <Text
+                                  style={[styles.body, mine && styles.bodyMine]}
+                                >
+                                  {message.body}
+                                </Text>
+                              )
+                              : null}
+                            {message.attachments.map((attachment) => (
+                              <Image
+                                accessibilityLabel="Chat photo"
+                                key={attachment.assetId}
+                                source={{ uri: attachment.url }}
+                                style={styles.attachment}
+                              />
+                            ))}
                           </View>
-                          <FontAwesome6 color={selectedPickupOption?.id === option.id ? palette.success : palette.mutedLight} name={selectedPickupOption?.id === option.id ? 'circle-check' : 'circle'} size={13} />
-                        </Pressable>
-                      )) : <Text style={styles.pickupWarning}>The seller has not configured 2–3 current public meetup places. Residence pickup appears only when the seller explicitly enables it.</Text>
-                    ) : null}
-                    <View style={styles.pickupPresets}>
-                      {[60, 120, 24 * 60].map((minutes) => (
-                        <Pressable accessibilityRole="button" disabled={pickupBusy || (chatContext?.businessCategory === 'home_kitchen' && !selectedPickupOption)} key={minutes} onPress={() => void requestPickupWindow(minutes)} style={styles.pickupPreset}>
-                          <Text style={styles.pickupPresetText}>{minutes === 60 ? 'In 1 hour' : minutes === 120 ? 'In 2 hours' : 'Tomorrow'}</Text>
-                        </Pressable>
+                          <View
+                            style={[
+                              styles.metaLine,
+                              mine && styles.metaLineMine,
+                            ]}
+                          >
+                            <Text style={styles.messageTime}>
+                              {sentTime.format(new Date(message.sentAt))}
+                            </Text>
+                            {mine
+                              ? (
+                                <Text style={styles.readState}>
+                                  {message.readAt ? "Read" : "Sent"}
+                                </Text>
+                              )
+                              : (
+                                <Pressable
+                                  accessibilityLabel="Report message"
+                                  hitSlop={10}
+                                  onPress={() => void safetyAction(message)}
+                                >
+                                  <Text style={styles.reportText}>Report</Text>
+                                </Pressable>
+                              )}
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+                <View
+                  accessibilityLiveRegion="polite"
+                  style={styles.typingLine}
+                >
+                  <Text style={styles.typingText}>
+                    {typing.length ? `${typing[0].name} is typing…` : " "}
+                  </Text>
+                </View>
+                {chatContext?.businessCategory === "home_kitchen"
+                  ? (
+                    <View style={styles.pickupSection}>
+                      <View style={styles.pickupHeading}>
+                        <FontAwesome6
+                          color={palette.accentDeep}
+                          name="location-dot"
+                          size={12}
+                        />
+                        <View style={styles.pickupHeadingCopy}>
+                          <Text style={styles.pickupTitle}>Pickup details</Text>
+                          <Text style={styles.pickupSubtitle}>
+                            Choose a meetup preference, agree on timing, and
+                            keep precise details in the expiring card.
+                          </Text>
+                        </View>
+                      </View>
+                      {activePickup?.state === "authorized" && pickupDetail
+                        ? (
+                          <View style={styles.pickupDetail}>
+                            <View style={styles.pickupDetailCopy}>
+                              <Text style={styles.pickupLocation}>
+                                {pickupDetail.label}
+                              </Text>
+                              <Text style={styles.pickupAddress}>
+                                {pickupDetail.address}, {pickupDetail.city},
+                                {" "}
+                                {pickupDetail.region}
+                                {pickupDetail.postalCode
+                                  ? ` ${pickupDetail.postalCode}`
+                                  : ""}
+                              </Text>
+                              <Text style={styles.pickupWindow}>
+                                {pickupTime.format(
+                                  new Date(pickupDetail.startsAt),
+                                )}–{pickupTime.format(
+                                  new Date(pickupDetail.endsAt),
+                                )} · expires {sentTime.format(
+                                  new Date(pickupDetail.expiresAt),
+                                )}
+                              </Text>
+                            </View>
+                            <Pressable
+                              accessibilityLabel="Get pickup directions"
+                              accessibilityRole="button"
+                              onPress={() => void openPickupDirections()}
+                              style={styles.pickupPrimary}
+                            >
+                              <Text style={styles.pickupPrimaryText}>
+                                Get directions
+                              </Text>
+                              <FontAwesome6
+                                color="#FFFFFF"
+                                name="diamond-turn-right"
+                                size={11}
+                              />
+                            </Pressable>
+                            <Pressable
+                              accessibilityRole="button"
+                              disabled={pickupBusy}
+                              onPress={() => void resolvePickup(activePickup)}
+                              style={styles.pickupLink}
+                            >
+                              <Text style={styles.pickupLinkText}>
+                                {pickupRole === "merchant"
+                                  ? "Revoke details"
+                                  : "Cancel pickup"}
+                              </Text>
+                            </Pressable>
+                          </View>
+                        )
+                        : activePickup?.state === "authorized"
+                        ? (
+                          <View style={styles.pickupDetail}>
+                            <Text
+                              accessibilityLiveRegion="polite"
+                              style={styles.pickupWarning}
+                            >
+                              Exact details are unavailable or expired. They
+                              have not been copied into this chat.
+                            </Text>
+                            <Pressable
+                              accessibilityRole="button"
+                              disabled={pickupBusy}
+                              onPress={() => void resolvePickup(activePickup)}
+                              style={styles.pickupLink}
+                            >
+                              <Text style={styles.pickupLinkText}>
+                                {pickupRole === "merchant"
+                                  ? "Revoke request"
+                                  : "Cancel request"}
+                              </Text>
+                            </Pressable>
+                          </View>
+                        )
+                        : activePickup?.state === "pending" &&
+                            pickupRole === "merchant"
+                        ? (
+                          <View style={styles.pickupDetail}>
+                            <Text style={styles.pickupStatus}>
+                              Customer requested {pickupTime.format(
+                                new Date(activePickup.startsAt),
+                              )}–{pickupTime.format(
+                                new Date(activePickup.endsAt),
+                              )}
+                              {activePickup.choice
+                                ? ` at ${activePickup.choice.label}`
+                                : ""}.
+                            </Text>
+                            {chatContext?.businessCategory === "home_kitchen" &&
+                                activePickup.choice
+                              ? (
+                                <View style={styles.pickupOption}>
+                                  <View style={styles.pickupDetailCopy}>
+                                    <Text style={styles.pickupLocation}>
+                                      {activePickup.choice.label}
+                                    </Text>
+                                    <Text style={styles.pickupAddress}>
+                                      {activePickup.choice.city},{" "}
+                                      {activePickup.choice.region}
+                                      {activePickup.choice.kind ===
+                                          "seller_residence"
+                                        ? " · customer accepted residence caution"
+                                        : " · customer-selected public place"}
+                                    </Text>
+                                  </View>
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    disabled={pickupBusy}
+                                    onPress={() =>
+                                      void acceptNeighborhoodPickup(
+                                        activePickup,
+                                      )}
+                                    style={styles.pickupPrimary}
+                                  >
+                                    <Text style={styles.pickupPrimaryText}>
+                                      Accept
+                                    </Text>
+                                  </Pressable>
+                                </View>
+                              )
+                              : (
+                                <Text style={styles.pickupWarning}>
+                                  This pickup preference is no longer available.
+                                  Decline it and ask the customer to choose
+                                  again.
+                                </Text>
+                              )}
+                            <Pressable
+                              accessibilityRole="button"
+                              disabled={pickupBusy}
+                              onPress={() => void resolvePickup(activePickup)}
+                              style={styles.pickupLink}
+                            >
+                              <Text style={styles.pickupLinkText}>
+                                Decline request
+                              </Text>
+                            </Pressable>
+                          </View>
+                        )
+                        : activePickup?.state === "pending"
+                        ? (
+                          <View style={styles.pickupDetail}>
+                            <Text style={styles.pickupStatus}>
+                              Waiting for the seller to confirm{" "}
+                              {activePickup.choice?.label ??
+                                "the pickup preference"} for {pickupTime.format(
+                                  new Date(activePickup.startsAt),
+                                )}.
+                            </Text>
+                            <Pressable
+                              accessibilityRole="button"
+                              disabled={pickupBusy}
+                              onPress={() => void resolvePickup(activePickup)}
+                              style={styles.pickupLink}
+                            >
+                              <Text style={styles.pickupLinkText}>
+                                Cancel request
+                              </Text>
+                            </Pressable>
+                          </View>
+                        )
+                        : pickupRole === "customer" && !threadClosed
+                        ? (
+                          <View style={styles.pickupDetail}>
+                            {chatContext?.businessCategory === "home_kitchen"
+                              ? (
+                                pickupOptions.length
+                                  ? pickupOptions.map((option) => (
+                                    <Pressable
+                                      accessibilityRole="radio"
+                                      accessibilityState={{
+                                        checked: selectedPickupOption?.id ===
+                                          option.id,
+                                      }}
+                                      key={option.id}
+                                      onPress={() =>
+                                        void choosePickupOption(option)}
+                                      style={[
+                                        styles.pickupOption,
+                                        selectedPickupOption?.id ===
+                                          option.id &&
+                                        styles.pickupOptionSelected,
+                                      ]}
+                                    >
+                                      <View style={styles.pickupDetailCopy}>
+                                        <Text style={styles.pickupLocation}>
+                                          {option.label}
+                                        </Text>
+                                        <Text style={styles.pickupAddress}>
+                                          {option.address
+                                            ? `${option.address} · `
+                                            : ""}
+                                          {option.city}, {option.region}
+                                          {option.warningRequired
+                                            ? " · extra caution"
+                                            : " · public meetup place"}
+                                        </Text>
+                                      </View>
+                                      <FontAwesome6
+                                        color={selectedPickupOption?.id ===
+                                            option.id
+                                          ? palette.success
+                                          : palette.mutedLight}
+                                        name={selectedPickupOption?.id ===
+                                            option.id
+                                          ? "circle-check"
+                                          : "circle"}
+                                        size={13}
+                                      />
+                                    </Pressable>
+                                  ))
+                                  : (
+                                    <Text style={styles.pickupWarning}>
+                                      The seller has not configured 2–3 current
+                                      public meetup places. Residence pickup
+                                      appears only when the seller explicitly
+                                      enables it.
+                                    </Text>
+                                  )
+                              )
+                              : null}
+                            <View style={styles.pickupPresets}>
+                              {[60, 120, 24 * 60].map((minutes) => (
+                                <Pressable
+                                  accessibilityRole="button"
+                                  disabled={pickupBusy ||
+                                    (chatContext?.businessCategory ===
+                                        "home_kitchen" &&
+                                      !selectedPickupOption)}
+                                  key={minutes}
+                                  onPress={() =>
+                                    void requestPickupWindow(minutes)}
+                                  style={styles.pickupPreset}
+                                >
+                                  <Text style={styles.pickupPresetText}>
+                                    {minutes === 60
+                                      ? "In 1 hour"
+                                      : minutes === 120
+                                      ? "In 2 hours"
+                                      : "Tomorrow"}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                          </View>
+                        )
+                        : (
+                          <Text style={styles.pickupStatus}>
+                            {threadClosed
+                              ? "Pickup controls are closed with this conversation."
+                              : "Waiting for the customer to request a pickup window."}
+                          </Text>
+                        )}
+                    </View>
+                  )
+                  : null}
+                {photos.length
+                  ? (
+                    <View style={styles.photoTray}>
+                      {photos.map((photo) => (
+                        <View
+                          key={photo.assetId}
+                          style={styles.pendingPhotoWrap}
+                        >
+                          <Image
+                            source={{ uri: photo.uri }}
+                            style={styles.pendingPhoto}
+                          />
+                          <View
+                            style={[
+                              styles.photoState,
+                              photo.state === "approved" &&
+                              styles.photoStateApproved,
+                              photo.state === "rejected" &&
+                              styles.photoStateRejected,
+                            ]}
+                          >
+                            <Text style={styles.photoStateText}>
+                              {photo.state === "pending"
+                                ? "Safety check"
+                                : photo.state}
+                            </Text>
+                          </View>
+                          <Pressable
+                            accessibilityLabel="Remove photo"
+                            onPress={() =>
+                              setPhotos((current) =>
+                                current.filter((entry) =>
+                                  entry.assetId !== photo.assetId
+                                )
+                              )}
+                            style={styles.removePhoto}
+                          >
+                            <FontAwesome6
+                              color="#FFFFFF"
+                              name="xmark"
+                              size={9}
+                            />
+                          </Pressable>
+                        </View>
                       ))}
                     </View>
-                  </View>
-                ) : (
-                  <Text style={styles.pickupStatus}>{threadClosed ? 'Pickup controls are closed with this conversation.' : 'Waiting for the customer to request a pickup window.'}</Text>
-                )}
-              </View>
-              {photos.length ? (
-                <View style={styles.photoTray}>
-                  {photos.map((photo) => (
-                    <View key={photo.assetId} style={styles.pendingPhotoWrap}>
-                      <Image source={{ uri: photo.uri }} style={styles.pendingPhoto} />
-                      <View style={[styles.photoState, photo.state === 'approved' && styles.photoStateApproved, photo.state === 'rejected' && styles.photoStateRejected]}>
-                        <Text style={styles.photoStateText}>{photo.state === 'pending' ? 'Safety check' : photo.state}</Text>
-                      </View>
-                      <Pressable accessibilityLabel="Remove photo" onPress={() => setPhotos((current) => current.filter((entry) => entry.assetId !== photo.assetId))} style={styles.removePhoto}>
-                        <FontAwesome6 color="#FFFFFF" name="xmark" size={9} />
-                      </Pressable>
-                    </View>
-                  ))}
+                  )
+                  : null}
+                {threadClosed
+                  ? (
+                    <Text
+                      accessibilityLiveRegion="polite"
+                      style={styles.closedNotice}
+                    >
+                      This conversation is closed. Its shared history remains
+                      available for safety and account records.
+                    </Text>
+                  )
+                  : null}
+                {draftSafetyIssue
+                  ? (
+                    <Text
+                      accessibilityLiveRegion="assertive"
+                      accessibilityRole="alert"
+                      style={styles.safetyWarning}
+                    >
+                      {chatSafetyMessage(draftSafetyIssue)}
+                    </Text>
+                  )
+                  : null}
+                {error
+                  ? (
+                    <Text accessibilityRole="alert" style={styles.inlineError}>
+                      {error}
+                    </Text>
+                  )
+                  : null}
+                <View style={styles.composer}>
+                  <Pressable
+                    accessibilityLabel="Attach a photo"
+                    accessibilityRole="button"
+                    accessibilityState={{
+                      disabled: !conversation || threadClosed ||
+                        photos.length >= 4,
+                    }}
+                    disabled={!conversation || threadClosed ||
+                      photos.length >= 4}
+                    onPress={() => void pickPhoto()}
+                    style={[
+                      styles.attachButton,
+                      (!conversation || threadClosed || photos.length >= 4) &&
+                      styles.attachButtonDisabled,
+                    ]}
+                  >
+                    <FontAwesome6 color={palette.ink} name="camera" size={13} />
+                  </Pressable>
+                  <TextInput
+                    accessibilityLabel="Message"
+                    editable={!threadClosed}
+                    multiline
+                    onChangeText={changeDraft}
+                    placeholder={threadClosed
+                      ? "Conversation closed"
+                      : "Write a short, professional message"}
+                    placeholderTextColor={palette.mutedLight}
+                    style={styles.input}
+                    value={draft}
+                  />
+                  <Pressable
+                    accessibilityLabel="Send message"
+                    accessibilityRole="button"
+                    accessibilityState={{
+                      disabled: Boolean(draftSafetyIssue) || threadClosed ||
+                        (!draft.trim() &&
+                          !photos.some((photo) =>
+                            photo.state === "approved"
+                          )) ||
+                        photos.some((photo) => photo.state === "pending") ||
+                        sending,
+                    }}
+                    disabled={Boolean(draftSafetyIssue) || threadClosed ||
+                      (!draft.trim() &&
+                        !photos.some((photo) => photo.state === "approved")) ||
+                      photos.some((photo) => photo.state === "pending") ||
+                      sending}
+                    onPress={() => void send()}
+                    style={[
+                      styles.sendButton,
+                      (Boolean(draftSafetyIssue) || threadClosed ||
+                        (!draft.trim() &&
+                          !photos.some((photo) =>
+                            photo.state === "approved"
+                          )) ||
+                        photos.some((photo) => photo.state === "pending") ||
+                        sending) && styles.sendDisabled,
+                    ]}
+                  >
+                    {sending
+                      ? <ActivityIndicator color="#FFFFFF" size="small" />
+                      : (
+                        <FontAwesome6
+                          color="#FFFFFF"
+                          name="paper-plane"
+                          size={14}
+                          solid
+                        />
+                      )}
+                  </Pressable>
                 </View>
-              ) : null}
-              {threadClosed ? <Text accessibilityLiveRegion="polite" style={styles.closedNotice}>This conversation is closed. Its shared history remains available for safety and account records.</Text> : null}
-              {draftSafetyIssue ? <Text accessibilityLiveRegion="assertive" accessibilityRole="alert" style={styles.safetyWarning}>{chatSafetyMessage(draftSafetyIssue)}</Text> : null}
-              {error ? <Text accessibilityRole="alert" style={styles.inlineError}>{error}</Text> : null}
-              <View style={styles.composer}>
-                <Pressable accessibilityLabel="Attach a photo" accessibilityRole="button" accessibilityState={{ disabled: !conversation || threadClosed || photos.length >= 4 }} disabled={!conversation || threadClosed || photos.length >= 4} onPress={() => void pickPhoto()} style={[styles.attachButton, (!conversation || threadClosed || photos.length >= 4) && styles.attachButtonDisabled]}>
-                  <FontAwesome6 color={palette.ink} name="camera" size={13} />
-                </Pressable>
-                <TextInput
-                  accessibilityLabel="Message"
-                  editable={!threadClosed}
-                  multiline
-                  onChangeText={changeDraft}
-                  placeholder={threadClosed ? 'Conversation closed' : 'Write a short, professional message'}
-                  placeholderTextColor={palette.mutedLight}
-                  style={styles.input}
-                  value={draft}
-                />
-                <Pressable accessibilityLabel="Send message" accessibilityRole="button" accessibilityState={{ disabled: Boolean(draftSafetyIssue) || threadClosed || (!draft.trim() && !photos.some((photo) => photo.state === 'approved')) || photos.some((photo) => photo.state === 'pending') || sending }} disabled={Boolean(draftSafetyIssue) || threadClosed || (!draft.trim() && !photos.some((photo) => photo.state === 'approved')) || photos.some((photo) => photo.state === 'pending') || sending} onPress={() => void send()} style={[styles.sendButton, (Boolean(draftSafetyIssue) || threadClosed || (!draft.trim() && !photos.some((photo) => photo.state === 'approved')) || photos.some((photo) => photo.state === 'pending') || sending) && styles.sendDisabled]}>
-                  {sending ? <ActivityIndicator color="#FFFFFF" size="small" /> : <FontAwesome6 color="#FFFFFF" name="paper-plane" size={14} solid />}
-                </Pressable>
-              </View>
-            </>
-          )}
+              </>
+            )}
         </KeyboardAvoidingView>
       </PageShell>
     </FocusAwareScreen>
@@ -598,77 +1143,288 @@ export default function ConversationScreen() {
 
 const styles = StyleSheet.create({
   page: { flex: 1, minHeight: 620 },
-  header: { alignItems: 'center', backgroundColor: palette.surface, borderBottomColor: palette.line, borderBottomWidth: 1, flexDirection: 'row', gap: spacing.md, padding: spacing.md },
+  header: {
+    alignItems: "center",
+    backgroundColor: palette.surface,
+    borderBottomColor: palette.line,
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    gap: spacing.md,
+    padding: spacing.md,
+  },
   headerCopy: { flex: 1, gap: 2 },
-  headerTitle: { color: palette.ink, fontSize: 14, fontWeight: '900' },
+  headerTitle: { color: palette.ink, fontSize: 14, fontWeight: "900" },
   headerMeta: { color: palette.muted, fontSize: 9 },
-  iconButton: { alignItems: 'center', borderColor: palette.line, borderRadius: 999, borderWidth: 1, height: 40, justifyContent: 'center', width: 40 },
+  iconButton: {
+    alignItems: "center",
+    borderColor: palette.line,
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: "center",
+    width: 40,
+  },
   iconButtonDisabled: { opacity: 0.35 },
-  privacyBanner: { alignItems: 'flex-start', backgroundColor: palette.successSoft, flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  privacyBanner: {
+    alignItems: "flex-start",
+    backgroundColor: palette.successSoft,
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
   privacyText: { color: palette.success, flex: 1, fontSize: 9, lineHeight: 14 },
-  paymentLine: { backgroundColor: palette.surface, borderBottomColor: palette.line, borderBottomWidth: 1, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  paymentLine: {
+    backgroundColor: palette.surface,
+    borderBottomColor: palette.line,
+    borderBottomWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
   paymentText: { color: palette.muted, fontSize: 9, lineHeight: 14 },
-  center: { alignItems: 'center', flex: 1, gap: spacing.md, justifyContent: 'center', padding: spacing.xl },
-  centerTitle: { color: palette.ink, fontSize: 17, fontWeight: '900' },
-  centerBody: { color: palette.muted, fontSize: 11, textAlign: 'center' },
+  center: {
+    alignItems: "center",
+    flex: 1,
+    gap: spacing.md,
+    justifyContent: "center",
+    padding: spacing.xl,
+  },
+  centerTitle: { color: palette.ink, fontSize: 17, fontWeight: "900" },
+  centerBody: { color: palette.muted, fontSize: 11, textAlign: "center" },
   messages: { gap: spacing.lg, padding: spacing.lg },
-  messageRow: { alignItems: 'flex-end', flexDirection: 'row', gap: spacing.sm },
-  messageRowMine: { justifyContent: 'flex-end' },
+  messageRow: { alignItems: "flex-end", flexDirection: "row", gap: spacing.sm },
+  messageRowMine: { justifyContent: "flex-end" },
   avatar: { borderRadius: 999, height: 30, width: 30 },
-  avatarFallback: { alignItems: 'center', backgroundColor: palette.dark, borderRadius: 999, height: 30, justifyContent: 'center', width: 30 },
-  avatarText: { color: '#FFFFFF', fontSize: 11, fontWeight: '900' },
-  bubbleWrap: { alignItems: 'flex-start', maxWidth: '78%' },
-  bubbleWrapMine: { alignItems: 'flex-end' },
-  senderName: { color: palette.muted, fontSize: 9, fontWeight: '800', marginBottom: 4 },
-  bubble: { backgroundColor: palette.surface, borderColor: palette.line, borderRadius: 18, borderBottomLeftRadius: 5, borderWidth: 1, gap: spacing.sm, overflow: 'hidden', padding: spacing.md },
-  bubbleMine: { backgroundColor: palette.dark, borderBottomLeftRadius: 18, borderBottomRightRadius: 5, borderColor: palette.dark },
+  avatarFallback: {
+    alignItems: "center",
+    backgroundColor: palette.dark,
+    borderRadius: 999,
+    height: 30,
+    justifyContent: "center",
+    width: 30,
+  },
+  avatarText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
+  bubbleWrap: { alignItems: "flex-start", maxWidth: "78%" },
+  bubbleWrapMine: { alignItems: "flex-end" },
+  senderName: {
+    color: palette.muted,
+    fontSize: 9,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+  bubble: {
+    backgroundColor: palette.surface,
+    borderColor: palette.line,
+    borderRadius: 18,
+    borderBottomLeftRadius: 5,
+    borderWidth: 1,
+    gap: spacing.sm,
+    overflow: "hidden",
+    padding: spacing.md,
+  },
+  bubbleMine: {
+    backgroundColor: palette.dark,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 5,
+    borderColor: palette.dark,
+  },
   body: { color: palette.ink, fontSize: 13, lineHeight: 19 },
-  bodyMine: { color: '#FFFFFF' },
-  attachment: { borderRadius: radii.md, height: 220, maxWidth: 320, resizeMode: 'cover', width: 260 },
-  metaLine: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, marginTop: 5 },
-  metaLineMine: { justifyContent: 'flex-end' },
+  bodyMine: { color: "#FFFFFF" },
+  attachment: {
+    borderRadius: radii.md,
+    height: 220,
+    maxWidth: 320,
+    resizeMode: "cover",
+    width: 260,
+  },
+  metaLine: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: 5,
+  },
+  metaLineMine: { justifyContent: "flex-end" },
   messageTime: { color: palette.mutedLight, fontSize: 8 },
-  readState: { color: palette.success, fontSize: 8, fontWeight: '800' },
-  reportText: { color: palette.accentDeep, fontSize: 8, fontWeight: '800' },
+  readState: { color: palette.success, fontSize: 8, fontWeight: "800" },
+  reportText: { color: palette.accentDeep, fontSize: 8, fontWeight: "800" },
   typingLine: { minHeight: 24, paddingHorizontal: spacing.lg },
-  typingText: { color: palette.muted, fontSize: 9, fontStyle: 'italic' },
-  pickupSection: { borderTopColor: palette.line, borderTopWidth: 1, gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
-  pickupHeading: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.sm },
+  typingText: { color: palette.muted, fontSize: 9, fontStyle: "italic" },
+  pickupSection: {
+    borderTopColor: palette.line,
+    borderTopWidth: 1,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  pickupHeading: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
   pickupHeadingCopy: { flex: 1, gap: 2 },
-  pickupTitle: { color: palette.ink, fontSize: 11, fontWeight: '900' },
+  pickupTitle: { color: palette.ink, fontSize: 11, fontWeight: "900" },
   pickupSubtitle: { color: palette.muted, fontSize: 8, lineHeight: 12 },
   pickupDetail: { gap: spacing.sm },
   pickupDetailCopy: { flex: 1, gap: 2 },
-  pickupLocation: { color: palette.ink, fontSize: 10, fontWeight: '900' },
+  pickupLocation: { color: palette.ink, fontSize: 10, fontWeight: "900" },
   pickupAddress: { color: palette.muted, fontSize: 9, lineHeight: 13 },
-  pickupWindow: { color: palette.success, fontSize: 8, fontWeight: '700', lineHeight: 12 },
+  pickupWindow: {
+    color: palette.success,
+    fontSize: 8,
+    fontWeight: "700",
+    lineHeight: 12,
+  },
   pickupStatus: { color: palette.muted, fontSize: 9, lineHeight: 14 },
   pickupWarning: { color: palette.accentDeep, fontSize: 9, lineHeight: 14 },
-  pickupPrimary: { alignItems: 'center', alignSelf: 'flex-start', backgroundColor: palette.accentDeep, borderRadius: 999, flexDirection: 'row', gap: spacing.sm, minHeight: 40, paddingHorizontal: spacing.md },
-  pickupPrimaryText: { color: '#FFFFFF', fontSize: 10, fontWeight: '900' },
-  pickupLink: { alignSelf: 'flex-start', minHeight: 32, justifyContent: 'center' },
-  pickupLinkText: { color: palette.accentDeep, fontSize: 9, fontWeight: '800', textDecorationLine: 'underline' },
-  pickupOption: { alignItems: 'center', borderTopColor: palette.line, borderTopWidth: 1, flexDirection: 'row', gap: spacing.md, minHeight: 48, paddingVertical: spacing.sm },
-  pickupOptionSelected: { backgroundColor: palette.successSoft, borderRadius: radii.sm, borderTopColor: palette.successSoft, paddingHorizontal: spacing.sm },
-  pickupPresets: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  pickupPreset: { borderColor: palette.line, borderRadius: 999, borderWidth: 1, minHeight: 38, justifyContent: 'center', paddingHorizontal: spacing.md },
-  pickupPresetText: { color: palette.ink, fontSize: 9, fontWeight: '800' },
-  inlineError: { color: palette.accentDeep, fontSize: 10, paddingHorizontal: spacing.lg, paddingVertical: 4 },
-  safetyWarning: { backgroundColor: palette.accentSoft, color: palette.accentDeep, fontSize: 10, fontWeight: '700', lineHeight: 15, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
-  closedNotice: { backgroundColor: palette.bg, color: palette.muted, fontSize: 10, lineHeight: 15, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
-  photoTray: { backgroundColor: palette.surface, borderTopColor: palette.line, borderTopWidth: 1, flexDirection: 'row', gap: spacing.sm, padding: spacing.md },
-  pendingPhotoWrap: { position: 'relative' },
+  pickupPrimary: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: palette.accentDeep,
+    borderRadius: 999,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: 40,
+    paddingHorizontal: spacing.md,
+  },
+  pickupPrimaryText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
+  pickupLink: {
+    alignSelf: "flex-start",
+    minHeight: 32,
+    justifyContent: "center",
+  },
+  pickupLinkText: {
+    color: palette.accentDeep,
+    fontSize: 9,
+    fontWeight: "800",
+    textDecorationLine: "underline",
+  },
+  pickupOption: {
+    alignItems: "center",
+    borderTopColor: palette.line,
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: spacing.md,
+    minHeight: 48,
+    paddingVertical: spacing.sm,
+  },
+  pickupOptionSelected: {
+    backgroundColor: palette.successSoft,
+    borderRadius: radii.sm,
+    borderTopColor: palette.successSoft,
+    paddingHorizontal: spacing.sm,
+  },
+  pickupPresets: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  pickupPreset: {
+    borderColor: palette.line,
+    borderRadius: 999,
+    borderWidth: 1,
+    minHeight: 38,
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+  },
+  pickupPresetText: { color: palette.ink, fontSize: 9, fontWeight: "800" },
+  inlineError: {
+    color: palette.accentDeep,
+    fontSize: 10,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 4,
+  },
+  safetyWarning: {
+    backgroundColor: palette.accentSoft,
+    color: palette.accentDeep,
+    fontSize: 10,
+    fontWeight: "700",
+    lineHeight: 15,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  closedNotice: {
+    backgroundColor: palette.bg,
+    color: palette.muted,
+    fontSize: 10,
+    lineHeight: 15,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  photoTray: {
+    backgroundColor: palette.surface,
+    borderTopColor: palette.line,
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  pendingPhotoWrap: { position: "relative" },
   pendingPhoto: { borderRadius: radii.md, height: 72, width: 72 },
-  photoState: { backgroundColor: 'rgba(25,29,27,0.78)', borderRadius: 999, bottom: 4, left: 4, paddingHorizontal: 6, paddingVertical: 3, position: 'absolute' },
+  photoState: {
+    backgroundColor: "rgba(25,29,27,0.78)",
+    borderRadius: 999,
+    bottom: 4,
+    left: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    position: "absolute",
+  },
   photoStateApproved: { backgroundColor: palette.success },
   photoStateRejected: { backgroundColor: palette.accentDeep },
-  photoStateText: { color: '#FFFFFF', fontSize: 7, fontWeight: '900', textTransform: 'capitalize' },
-  removePhoto: { alignItems: 'center', backgroundColor: palette.dark, borderRadius: 999, height: 20, justifyContent: 'center', position: 'absolute', right: -5, top: -5, width: 20 },
-  composer: { alignItems: 'flex-end', backgroundColor: palette.surface, borderTopColor: palette.line, borderTopWidth: 1, flexDirection: 'row', gap: spacing.sm, padding: spacing.md },
-  attachButton: { alignItems: 'center', borderColor: palette.line, borderRadius: 999, borderWidth: 1, height: 46, justifyContent: 'center', width: 46 },
+  photoStateText: {
+    color: "#FFFFFF",
+    fontSize: 7,
+    fontWeight: "900",
+    textTransform: "capitalize",
+  },
+  removePhoto: {
+    alignItems: "center",
+    backgroundColor: palette.dark,
+    borderRadius: 999,
+    height: 20,
+    justifyContent: "center",
+    position: "absolute",
+    right: -5,
+    top: -5,
+    width: 20,
+  },
+  composer: {
+    alignItems: "flex-end",
+    backgroundColor: palette.surface,
+    borderTopColor: palette.line,
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  attachButton: {
+    alignItems: "center",
+    borderColor: palette.line,
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 46,
+    justifyContent: "center",
+    width: 46,
+  },
   attachButtonDisabled: { opacity: 0.4 },
-  input: { backgroundColor: palette.bg, borderColor: palette.line, borderRadius: 20, borderWidth: 1, color: palette.ink, flex: 1, fontSize: 13, maxHeight: 120, minHeight: 46, paddingHorizontal: spacing.lg, paddingVertical: 12 },
-  sendButton: { alignItems: 'center', backgroundColor: palette.accentDeep, borderRadius: 999, height: 46, justifyContent: 'center', minWidth: 46, paddingHorizontal: spacing.md },
+  input: {
+    backgroundColor: palette.bg,
+    borderColor: palette.line,
+    borderRadius: 20,
+    borderWidth: 1,
+    color: palette.ink,
+    flex: 1,
+    fontSize: 13,
+    maxHeight: 120,
+    minHeight: 46,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 12,
+  },
+  sendButton: {
+    alignItems: "center",
+    backgroundColor: palette.accentDeep,
+    borderRadius: 999,
+    height: 46,
+    justifyContent: "center",
+    minWidth: 46,
+    paddingHorizontal: spacing.md,
+  },
   sendDisabled: { opacity: 0.45 },
-  sendText: { color: '#FFFFFF', fontSize: 11, fontWeight: '900' },
+  sendText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
 });
