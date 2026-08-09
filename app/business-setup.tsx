@@ -176,6 +176,7 @@ function CheckRow({
     <Pressable
       accessibilityLabel={label}
       accessibilityRole="checkbox"
+      aria-checked={checked}
       accessibilityState={{ checked, disabled }}
       disabled={disabled}
       onPress={onPress}
@@ -1524,6 +1525,7 @@ export default function BusinessSetupScreen() {
                   <Pressable
                     accessibilityLabel={`${dayNames[hour.weekday]} is closed`}
                     accessibilityRole="checkbox"
+                    aria-checked={hour.isClosed}
                     accessibilityState={{ checked: hour.isClosed, disabled: !canEditListing || isBusy }}
                     disabled={!canEditListing || isBusy}
                     onPress={() =>
@@ -1780,6 +1782,7 @@ export default function BusinessSetupScreen() {
                               <Pressable
                                 accessibilityLabel={`Use ${savedLocation.label} in ${savedLocation.city} for stop ${index + 1}`}
                                 accessibilityRole="radio"
+                                aria-checked={selected}
                                 accessibilityState={{
                                   checked: selected,
                                   disabled: !canEditListing || isBusy,
@@ -1906,6 +1909,7 @@ export default function BusinessSetupScreen() {
                   <Pressable
                     accessibilityLabel={`Accept ${payment.label}`}
                     accessibilityRole="checkbox"
+                    aria-checked={selected}
                     accessibilityState={{ checked: selected, disabled: !canEditListing || isBusy }}
                     disabled={!canEditListing || isBusy}
                     key={payment.id}
@@ -2103,6 +2107,7 @@ export default function BusinessSetupScreen() {
                                 <Pressable
                                   accessibilityLabel={`${label} availability for ${item.name || `item ${itemIndex + 1}`}`}
                                   accessibilityRole="radio"
+                                  aria-checked={item.availability === value}
                                   accessibilityState={{
                                     checked: item.availability === value,
                                     disabled: !canEditListing || isBusy,

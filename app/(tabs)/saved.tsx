@@ -164,6 +164,7 @@ export default function SavedScreen() {
             ).map(([id, label]) => (
               <Pressable
                 accessibilityRole="radio"
+                aria-checked={filter === id}
                 accessibilityState={{ checked: filter === id }}
                 key={id}
                 onPress={() => setFilter(id)}

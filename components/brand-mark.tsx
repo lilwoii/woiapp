@@ -11,7 +11,7 @@ export function BrandMark({ compact = false, light = false }: Props) {
   const ink = light ? '#FFFFFF' : palette.ink;
 
   return (
-    <View style={styles.wrap} accessibilityLabel="Spottr">
+    <View accessibilityLabel="Spottr" accessibilityRole="image" style={styles.wrap}>
       <View style={[styles.mark, { borderColor: ink }]}>
         <View style={[styles.compassNeedle, { backgroundColor: palette.accent }]} />
         <View style={[styles.compassDot, { backgroundColor: ink }]} />

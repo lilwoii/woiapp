@@ -112,6 +112,7 @@ export default function ReportScreen() {
                 return (
                   <Pressable
                     accessibilityRole="radio"
+                    aria-checked={selected}
                     accessibilityState={{ checked: selected }}
                     key={id}
                     onPress={() => setReason(id)}

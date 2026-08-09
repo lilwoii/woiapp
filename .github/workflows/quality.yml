@@ -39,14 +39,21 @@ jobs:
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install --yes postgresql-client
 
+      - name: Prove SQL execution fails closed
+        run: |
+          if psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/tests/psql_fail_fast_probe.sql; then
+            echo "Expected the intentional SQL failure probe to fail" >&2
+            exit 1
+          fi
+
       - name: Bootstrap ordering runtime
-        run: psql -h 127.0.0.1 -U postgres -d spottr_test -f supabase/tests/shadow_ordering_runtime_setup.sql
+        run: psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/tests/shadow_ordering_runtime_setup.sql
 
       - name: Apply shadow-order migration
-        run: psql -h 127.0.0.1 -U postgres -d spottr_test -f supabase/migrations/20260802000000_shadow_ordering_foundation.sql
+        run: psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/migrations/20260802000000_shadow_ordering_foundation.sql
 
       - name: Exercise ordering invariants and RLS
-        run: psql -h 127.0.0.1 -U postgres -d spottr_test -f supabase/tests/shadow_ordering_runtime_test.sql
+        run: psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/tests/shadow_ordering_runtime_test.sql
 
   validate:
     runs-on: ubuntu-latest
@@ -72,6 +79,9 @@ jobs:
 
       - name: Test web quality verifier
         run: npm run test:web-quality-tools
+
+      - name: Verify quality workflow invariants
+        run: npm run test:workflow-tools
 
       - name: Verify Expo dependency alignment
         run: npx expo install --check
@@ -105,6 +115,12 @@ jobs:
 
       - name: Build production web artifact
         run: npm run build:sites
+
+      - name: Install Chromium for rendered web acceptance
+        run: npx playwright install --with-deps chromium
+
+      - name: Test rendered accessibility and keyboard behavior
+        run: npm run test:web-e2e
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high

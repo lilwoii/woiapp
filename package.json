@@ -22,7 +22,7 @@
     "export:web": "expo export --platform web",
     "build:sites": "npm run export:web && node scripts/prepare-sites-build.mjs && npm run verify:web-quality",
     "build": "npm run build:sites",
-    "validate": "npm run verify:build-assets && npm run typecheck && npm run typecheck:edge && npm run lint && npm run test:ci && npm run test:edge && npm run test:build-asset-tools && npm run test:web-quality-tools && npm run test:native-release-tools && npm run test:maintenance-tools && npm run verify:production-config && npx expo-doctor && npx expo install --check && npm run verify:native-release && npm run build:sites",
+    "validate": "npm run verify:build-assets && npm run typecheck && npm run typecheck:edge && npm run lint && npm run test:ci && npm run test:edge && npm run test:build-asset-tools && npm run test:web-quality-tools && npm run test:workflow-tools && npm run test:native-release-tools && npm run test:maintenance-tools && npm run verify:production-config && npx expo-doctor && npx expo install --check && npm run verify:native-release && npm run build:sites && npm run test:web-e2e",
     "test:native-release-tools": "node --test scripts/native-release-verifier.test.mjs",
     "verify:native-config": "node scripts/native-release-verifier.mjs --config",
     "export:ios": "expo export --platform ios --output-dir dist-ios",
@@ -33,7 +33,9 @@
     "verify:build-assets": "node scripts/verify-build-assets.mjs",
     "test:build-asset-tools": "node --test scripts/verify-build-assets.test.mjs",
     "test:web-quality-tools": "node --test scripts/web-quality-verifier.test.mjs",
-    "verify:web-quality": "node scripts/web-quality-verifier.mjs"
+    "verify:web-quality": "node scripts/web-quality-verifier.mjs",
+    "test:web-e2e": "playwright test",
+    "test:workflow-tools": "node --test scripts/quality-workflow-verifier.test.mjs && node scripts/quality-workflow-verifier.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -64,6 +66,8 @@
     "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.62.1",
     "@react-native/jest-preset": "^0.86.2",
     "@testing-library/react-native": "^13.3.3",
     "@types/jest": "29.5.14",
@@ -101,7 +105,8 @@
     },
     "testPathIgnorePatterns": [
       "/node_modules/",
-      "/dist/"
+      "/dist/",
+      "/tests/web-e2e/"
     ]
   },
   "private": true

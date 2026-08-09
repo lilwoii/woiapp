@@ -281,7 +281,7 @@ export default function AuthScreen() {
               </View>
             ) : null}
 
-            <View style={styles.modeSwitch}>
+            <View accessibilityRole="tablist" style={styles.modeSwitch}>
               {(
                 [
                   ['signup', 'Create account'],
@@ -290,6 +290,7 @@ export default function AuthScreen() {
               ).map(([id, label]) => (
                 <Pressable
                   accessibilityRole="tab"
+                  aria-selected={mode === id}
                   accessibilityState={{ selected: mode === id }}
                   key={id}
                   onPress={() => {
@@ -317,6 +318,7 @@ export default function AuthScreen() {
                       return (
                         <Pressable
                           accessibilityRole="radio"
+                          aria-checked={active}
                           accessibilityState={{ checked: active }}
                           key={id}
                           onPress={() => setRole(id)}
@@ -396,6 +398,7 @@ export default function AuthScreen() {
             ) : (
               <Pressable
                 accessibilityRole="checkbox"
+                aria-checked={accepted}
                 accessibilityState={{ checked: accepted }}
                 onPress={() => setAccepted((current) => !current)}
                 style={styles.termsRow}>

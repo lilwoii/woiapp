@@ -327,6 +327,7 @@ export default function BusinessMarketplaceScreen() {
                             return (
                               <Pressable
                                 accessibilityRole="checkbox"
+                                aria-checked={selected}
                                 accessibilityState={{
                                   checked: selected,
                                   disabled: !selected &&

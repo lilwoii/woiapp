@@ -780,6 +780,7 @@ export default function PlaceDetailScreen() {
                   <Pressable
                     accessibilityLabel={`${value} star${value === 1 ? '' : 's'}`}
                     accessibilityRole="radio"
+                    aria-checked={value === rating}
                     accessibilityState={{ checked: value === rating }}
                     key={value}
                     onPress={() => setRating(value)}

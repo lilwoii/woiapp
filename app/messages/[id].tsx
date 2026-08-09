@@ -899,6 +899,7 @@ export default function ConversationScreen() {
                                   ? pickupOptions.map((option) => (
                                     <Pressable
                                       accessibilityRole="radio"
+                                      aria-checked={selectedPickupOption?.id === option.id}
                                       accessibilityState={{
                                         checked: selectedPickupOption?.id ===
                                           option.id,

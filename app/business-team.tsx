@@ -697,6 +697,7 @@ export default function BusinessTeamScreen() {
                                         <Pressable
                                           accessibilityLabel={`${roleLabel(role)} role`}
                                           accessibilityRole="radio"
+                                          aria-checked={selected}
                                           accessibilityState={{
                                             checked: selected,
                                             disabled: Boolean(busyKey),
@@ -918,6 +919,7 @@ export default function BusinessTeamScreen() {
                               accessibilityHint={roleDescriptions[role]}
                               accessibilityLabel={`${roleLabel(role)} role`}
                               accessibilityRole="radio"
+                              aria-checked={selected}
                               accessibilityState={{
                                 checked: selected,
                                 disabled: !allowed || Boolean(busyKey),

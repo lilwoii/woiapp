@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router } from 'expo-router';
 import { PropsWithChildren } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { BrandMark } from '@/components/brand-mark';
 import { PageShell } from '@/components/page-shell';
@@ -46,13 +46,14 @@ export function InfoSection({
   title,
   children,
 }: PropsWithChildren<{ icon: keyof typeof FontAwesome6.glyphMap; title: string }>) {
+  const webHeadingLevel = Platform.OS === 'web' ? ({ 'aria-level': 2 } as const) : {};
   return (
     <View style={styles.section}>
       <View style={styles.sectionIcon}>
         <FontAwesome6 color={palette.accentDeep} name={icon} size={14} />
       </View>
       <View style={styles.sectionCopy}>
-        <Text accessibilityRole="header" style={styles.sectionTitle}>
+        <Text accessibilityRole="header" {...webHeadingLevel} style={styles.sectionTitle}>
           {title}
         </Text>
         <Text style={styles.sectionBody}>{children}</Text>

@@ -70,7 +70,10 @@ production-config verification, web build, and a high-severity production
 dependency audit on Node 22.13.1. A passing workflow proves only those checks on
 that commit. The web build also fails when required routes, zoomable viewport
 metadata, main/H1 semantics, semantic focus targets, reduced-motion CSS, source-map
-exclusion, or compressed JavaScript/CSS/HTML budgets regress.
+exclusion, or compressed JavaScript/CSS/HTML budgets regress. Chromium acceptance
+then exercises serious WCAG violations, route focus/title behavior, bounded keyboard
+traversal, mobile overflow, and minimum primary-control target size against that
+exact generated artifact.
 
 Required independent evidence before public launch:
 
@@ -100,6 +103,12 @@ not just the file:
   decision; photo reviews additionally require every derivative to be clean and
   approved, while reports/blocks affect public reads;
 - rate limits and idempotency behave correctly under concurrency.
+
+CI runs its PostgreSQL fixture, migration, and RLS test through
+`psql -X -v ON_ERROR_STOP=1 -1` and first proves that an intentional
+middle-statement error is
+fatal. This closes false-green SQL execution; it does not replace the full fresh-project
+migration-chain and staging acceptance required below.
 
 Then apply the reviewed map, provider-ingest, and chat migrations in timestamp
 order. The chat migration requires participant/RLS, Realtime authorization,

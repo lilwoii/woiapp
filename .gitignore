@@ -42,6 +42,8 @@ yarn-error.*
 
 # generated test reports
 coverage/
+playwright-report/
+test-results/
 .tmp-pglast/
 dist-ios/
 dist-android/

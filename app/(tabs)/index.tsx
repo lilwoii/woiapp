@@ -484,6 +484,7 @@ export default function DiscoverScreen() {
               <Pressable
                 accessibilityLabel={item.label}
                 accessibilityRole="radio"
+                aria-checked={active}
                 accessibilityState={{ checked: active }}
                 key={item.id}
                 onPress={() => setCategory(item.id)}
@@ -504,6 +505,7 @@ export default function DiscoverScreen() {
             {sortModes.map((mode) => (
               <Pressable
                 accessibilityRole="radio"
+                aria-checked={sortMode === mode.id}
                 accessibilityState={{ checked: sortMode === mode.id }}
                 key={mode.id}
                 onPress={() => setSortMode(mode.id)}
@@ -515,6 +517,7 @@ export default function DiscoverScreen() {
           <View style={styles.filterActions}>
             <Pressable
               accessibilityRole="checkbox"
+              aria-checked={openOnly}
               accessibilityState={{ checked: openOnly }}
               onPress={() => setOpenOnly((current) => !current)}
               style={[styles.openFilter, openOnly && styles.openFilterActive]}>
@@ -574,6 +577,7 @@ export default function DiscoverScreen() {
                     return (
                       <Pressable
                         accessibilityRole="radio"
+                        aria-checked={selectedCuisine}
                         accessibilityState={{ checked: selectedCuisine }}
                         key={facet.label}
                         onPress={() => setCuisine(selectedCuisine ? null : facet.label)}
@@ -597,6 +601,7 @@ export default function DiscoverScreen() {
                     return (
                       <Pressable
                         accessibilityRole="checkbox"
+                        aria-checked={selectedOption}
                         accessibilityState={{ checked: selectedOption }}
                         key={option}
                         onPress={() => toggleSelection(option, dietary, setDietary)}
@@ -615,6 +620,7 @@ export default function DiscoverScreen() {
                     return (
                       <Pressable
                         accessibilityRole="checkbox"
+                        aria-checked={selectedOption}
                         accessibilityState={{ checked: selectedOption }}
                         key={option}
                         onPress={() => toggleSelection(option, payments, setPayments)}
@@ -634,6 +640,7 @@ export default function DiscoverScreen() {
                   {distanceOptions.map((miles) => (
                     <Pressable
                       accessibilityRole="radio"
+                      aria-checked={maxDistanceMiles === miles}
                       accessibilityState={{ checked: maxDistanceMiles === miles }}
                       key={miles}
                       onPress={() => setMaxDistanceMiles(maxDistanceMiles === miles ? null : miles)}
@@ -649,6 +656,7 @@ export default function DiscoverScreen() {
                   {ratingOptions.map((rating) => (
                     <Pressable
                       accessibilityRole="radio"
+                      aria-checked={minimumRating === rating}
                       accessibilityState={{ checked: minimumRating === rating }}
                       key={rating}
                       onPress={() => setMinimumRating(minimumRating === rating ? 0 : rating)}
@@ -670,6 +678,7 @@ export default function DiscoverScreen() {
                       <Pressable
                         accessibilityLabel={`${level} dollar price level`}
                         accessibilityRole="checkbox"
+                        aria-checked={selectedLevel}
                         accessibilityState={{ checked: selectedLevel }}
                         key={level}
                         onPress={() => toggleSelection(level, priceLevels, setPriceLevels)}
@@ -683,6 +692,7 @@ export default function DiscoverScreen() {
               <Pressable
                 accessibilityLabel="Pickup available"
                 accessibilityRole="checkbox"
+                aria-checked={pickupOnly}
                 accessibilityState={{ checked: pickupOnly }}
                 onPress={() => setPickupOnly((current) => !current)}
                 style={[styles.pickupFilter, pickupOnly && styles.pickupFilterActive]}>

@@ -554,6 +554,7 @@ export default function StudioScreen() {
               return (
                 <Pressable
                   accessibilityRole="radio"
+                  aria-checked={selected}
                   accessibilityState={{ checked: selected }}
                   key={business.id}
                   onPress={() => {
@@ -711,6 +712,7 @@ export default function StudioScreen() {
                   return (
                     <Pressable
                       accessibilityRole="radio"
+                      aria-checked={active}
                       accessibilityState={{ checked: active }}
                       key={type.id}
                       onPress={() => {
@@ -1154,6 +1156,7 @@ export default function StudioScreen() {
                         return (
                           <Pressable
                             accessibilityRole="radio"
+                            aria-checked={selected}
                             accessibilityState={{
                               checked: selected,
                               disabled:

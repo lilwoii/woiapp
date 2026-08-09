@@ -128,6 +128,7 @@ export default function ResetPasswordScreen() {
             </View>
             <Pressable
               accessibilityRole="checkbox"
+              aria-checked={visible}
               accessibilityState={{ checked: visible }}
               onPress={() => setVisible((current) => !current)}
               style={styles.showRow}>

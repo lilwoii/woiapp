@@ -514,6 +514,7 @@ export default function BusinessOnboardingScreen() {
                 <View style={styles.modeRow}>
                   <Pressable
                     accessibilityRole="radio"
+                    aria-checked={!claimExisting}
                     accessibilityState={{ checked: !claimExisting }}
                     onPress={() => setClaimExisting(false)}
                     style={[styles.modeOption, !claimExisting && styles.modeOptionActive]}>
@@ -521,6 +522,7 @@ export default function BusinessOnboardingScreen() {
                   </Pressable>
                   <Pressable
                     accessibilityRole="radio"
+                    aria-checked={claimExisting}
                     accessibilityState={{ checked: claimExisting }}
                     onPress={() => {
                       setClaimExisting(true);
@@ -589,6 +591,7 @@ export default function BusinessOnboardingScreen() {
                       return (
                         <Pressable
                           accessibilityRole="radio"
+                          aria-checked={selected}
                           accessibilityState={{ checked: selected }}
                           key={place.id}
                           onPress={() => {
@@ -668,6 +671,7 @@ export default function BusinessOnboardingScreen() {
                     ).map(([id, label]) => (
                       <Pressable
                         accessibilityRole="radio"
+                        aria-checked={claimMethod === id}
                         accessibilityState={{ checked: claimMethod === id }}
                         key={id}
                         onPress={() => setClaimMethod(id)}
@@ -689,6 +693,7 @@ export default function BusinessOnboardingScreen() {
                 {claimExisting ? (
                   <Pressable
                     accessibilityRole="checkbox"
+                    aria-checked={accuracyConfirmed}
                     accessibilityState={{ checked: accuracyConfirmed }}
                     onPress={() => setAccuracyConfirmed((current) => !current)}
                     style={styles.confirmRow}>
@@ -883,6 +888,7 @@ export default function BusinessOnboardingScreen() {
 
                 <Pressable
                   accessibilityRole="checkbox"
+                  aria-checked={accuracyConfirmed}
                   accessibilityState={{ checked: accuracyConfirmed }}
                   onPress={() => setAccuracyConfirmed((current) => !current)}
                   style={styles.confirmRow}>
