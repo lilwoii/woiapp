@@ -328,8 +328,9 @@ error codes and intentionally logs none of those values.
   hash detection, PostGIS materialization, and query plans at the contractual
   maximum batch size. Static SQL assertions are not a substitute for those
   database tests.
-- `supabase/config.toml` and the server environment example still need the
-  deployment entries above after migration approval.
+- `supabase/config.toml` delegates gateway authentication to the checked-in HMAC
+  contract. The server environment and provider-specific secrets still require
+  controlled production configuration after migration approval.
 - No provider is configured or licensed, and no provider data ships with this
   scaffold.
 - The database bucket is the global authority for committed apply/replay

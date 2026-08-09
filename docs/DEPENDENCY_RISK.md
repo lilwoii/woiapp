@@ -27,6 +27,13 @@ Until upstream Expo/Metro publishes a compatible fix:
 - rerun `npm audit`, Expo compatibility checks, native builds, and the full
   release suite before removing this exception.
 
+`npm run verify:build-assets` now enforces the repository-controlled portion of
+this mitigation before Metro runs: only approved project asset types, bounded
+file and raster sizes, valid PNG/font/manifest signatures, safe path segments,
+and no symlinks. Its regression tests include the affected parser-risk
+extensions. This narrows the attack surface but does not patch Metro's transitive
+parser; the exception remains open.
+
 `brace-expansion` was separately overridden to fixed version `5.0.9`; do not
 roll that override back. Never run `npm audit fix --force` here: its current
 proposal replaces the SDK with incompatible major versions.

@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.media-cleanup]
 verify_jwt = false
+
+[functions.provider-ingest]
+verify_jwt = false

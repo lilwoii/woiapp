@@ -1,0 +1,34 @@
+name: Production maintenance
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: spottr-production-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SPOTTR_MAINTENANCE_SUPABASE_URL: ${{ secrets.SPOTTR_MAINTENANCE_SUPABASE_URL }}
+      SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY: ${{ secrets.SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY }}
+      SPOTTR_ACCOUNT_DELETE_WORKER_SECRET: ${{ secrets.SPOTTR_ACCOUNT_DELETE_WORKER_SECRET }}
+      SPOTTR_MEDIA_CLEANUP_SECRET: ${{ secrets.SPOTTR_MEDIA_CLEANUP_SECRET }}
+      SPOTTR_MAINTENANCE_HEARTBEAT_URL: ${{ secrets.SPOTTR_MAINTENANCE_HEARTBEAT_URL }}
+    steps:
+      - name: Check out exact maintenance source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+
+      - name: Run bounded deletion, media, and privacy cleanup
+        run: node scripts/production-maintenance.mjs

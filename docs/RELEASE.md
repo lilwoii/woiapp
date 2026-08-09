@@ -52,8 +52,6 @@ Run from a clean checkout with the lockfile:
 npm ci
 npm run validate
 npm audit --omit=dev --audit-level=high
-npx expo export --platform ios
-npx expo export --platform android
 ```
 
 Record:
@@ -133,6 +131,10 @@ plus scanner grace (or invalidate them), apply the migrations, deploy all
 matching functions, configure the internal deletion worker on a five-minute or
 shorter schedule, refresh the PostgREST schema cache, and run the concurrency
 evidence in [MEDIA_LIFECYCLE.md](MEDIA_LIFECYCLE.md) before resuming workers.
+Use the executable schedule and activation evidence in
+[PRODUCTION_MAINTENANCE.md](PRODUCTION_MAINTENANCE.md); the committed workflow is
+not acceptance evidence until its production secrets, heartbeat, and failure alert
+are verified.
 The media functions may be deployed while their gates remain false; deployment
 does not authorize uploads.
 

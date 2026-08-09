@@ -95,7 +95,15 @@ Deno.test("validates and normalizes a complete licensed-provider batch", () => {
   assertEquals(batch.records.length, 1);
   assertEquals(batch.records[0].status, "active");
   if (batch.records[0].status === "active") {
-    assertEquals(batch.records[0].weeklyHours.map((row) => row.weekday), [0, 1, 2, 3, 4, 5, 6]);
+    assertEquals(batch.records[0].weeklyHours.map((row) => row.weekday), [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+    ]);
     assertEquals(batch.records[0].menu?.sections[0].items[0].priceMinor, 1450);
   }
 });
@@ -110,7 +118,9 @@ Deno.test("rejects unknown fields, home kitchens, invalid coordinates, and ambig
   );
 
   const homeKitchen = structuredClone(validBatch());
-  const homeKitchenRecords = homeKitchen.records as Array<Record<string, unknown>>;
+  const homeKitchenRecords = homeKitchen.records as Array<
+    Record<string, unknown>
+  >;
   homeKitchenRecords[0].kind = "home_kitchen";
   assertThrows(
     () => validateProviderBatch(homeKitchen, "licensed_vendor", NOW),
@@ -119,7 +129,9 @@ Deno.test("rejects unknown fields, home kitchens, invalid coordinates, and ambig
   );
 
   const invalidCoordinate = structuredClone(validBatch());
-  const invalidCoordinateRecords = invalidCoordinate.records as Array<Record<string, unknown>>;
+  const invalidCoordinateRecords = invalidCoordinate.records as Array<
+    Record<string, unknown>
+  >;
   const invalidLocations = invalidCoordinateRecords[0].locations as Array<
     Record<string, unknown>
   >;
@@ -132,8 +144,12 @@ Deno.test("rejects unknown fields, home kitchens, invalid coordinates, and ambig
   );
 
   const ambiguousHours = structuredClone(validBatch());
-  const ambiguousRecords = ambiguousHours.records as Array<Record<string, unknown>>;
-  const ambiguousSchedule = ambiguousRecords[0].weeklyHours as Array<Record<string, unknown>>;
+  const ambiguousRecords = ambiguousHours.records as Array<
+    Record<string, unknown>
+  >;
+  const ambiguousSchedule = ambiguousRecords[0].weeklyHours as Array<
+    Record<string, unknown>
+  >;
   ambiguousSchedule[1] = {
     weekday: 1,
     status: "open",
@@ -224,7 +240,9 @@ Deno.test("provider key registry requires provider-specific base64url secrets of
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/u, "");
-  const registry = JSON.stringify({ licensed_vendor: { "primary-2026": encoded } });
+  const registry = JSON.stringify({
+    licensed_vendor: { "primary-2026": encoded },
+  });
   assertEquals(
     providerSecret(registry, "licensed_vendor", "primary-2026"),
     new Uint8Array(32).fill(11),
@@ -267,4 +285,13 @@ Deno.test("edge entrypoint stays fail-closed and never performs direct table wri
   assert(!source.includes(".upsert("));
   assert(!source.includes("console.log"));
   assert(!source.includes("console.error"));
+});
+Deno.test("provider gateway delegates authentication to the HMAC contract", async () => {
+  const config = await Deno.readTextFile(
+    new URL("../config.toml", import.meta.url),
+  );
+  const section = config.match(
+    /\[functions\.provider-ingest\]\s+verify_jwt\s*=\s*(true|false)/,
+  );
+  assertEquals(section?.[1], "false");
 });

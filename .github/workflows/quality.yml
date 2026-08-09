@@ -64,6 +64,12 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Reject parser-risk and malformed build assets
+        run: npm run verify:build-assets
+
+      - name: Test build-asset verifier
+        run: npm run test:build-asset-tools
+
       - name: Verify Expo dependency alignment
         run: npx expo install --check
 
@@ -84,6 +90,12 @@ jobs:
 
       - name: Check Expo project health
         run: npx expo-doctor
+
+      - name: Test native release verifier
+        run: npm run test:native-release-tools
+
+      - name: Verify native config and export iOS and Android bundles
+        run: npm run verify:native-release
 
       - name: Verify production configuration fails closed
         run: npm run verify:production-config
