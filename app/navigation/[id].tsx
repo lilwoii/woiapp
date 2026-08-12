@@ -40,7 +40,7 @@ export default function NavigationScreen() {
   const auth = useAuth();
   const { ensurePlace, places } = useMarketplaceStore();
   const place = places.find((entry) => entry.id === placeId);
-  const [loadingPlace, setLoadingPlace] = useState(!place);
+  const [placeRequestPending, setPlaceRequestPending] = useState(Boolean(placeId && !place));
   const [route, setRoute] = useState<RoutePlan | null>(null);
   const [routeVisible, setRouteVisible] = useState(true);
   const [mode, setMode] = useState<TravelMode | null>(null);
@@ -55,14 +55,11 @@ export default function NavigationScreen() {
   const rerouteInFlight = useRef(false);
 
   useEffect(() => {
-    if (!placeId || place) {
-      setLoadingPlace(false);
-      return;
-    }
+    if (!placeId || place) return;
     let active = true;
     void ensurePlace(placeId).then((result) => {
       if (!active) return;
-      setLoadingPlace(false);
+      setPlaceRequestPending(false);
       if (!result.ok) setMessage(result.reason);
     });
     return () => { active = false; };
@@ -177,7 +174,7 @@ export default function NavigationScreen() {
     void Linking.openURL(url);
   };
 
-  if (loadingPlace || auth.status === 'loading') {
+  if ((!place && placeRequestPending) || auth.status === 'loading') {
     return <View role="main" style={styles.center}><ActivityIndicator color={palette.accentDeep} /><Text style={styles.centerText}>Preparing navigation…</Text></View>;
   }
   if (!place) {
