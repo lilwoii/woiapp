@@ -264,8 +264,9 @@ export default function NavigationScreen() {
               <View accessibilityRole="radiogroup" style={styles.modeRow}>
                 {travelModes.map((item) => (
                   <Pressable
+                    aria-checked={false}
                     accessibilityRole="radio"
-                    accessibilityState={{ checked: false, disabled: busy }}
+                    accessibilityState={{ disabled: busy }}
                     disabled={busy}
                     key={item.id}
                     onPress={() => void startNavigation(item.id)}

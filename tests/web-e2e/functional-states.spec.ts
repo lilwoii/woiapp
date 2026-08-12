@@ -112,8 +112,6 @@ test('authenticated foreground navigation draws a provider route and remains use
   const fixture = fixtureObservations.get(page);
   expect(fixture).toBeDefined();
   await signInThroughUi(page, 'customer');
-  await context.grantPermissions(['geolocation'], { origin: fixtureAppOrigin });
-  await context.setGeolocation({ latitude: 34.0522, longitude: -118.2437 });
   await page.goto(`${fixtureAppOrigin}/place/${fixture?.ids.business}`, { waitUntil: 'networkidle' });
 
   await page.getByRole('button', { name: 'Navigate in Spottr' }).click();
@@ -121,6 +119,8 @@ test('authenticated foreground navigation draws a provider route and remains use
   await expect(page.getByText(/sends your selected starting point and this public destination to Mapbox/i)).toBeVisible();
   expect(fixture?.routeRequests).toHaveLength(0);
 
+  await context.grantPermissions(['geolocation'], { origin: fixtureAppOrigin });
+  await context.setGeolocation({ latitude: 34.0522, longitude: -118.2437 });
   await page.getByRole('radio', { name: 'Walk' }).click();
   await expect.poll(() => fixture?.routeRequests.length ?? 0).toBe(1);
   expect(fixture?.routeRequests[0]).toEqual({
