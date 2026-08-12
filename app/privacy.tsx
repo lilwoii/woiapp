@@ -10,6 +10,11 @@ export default function PrivacyScreen() {
         Spottr asks for location only while the app is open. If you choose “Use my location,” precise coordinates are
         sent over an encrypted connection to calculate distance-ranked results. You can search by city or ZIP instead.
       </InfoSection>
+      <InfoSection icon="route" title="Routes use a navigation provider">
+        If you explicitly start in-app navigation, Spottr sends your selected starting point, public destination,
+        and travel mode to Mapbox to calculate the route. Spottr does not attach that route to your profile and
+        stops live updates when the app leaves the foreground. You can use your device’s maps app instead.
+      </InfoSection>
       <InfoSection icon="house-lock" title="Home kitchens stay approximate">
         When legally enabled, public results show only a reviewed service area. Residential addresses and raw residence
         coordinates never appear in public APIs, map pins, or notifications.

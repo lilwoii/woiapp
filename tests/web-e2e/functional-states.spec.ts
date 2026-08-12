@@ -107,3 +107,35 @@ test('authenticated chat lists a private conversation with unread state', async 
   await expect(page.getByText('2', { exact: true })).toBeVisible();
   await expectNoSeriousAxeViolations(page);
 });
+
+test('authenticated foreground navigation draws a provider route and remains user-controlled', async ({ context, page }) => {
+  const fixture = fixtureObservations.get(page);
+  expect(fixture).toBeDefined();
+  await context.grantPermissions(['geolocation'], { origin: fixtureAppOrigin });
+  await context.setGeolocation({ latitude: 34.0522, longitude: -118.2437 });
+  await signInThroughUi(page, 'customer');
+  await page.goto(`${fixtureAppOrigin}/place/${fixture?.ids.business}`, { waitUntil: 'networkidle' });
+
+  await page.getByRole('button', { name: 'Navigate in Spottr' }).click();
+  await expect(page).toHaveURL(`${fixtureAppOrigin}/navigation/${fixture?.ids.business}`);
+  await expect(page.getByText(/sends your selected starting point and this public destination to Mapbox/i)).toBeVisible();
+  expect(fixture?.routeRequests).toHaveLength(0);
+
+  await page.getByRole('radio', { name: 'Walk' }).click();
+  await expect.poll(() => fixture?.routeRequests.length ?? 0).toBe(1);
+  expect(fixture?.routeRequests[0]).toEqual({
+    origin: { latitude: 34.0522, longitude: -118.2437 },
+    destination: { latitude: 34.0355, longitude: -118.2324 },
+    mode: 'walk',
+  });
+  await expect(page.getByText('Head southeast toward the Arts District')).toBeVisible();
+  await expect(page.getByText('26 min · 1.3 mi')).toBeVisible();
+  await expect(page.locator('.maplibregl-marker[aria-label="Your live walk position"]')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Hide route' })).toBeVisible();
+  await page.getByRole('button', { name: 'Hide route' }).click();
+  await expect(page.getByRole('button', { name: 'Show route' })).toBeVisible();
+  await page.getByRole('button', { name: 'Stop tracking' }).click();
+  await expect(page.getByText('Live tracking stopped.')).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Walk' })).toBeVisible();
+  await expectNoSeriousAxeViolations(page);
+});

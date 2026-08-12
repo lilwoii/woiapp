@@ -445,7 +445,7 @@ export default function PlaceDetailScreen() {
               <Text style={styles.primaryActionText}>Pickup pilot</Text>
             </Pressable>
           ) : null}
-          {canOpenPublicDirections ? (
+          {canOpenPublicDirections && featureFlags.inAppNavigation ? (
             <Pressable accessibilityLabel="Navigate in Spottr" accessibilityRole="button" onPress={openSpottrNavigation} style={styles.primaryAction}>
               <FontAwesome6 color="#FFFFFF" name="diamond-turn-right" size={14} />
               <Text style={styles.primaryActionText}>Navigate in Spottr</Text>

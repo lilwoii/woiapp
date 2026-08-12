@@ -5,6 +5,8 @@ import { haversineMeters, validateRouteRequest } from '../functions/route-plan/c
 const index = await Deno.readTextFile(new URL('../functions/route-plan/index.ts', import.meta.url));
 const migration = await Deno.readTextFile(new URL('../migrations/20260819000000_route_plan_quota.sql', import.meta.url));
 const config = await Deno.readTextFile(new URL('../config.toml', import.meta.url));
+const navigationScreen = await Deno.readTextFile(new URL('../../app/navigation/[id].tsx', import.meta.url));
+const clientEnvironment = await Deno.readTextFile(new URL('../../.env.example', import.meta.url));
 
 Deno.test('route requests are bounded to explicit supported modes and nearby coordinates', () => {
   const request = validateRouteRequest({
@@ -28,4 +30,9 @@ Deno.test('routing token stays server-side and requests are authenticated and ra
   assertMatch(migration, /private\.consume_rate_limit\(actor, 'route_plan', 30, 900\)/);
   assertMatch(migration, /grant execute on function public\.consume_route_plan_quota\(\) to authenticated/);
   assertMatch(config, /\[functions\.route-plan\][\s\S]*verify_jwt = true/);
+  assertMatch(clientEnvironment, /EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED=false/);
+  assertMatch(navigationScreen, /requestForegroundPermissionsAsync/);
+  assert(!navigationScreen.includes('requestBackgroundPermissionsAsync'));
+  assert(!navigationScreen.includes('startLocationUpdatesAsync'));
+  assertMatch(navigationScreen, /sends your selected starting point and this public destination to Mapbox/);
 });

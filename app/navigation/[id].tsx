@@ -19,6 +19,7 @@ import { LiveMap } from '@/components/live-map';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
+import { featureFlags } from '@/lib/features';
 import {
   formatRouteDistance,
   formatRouteDuration,
@@ -190,6 +191,18 @@ export default function NavigationScreen() {
       </View>
     );
   }
+  if (!featureFlags.inAppNavigation) {
+    return (
+      <View role="main" style={styles.center}>
+        <FontAwesome6 color={palette.accentDeep} name="route" size={26} />
+        <Text accessibilityRole="header" style={styles.centerTitle}>Spottr navigation is not available yet.</Text>
+        <Text style={styles.centerText}>You can still open this public destination in your device’s maps app.</Text>
+        <Pressable accessibilityRole="link" onPress={openExternalMaps} style={styles.darkButton}>
+          <Text style={styles.darkButtonText}>Open in Maps</Text>
+        </Pressable>
+      </View>
+    );
+  }
   if (auth.status !== 'authenticated') {
     return (
       <View role="main" style={styles.center}>
@@ -247,6 +260,7 @@ export default function NavigationScreen() {
           {!mode ? (
             <>
               <Text style={styles.controlHeading}>Choose how you’re traveling</Text>
+              <Text style={styles.providerNotice}>Starting navigation sends your selected starting point and this public destination to Mapbox to calculate a route. Spottr does not save your route to your profile.</Text>
               <View accessibilityRole="radiogroup" style={styles.modeRow}>
                 {travelModes.map((item) => (
                   <Pressable
@@ -298,6 +312,7 @@ const styles = StyleSheet.create({
   mapFrame: { backgroundColor: '#E9EAE3', minHeight: 470 },
   controlsArea: { backgroundColor: palette.surface, borderTopColor: palette.line, borderTopWidth: 1, gap: 14, padding: spacing.lg },
   controlHeading: { color: palette.ink, fontSize: 13, fontWeight: '900' },
+  providerNotice: { color: palette.muted, fontSize: 11, lineHeight: 17, maxWidth: 760 },
   modeRow: { flexDirection: 'row', gap: 10 },
   modeButton: { alignItems: 'center', backgroundColor: palette.bg, borderColor: palette.line, borderRadius: radii.md, borderWidth: 1, flex: 1, gap: 7, justifyContent: 'center', minHeight: 64 },
   modeText: { color: palette.ink, fontSize: 11, fontWeight: '900' },

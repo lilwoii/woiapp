@@ -24,7 +24,7 @@ Required client-visible production values:
 - `EXPO_PUBLIC_MAP_ATTRIBUTION_URL`
 
 `EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY` is optional for the current iOS map provider.
-All three feature gates in [.env.example](../.env.example) remain false until
+All client feature gates in [.env.example](../.env.example) remain false until
 their separate acceptance evidence exists.
 
 Configure Sites Worker values through Sites:
@@ -160,7 +160,8 @@ are verified.
 The media functions may be deployed while their gates remain false; deployment
 does not authorize uploads.
 
-Keep `SPOTTR_ROUTING_ENABLED=false` until the server-only
+Keep `EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED=false` and
+`SPOTTR_ROUTING_ENABLED=false` until the server-only
 `MAPBOX_DIRECTIONS_TOKEN` is restricted to the Directions API, provider billing
 alerts and hard quotas are active, the 30-request/15-minute user quota is
 verified, and authenticated staging tests cover drive, walk, bike, no-route,

@@ -302,6 +302,7 @@ export async function installSpottrFixture(page: Page) {
   const unexpected: string[] = [];
   const calls: string[] = [];
   const mapRequests: Record<string, unknown>[] = [];
+  const routeRequests: Record<string, unknown>[] = [];
   const realtimeMessages: string[] = [];
   let realtimeConnections = 0;
 
@@ -431,6 +432,47 @@ export async function installSpottrFixture(page: Page) {
       return;
     }
 
+    if (url.pathname === '/functions/v1/route-plan' && method === 'POST') {
+      const role = roleFromRequest(route);
+      const body = postBody(route);
+      const keys = Object.keys(body).sort().join(',');
+      const origin = body.origin as Record<string, unknown> | undefined;
+      const destination = body.destination as Record<string, unknown> | undefined;
+      if (
+        role !== 'customer' || keys !== 'destination,mode,origin' || body.mode !== 'walk' ||
+        origin?.latitude !== 34.0522 || origin.longitude !== -118.2437 ||
+        destination?.latitude !== location.latitude || destination.longitude !== location.longitude
+      ) {
+        unexpected.push(`${label} carried an invalid authenticated route request`);
+        await json(route, { message: 'Invalid fixture route request' }, 400);
+        return;
+      }
+      routeRequests.push(body);
+      const generatedAt = new Date();
+      await json(route, {
+        provider: 'mapbox',
+        mode: 'walk',
+        distanceMeters: 2_140,
+        durationSeconds: 1_560,
+        coordinates: [
+          { latitude: 34.0522, longitude: -118.2437 },
+          { latitude: 34.044, longitude: -118.238 },
+          { latitude: location.latitude, longitude: location.longitude },
+        ],
+        steps: [{
+          instruction: 'Head southeast toward the Arts District',
+          distanceMeters: 2_140,
+          durationSeconds: 1_560,
+          maneuver: { latitude: 34.044, longitude: -118.238 },
+        }],
+        attribution: '© Mapbox',
+        attributionUrl: 'https://www.mapbox.com/about/maps/',
+        generatedAt: generatedAt.toISOString(),
+        expiresAt: new Date(generatedAt.getTime() + 5 * 60_000).toISOString(),
+      });
+      return;
+    }
+
     if (url.pathname.startsWith('/rest/v1/rpc/')) {
       const rpc = url.pathname.slice('/rest/v1/rpc/'.length);
       const role = roleFromRequest(route);
@@ -531,6 +573,7 @@ export async function installSpottrFixture(page: Page) {
     calls,
     ids,
     mapRequests,
+    routeRequests,
     realtimeMessages,
     get realtimeConnections() { return realtimeConnections; },
     unexpected,
