@@ -43,7 +43,9 @@ Deno.test('pickup, catalog, capacity, and fulfillment invariants fail closed', (
 
 Deno.test('order reads use opaque IDs and participant-scoped projections', () => {
   assertMatch(sql, /public_id uuid not null default gen_random_uuid\(\) unique/);
-  assertMatch(sql, /private\.order_access_allowed\(o\.id, auth\.uid\(\)\)/);
+  assertMatch(sql, /private\.order_access_allowed\(o\.id\)/);
+  assertMatch(sql, /grant execute on function private\.order_access_allowed\(uuid\) to authenticated/);
+  assertMatch(sql, /o\.customer_id = auth\.uid\(\)/);
   assertMatch(sql, /create policy "order participants read orders"/);
   assertMatch(sql, /create or replace function public\.get_business_shadow_order_queue/);
   assertMatch(sql, /perform private\.require_aal2\(\)/);

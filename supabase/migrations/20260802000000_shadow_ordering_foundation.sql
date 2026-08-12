@@ -312,13 +312,13 @@ drop trigger if exists order_events_append_only on public.order_events;
 create trigger order_events_append_only before update or delete on public.order_events
 for each row execute function private.prevent_order_snapshot_mutation();
 
-create or replace function private.order_access_allowed(target_order_id uuid, target_user_id uuid)
+create or replace function private.order_access_allowed(target_order_id uuid)
 returns boolean language sql stable security definer set search_path = '' as $$
-  select exists (
+  select auth.uid() is not null and exists (
     select 1 from public.orders o where o.id = target_order_id and (
-      o.customer_id = target_user_id
-      or private.is_business_member(o.business_id, target_user_id)
-      or private.is_platform_staff(target_user_id)
+      o.customer_id = auth.uid()
+      or private.is_business_member(o.business_id, auth.uid())
+      or private.is_platform_staff(auth.uid())
     )
   );
 $$;
@@ -566,7 +566,7 @@ returns jsonb language sql stable security definer set search_path = '' as $$
       'created_at', oe.created_at
     ) order by oe.event_version) from public.order_events oe where oe.order_id = o.id), '[]'::jsonb)
   ) from public.orders o where o.public_id = target_order_public_id
-    and private.order_access_allowed(o.id, auth.uid());
+    and private.order_access_allowed(o.id);
 $$;
 
 create or replace function public.get_business_shadow_order_queue(
@@ -689,15 +689,15 @@ create policy "members read order options" on public.order_option_versions for s
 create policy "members read capacity" on public.order_capacity_slots
   for select to authenticated using (private.is_business_member(business_id, auth.uid()));
 create policy "order participants read orders" on public.orders
-  for select to authenticated using (private.order_access_allowed(id, auth.uid()));
+  for select to authenticated using (private.order_access_allowed(id));
 create policy "order participants read items" on public.order_items
-  for select to authenticated using (private.order_access_allowed(order_id, auth.uid()));
+  for select to authenticated using (private.order_access_allowed(order_id));
 create policy "order participants read options" on public.order_item_options for select to authenticated using (exists (
   select 1 from public.order_items oi where oi.id = order_item_id
-    and private.order_access_allowed(oi.order_id, auth.uid())
+    and private.order_access_allowed(oi.order_id)
 ));
 create policy "order participants read events" on public.order_events
-  for select to authenticated using (private.order_access_allowed(order_id, auth.uid()));
+  for select to authenticated using (private.order_access_allowed(order_id));
 
 revoke all on public.business_order_settings, public.order_catalog_versions,
   public.order_item_versions, public.order_option_groups, public.order_option_versions,
@@ -718,6 +718,7 @@ grant execute on function public.get_business_shadow_order_queue(uuid, integer) 
 revoke all on function private.prevent_published_order_catalog_mutation() from public, anon, authenticated;
 revoke all on function private.require_order_catalog_draft() from public, anon, authenticated;
 revoke all on function private.prevent_order_snapshot_mutation() from public, anon, authenticated;
-revoke all on function private.order_access_allowed(uuid, uuid) from public, anon, authenticated;
+revoke all on function private.order_access_allowed(uuid) from public, anon, authenticated;
+grant execute on function private.order_access_allowed(uuid) to authenticated;
 revoke all on function private.order_idempotent_response(uuid, text, text, text) from public, anon, authenticated;
 revoke all on function private.expire_shadow_orders(integer) from public, anon, authenticated;
