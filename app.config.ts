@@ -103,6 +103,11 @@ export default () => {
                   {
                     scheme: 'https',
                     host: universalLinkHost,
+                    pathPrefix: '/navigation',
+                  },
+                  {
+                    scheme: 'https',
+                    host: universalLinkHost,
                     pathPrefix: '/auth',
                   },
                   {

@@ -186,6 +186,10 @@ export default {
       response = await fetchAsset(env, request, '/place/[id].html');
     }
 
+    if (response.status === 404 && url.pathname.startsWith('/navigation/')) {
+      response = await fetchAsset(env, request, '/navigation/[id].html');
+    }
+
     if (response.status === 404) {
       response = await fetchAsset(env, request, '/+not-found.html');
       response = new Response(response.body, {

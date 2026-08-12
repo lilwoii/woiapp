@@ -42,7 +42,7 @@ async function resolveRequest(pathname) {
   const candidates = path.extname(clean)
     ? [clean]
     : [`${clean}.html`, `${clean}/index.html`];
-  const dynamicMatch = clean.match(/^(place|order|messages)\/[^/]+$/);
+  const dynamicMatch = clean.match(/^(place|navigation|order|messages)\/[^/]+$/);
   if (dynamicMatch) candidates.push(`${dynamicMatch[1]}/[id].html`);
   for (const candidate of candidates) {
     const file = await existingFile(candidate);
