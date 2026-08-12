@@ -13,6 +13,11 @@ downgrade to Expo 53/React Native 0.72 and is not an acceptable security fix.
 This is an unresolved build-pipeline risk. It must not be presented as fixed or
 ignored merely because the parser is not bundled as application business logic.
 
+`npm run audit:production` fails on every new high or critical production
+finding. Its narrow exception permits only advisory IDs `1138808` and `1138809`
+and the known Expo/Metro dependency chain described here; a new advisory,
+package, affected edge, or any critical finding fails the release workflow.
+
 Until upstream Expo/Metro publishes a compatible fix:
 
 - run release builds in an isolated, disposable CI worker with no production

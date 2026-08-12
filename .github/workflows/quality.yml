@@ -73,7 +73,14 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/migrations/20260802000000_shadow_ordering_foundation.sql
 
       - name: Exercise ordering invariants and RLS
-        run: psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/tests/shadow_ordering_runtime_test.sql
+        run: |
+          if ! output=$(psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/tests/shadow_ordering_runtime_test.sql 2>&1); then
+            printf '%s\n' "$output"
+            excerpt=$(printf '%s' "$output" | tail -n 12 | tr '\n' ' ' | sed 's/%/%25/g')
+            printf '::error title=Shadow ordering runtime failed::%s\n' "$excerpt"
+            exit 1
+          fi
+          printf '%s\n' "$output"
 
   validate:
     runs-on: ubuntu-latest
@@ -143,4 +150,4 @@ jobs:
         run: npm run test:web-e2e
 
       - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+        run: npm run test:audit-tools && npm run audit:production

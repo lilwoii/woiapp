@@ -51,7 +51,7 @@ Run from a clean checkout with the lockfile:
 ```bash
 npm ci
 npm run validate
-npm audit --omit=dev --audit-level=high
+npm run audit:production
 ```
 
 Record:

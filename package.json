@@ -31,6 +31,8 @@
     "verify:native-artifacts": "node scripts/native-release-verifier.mjs --artifacts",
     "verify:native-release": "npm run verify:native-config && npm run export:ios && npm run export:android && npm run verify:native-artifacts",
     "test:maintenance-tools": "node --test scripts/production-maintenance.test.mjs",
+    "test:audit-tools": "node --test scripts/production-audit-gate.test.mjs",
+    "audit:production": "node scripts/production-audit-gate.mjs",
     "verify:build-assets": "node scripts/verify-build-assets.mjs",
     "test:build-asset-tools": "node --test scripts/verify-build-assets.test.mjs",
     "test:web-quality-tools": "node --test scripts/web-quality-verifier.test.mjs",
