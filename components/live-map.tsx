@@ -5,6 +5,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { palette, radii } from '@/constants/theme';
 import { Place } from '@/types/marketplace';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
+import type { NavigationCoordinate, TravelMode } from '@/types/navigation';
 
 type Props = {
   places: Place[];
@@ -15,6 +16,8 @@ type Props = {
   onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
   inventoryFeatures?: MapInventoryFeature[];
   userCoordinates?: { latitude: number; longitude: number } | null;
+  routeCoordinates?: NavigationCoordinate[];
+  navigationMode?: TravelMode;
 };
 
 const MapLibreMap = lazy(() => import('@/components/maplibre-map.web'));

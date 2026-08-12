@@ -21,6 +21,7 @@ const acceptanceRoutes = [
   '/studio',
   '/profile',
   '/place/acceptance-place',
+  '/navigation/acceptance-place',
   '/order/acceptance-order',
   '/messages',
   '/messages/acceptance-conversation',

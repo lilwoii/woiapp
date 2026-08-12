@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.provider-ingest]
 verify_jwt = false
+
+[functions.route-plan]
+verify_jwt = true

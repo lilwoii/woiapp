@@ -21,6 +21,7 @@ const REQUIRED_ROUTES = [
   'studio.html',
   'profile.html',
   'place/[id].html',
+  'navigation/[id].html',
   'messages/index.html',
   'messages/[id].html',
   'business-onboarding.html',

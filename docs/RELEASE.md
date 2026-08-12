@@ -144,6 +144,7 @@ Deploy and test:
 - `media-stage`
 - `media-scan`
 - `media-cleanup`
+- `route-plan`
 
 Migration `20260810000000_media_lifecycle_serialization.sql` and the last four
 functions above are one controlled release unit. Keep both media gates false,
@@ -158,6 +159,17 @@ not acceptance evidence until its production secrets, heartbeat, and failure ale
 are verified.
 The media functions may be deployed while their gates remain false; deployment
 does not authorize uploads.
+
+Keep `SPOTTR_ROUTING_ENABLED=false` until the server-only
+`MAPBOX_DIRECTIONS_TOKEN` is restricted to the Directions API, provider billing
+alerts and hard quotas are active, the 30-request/15-minute user quota is
+verified, and authenticated staging tests cover drive, walk, bike, no-route,
+timeout, malformed-provider, foreground pause/resume, Reduce Motion, and
+external-Maps fallback behavior. Never put the Directions token in an
+`EXPO_PUBLIC_*` value. Spottr does not expose in-app navigation to Neighborhood
+Kitchen residence locations, does not request background location, and does not
+offer a motorcycle mode because the selected provider has no motorcycle routing
+profile.
 
 Supabase production acceptance also requires verified-email policy, exact
 redirect allowlists, CAPTCHA/rate limits, breached-password protection where

@@ -59,6 +59,18 @@ Deno.test("shared HTTP layer never enables wildcard CORS", async () => {
   assert(shared.includes('"Cache-Control": "no-store"'));
 });
 
+Deno.test("route planning is authenticated, server-tokened, and disabled by default", async () => {
+  const source = await text("functions/route-plan/index.ts");
+  const env = await text("functions/.env.example");
+  const config = await text("config.toml");
+  assert(source.includes("authenticatedUser(request)"));
+  assert(source.includes("MAPBOX_DIRECTIONS_TOKEN"));
+  assert(source.includes("SPOTTR_ROUTING_ENABLED"));
+  assert(!source.includes("EXPO_PUBLIC_MAPBOX"));
+  assertMatch(env, /SPOTTR_ROUTING_ENABLED=false/);
+  assertMatch(config, /\[functions\.route-plan\]\s+verify_jwt = true/);
+});
+
 Deno.test("database mutation contracts are RPC-only and crash-safe", async () => {
   const schema = await text("schema.sql");
 

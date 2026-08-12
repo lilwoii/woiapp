@@ -172,6 +172,10 @@ export default function PlaceDetailScreen() {
     void Linking.openURL(url);
   };
 
+  const openSpottrNavigation = () => {
+    router.push({ pathname: '/navigation/[id]', params: { id: place.id } } as Href);
+  };
+
   const shareListing = async () => {
     const url = placeShareUrl(place.id);
     try {
@@ -442,9 +446,15 @@ export default function PlaceDetailScreen() {
             </Pressable>
           ) : null}
           {canOpenPublicDirections ? (
-            <Pressable accessibilityLabel="Get directions" accessibilityRole="button" onPress={openDirections} style={styles.primaryAction}>
+            <Pressable accessibilityLabel="Navigate in Spottr" accessibilityRole="button" onPress={openSpottrNavigation} style={styles.primaryAction}>
               <FontAwesome6 color="#FFFFFF" name="diamond-turn-right" size={14} />
-              <Text style={styles.primaryActionText}>Get directions</Text>
+              <Text style={styles.primaryActionText}>Navigate in Spottr</Text>
+            </Pressable>
+          ) : null}
+          {canOpenPublicDirections ? (
+            <Pressable accessibilityLabel="Open directions in external maps" accessibilityRole="link" onPress={openDirections} style={styles.secondaryAction}>
+              <FontAwesome6 color={palette.ink} name="arrow-up-right-from-square" size={13} />
+              <Text style={styles.secondaryActionText}>Open in Maps</Text>
             </Pressable>
           ) : null}
           {chatEligibleCategory && chatAvailable ? (

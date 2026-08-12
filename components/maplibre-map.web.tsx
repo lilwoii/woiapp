@@ -1,5 +1,5 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import maplibregl, { LngLatBounds, Map as MapLibreMap, Marker } from 'maplibre-gl';
+import maplibregl, { GeoJSONSource, LngLatBounds, Map as MapLibreMap, Marker } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -14,6 +14,7 @@ import {
 import { categoryMarkerLabel, mapCategoryPresentation } from '@/lib/map-presentation';
 import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
+import type { NavigationCoordinate, TravelMode } from '@/types/navigation';
 import { Place } from '@/types/marketplace';
 
 export type Props = {
@@ -25,6 +26,8 @@ export type Props = {
   onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
   inventoryFeatures?: MapInventoryFeature[];
   userCoordinates?: { latitude: number; longitude: number } | null;
+  routeCoordinates?: NavigationCoordinate[];
+  navigationMode?: TravelMode;
 };
 
 const fallbackCenter: [number, number] = [-118.2437, 34.0522];
@@ -225,6 +228,8 @@ export default function MapLibreMapView({
   onViewportChange,
   inventoryFeatures = [],
   userCoordinates,
+  routeCoordinates = [],
+  navigationMode,
 }: Props) {
   const containerRef = useRef<View | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -238,6 +243,7 @@ export default function MapLibreMapView({
   const onViewportChangeRef = useRef(onViewportChange);
   const fittedPlacesKey = useRef('');
   const userMarkerRef = useRef<Marker | null>(null);
+  const fittedRouteKey = useRef('');
   const initialPlaces = useRef(places);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -487,17 +493,63 @@ export default function MapLibreMapView({
     if (!map || !userCoordinates || !ready) return;
 
     const dot = document.createElement('div');
-    dot.setAttribute('aria-label', 'Your approximate current location');
+    dot.setAttribute('aria-label', navigationMode ? `Your live ${navigationMode} position` : 'Your approximate current location');
+    dot.textContent = navigationMode === 'drive' ? 'D' : navigationMode === 'walk' ? 'W' : navigationMode === 'bike' ? 'B' : '';
+    dot.style.alignItems = 'center';
     dot.style.background = '#2166D3';
     dot.style.border = '4px solid #FFFFFF';
     dot.style.borderRadius = '999px';
     dot.style.boxShadow = '0 0 0 8px rgba(33, 102, 211, 0.18)';
-    dot.style.height = '18px';
-    dot.style.width = '18px';
+    dot.style.color = '#FFFFFF';
+    dot.style.display = 'flex';
+    dot.style.fontFamily = 'system-ui, sans-serif';
+    dot.style.fontSize = navigationMode ? '11px' : '0';
+    dot.style.fontWeight = '900';
+    dot.style.height = navigationMode ? '34px' : '18px';
+    dot.style.justifyContent = 'center';
+    dot.style.width = navigationMode ? '34px' : '18px';
     userMarkerRef.current = new maplibregl.Marker({ element: dot })
       .setLngLat([userCoordinates.longitude, userCoordinates.latitude])
       .addTo(map);
-  }, [ready, userCoordinates]);
+  }, [navigationMode, ready, userCoordinates]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const routeData: GeoJSON.Feature<GeoJSON.LineString> = {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'LineString',
+        coordinates: routeCoordinates.map((point) => [point.longitude, point.latitude]),
+      },
+    };
+    const source = map.getSource('spottr-route') as GeoJSONSource | undefined;
+    if (source) source.setData(routeData);
+    else {
+      map.addSource('spottr-route', { type: 'geojson', data: routeData });
+      map.addLayer({
+        id: 'spottr-route-casing', type: 'line', source: 'spottr-route',
+        paint: { 'line-color': 'rgba(255,255,255,0.94)', 'line-width': 9, 'line-opacity': 0.96 },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      });
+      map.addLayer({
+        id: 'spottr-route-line', type: 'line', source: 'spottr-route',
+        paint: { 'line-color': palette.accent, 'line-width': 5, 'line-opacity': 1 },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      });
+    }
+    if (routeCoordinates.length < 2) {
+      fittedRouteKey.current = '';
+      return;
+    }
+    const key = `${routeCoordinates[0].latitude}:${routeCoordinates[0].longitude}:${routeCoordinates.at(-1)?.latitude}:${routeCoordinates.at(-1)?.longitude}`;
+    if (key === fittedRouteKey.current) return;
+    fittedRouteKey.current = key;
+    const bounds = new LngLatBounds();
+    routeCoordinates.forEach((point) => bounds.extend([point.longitude, point.latitude]));
+    map.fitBounds(bounds, { duration: motionDuration(reduceMotion, 450), maxZoom: 17, padding: 84 });
+  }, [ready, reduceMotion, routeCoordinates]);
 
   if (failed) {
     return (

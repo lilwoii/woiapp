@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import MapView, { Marker, type Region } from 'react-native-maps';
+import MapView, { Marker, Polyline, type Region } from 'react-native-maps';
 
 import { palette, radii } from '@/constants/theme';
 import {
@@ -14,6 +14,7 @@ import {
 import { mapCategoryPresentation } from '@/lib/map-presentation';
 import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
+import type { NavigationCoordinate, TravelMode } from '@/types/navigation';
 import { Place } from '@/types/marketplace';
 
 type Props = {
@@ -25,6 +26,8 @@ type Props = {
   onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
   inventoryFeatures?: MapInventoryFeature[];
   userCoordinates?: { latitude: number; longitude: number } | null;
+  routeCoordinates?: NavigationCoordinate[];
+  navigationMode?: TravelMode;
 };
 
 const initialRegion = {
@@ -91,6 +94,8 @@ export function LiveMap({
   onViewportChange,
   inventoryFeatures = [],
   userCoordinates,
+  routeCoordinates = [],
+  navigationMode,
 }: Props) {
   const mapRef = useRef<MapView | null>(null);
   const [region, setRegion] = useState<Region>(
@@ -135,6 +140,14 @@ export function LiveMap({
     );
   }, [places, reduceMotion, selectedId]);
 
+  useEffect(() => {
+    if (routeCoordinates.length < 2) return;
+    mapRef.current?.fitToCoordinates(routeCoordinates, {
+      animated: !reduceMotion,
+      edgePadding: { top: 96, right: 48, bottom: 124, left: 48 },
+    });
+  }, [reduceMotion, routeCoordinates]);
+
   return (
     <View style={styles.frame}>
     <MapView
@@ -169,8 +182,25 @@ export function LiveMap({
       pitchEnabled
       rotateEnabled
       showsBuildings
-      showsUserLocation={Boolean(userCoordinates)}
+      showsUserLocation={Boolean(userCoordinates) && !navigationMode}
       style={styles.map}>
+      {routeCoordinates.length >= 2 ? (
+        <>
+          <Polyline coordinates={routeCoordinates} strokeColor="rgba(255,255,255,0.92)" strokeWidth={9} />
+          <Polyline coordinates={routeCoordinates} strokeColor={palette.accent} strokeWidth={5} />
+        </>
+      ) : null}
+      {navigationMode && userCoordinates ? (
+        <Marker coordinate={userCoordinates} tracksViewChanges>
+          <View accessibilityLabel={`Your live ${navigationMode} position`} style={styles.navigationMarker}>
+            <FontAwesome6
+              color="#FFFFFF"
+              name={navigationMode === 'drive' ? 'car-side' : navigationMode === 'walk' ? 'person-walking' : 'bicycle'}
+              size={15}
+            />
+          </View>
+        </Marker>
+      ) : null}
       {renderedInventoryFeatures.map((feature) => {
         if (feature.type === 'cluster') {
           return (
@@ -423,5 +453,20 @@ const styles = StyleSheet.create({
     color: palette.ink,
     fontSize: 13,
     fontWeight: '900',
+  },
+  navigationMarker: {
+    alignItems: 'center',
+    backgroundColor: '#2166D3',
+    borderColor: '#FFFFFF',
+    borderRadius: 999,
+    borderWidth: 4,
+    elevation: 6,
+    height: 42,
+    justifyContent: 'center',
+    shadowColor: '#172C2A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    width: 42,
   },
 });
