@@ -271,15 +271,24 @@ function protectedTableAllowed(
     return table !== 'business_members' || url.searchParams.get('status') === 'eq.active';
   }
   if (
+    table === 'weekly_hours' || table === 'special_hours' ||
+    table === 'business_payments'
+  ) {
+    return exactFilter(url, 'business_id', `eq.${ids.business}`, `in.(${ids.business})`);
+  }
+  if (table === 'menu_sections') {
+    return exactFilter(url, 'business_id', `eq.${ids.business}`, `in.(${ids.business})`) &&
+      url.searchParams.get('is_published') === 'eq.true';
+  }
+  if (table === 'menu_items') {
+    return exactFilter(url, 'section_id', `in.(${ids.section})`) &&
+      url.searchParams.get('is_published') === 'eq.true';
+  }
+  if (
     table === 'businesses' || table === 'business_locations' ||
-    table === 'weekly_hours' || table === 'business_payments' ||
-    table === 'menu_sections' || table === 'menu_items' ||
-    table === 'special_hours' || table === 'business_responses'
+    table === 'business_responses'
   ) {
     if (role !== 'business') return false;
-    if (table === 'menu_items') {
-      return exactFilter(url, 'section_id', `in.(${ids.section})`);
-    }
     const key = table === 'businesses' ? 'id' : 'business_id';
     return exactFilter(url, key, `eq.${ids.business}`, `in.(${ids.business})`);
   }

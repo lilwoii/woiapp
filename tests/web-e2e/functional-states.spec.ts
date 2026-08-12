@@ -111,9 +111,9 @@ test('authenticated chat lists a private conversation with unread state', async 
 test('authenticated foreground navigation draws a provider route and remains user-controlled', async ({ context, page }) => {
   const fixture = fixtureObservations.get(page);
   expect(fixture).toBeDefined();
+  await signInThroughUi(page, 'customer');
   await context.grantPermissions(['geolocation'], { origin: fixtureAppOrigin });
   await context.setGeolocation({ latitude: 34.0522, longitude: -118.2437 });
-  await signInThroughUi(page, 'customer');
   await page.goto(`${fixtureAppOrigin}/place/${fixture?.ids.business}`, { waitUntil: 'networkidle' });
 
   await page.getByRole('button', { name: 'Navigate in Spottr' }).click();
