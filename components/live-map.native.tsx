@@ -11,6 +11,7 @@ import {
   viewportIsLiveInventoryEligible,
   zoomFromLongitudeDelta,
 } from '@/lib/map-clustering';
+import { mapCategoryPresentation } from '@/lib/map-presentation';
 import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 import { Place } from '@/types/marketplace';
@@ -33,13 +34,34 @@ const initialRegion = {
   longitudeDelta: 0.17,
 };
 
-const categoryIcons = {
-  food_truck: 'truck',
-  restaurant: 'utensils',
-  pop_up: 'store',
-  cafe_bakery: 'mug-hot',
-  home_kitchen: 'house',
-} as const;
+function VenueMarker({
+  category,
+  logoUrl,
+  selected,
+}: {
+  category: Place['category'];
+  logoUrl?: string;
+  selected: boolean;
+}) {
+  const presentation = mapCategoryPresentation[category];
+  return (
+    <View
+      style={[
+        styles.pin,
+        styles[`pin_${presentation.shape}`],
+        selected && styles.selectedPin,
+      ]}>
+      {logoUrl ? (
+        <Image source={{ uri: logoUrl }} style={styles.logo} />
+      ) : (
+        <FontAwesome6 color={palette.ink} name={presentation.icon} size={14} />
+      )}
+      <View style={[styles.categoryBadge, category === 'food_truck' && styles.truckBadge]}>
+        <Text style={styles.categoryBadgeText}>{presentation.badge}</Text>
+      </View>
+    </View>
+  );
+}
 
 function viewportFromRegion(region: Region): MapViewport {
   const zoom = zoomFromLongitudeDelta(region.longitudeDelta);
@@ -78,6 +100,7 @@ export function LiveMap({
   );
   const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
   const [reduceMotion, setReduceMotion] = useState(false);
+  const [perspective, setPerspective] = useState(false);
   const userMovedMap = useRef(false);
   const inventoryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clientFeatures = useMemo(
@@ -143,6 +166,9 @@ export function LiveMap({
         }
         userMovedMap.current = false;
       }}
+      pitchEnabled
+      rotateEnabled
+      showsBuildings
       showsUserLocation={Boolean(userCoordinates)}
       style={styles.map}>
       {renderedInventoryFeatures.map((feature) => {
@@ -166,7 +192,6 @@ export function LiveMap({
           );
         }
         const place = feature.businessId ? placesById.get(feature.businessId) : undefined;
-        const isTruck = feature.dominantCategory === 'food_truck';
         return (
           <Marker
             coordinate={{ latitude: feature.latitude, longitude: feature.longitude }}
@@ -178,15 +203,11 @@ export function LiveMap({
             }}
             title={place?.name ?? feature.name ?? 'Food place'}
             tracksViewChanges={false}>
-            <View style={[styles.pin, isTruck && styles.truckPin, feature.businessId === selectedId && styles.selectedPin]}>
-              {isTruck ? (
-                <FontAwesome6 color="#FFFFFF" name="truck" size={15} />
-              ) : feature.logoUrl ? (
-                <Image source={{ uri: feature.logoUrl }} style={styles.logo} />
-              ) : (
-                <FontAwesome6 color={palette.ink} name={categoryIcons[feature.dominantCategory]} size={14} />
-              )}
-            </View>
+            <VenueMarker
+              category={feature.dominantCategory}
+              logoUrl={feature.logoUrl}
+              selected={feature.businessId === selectedId}
+            />
           </Marker>
         );
       })}
@@ -212,7 +233,6 @@ export function LiveMap({
         }
 
         const place = feature.place;
-        const isTruck = place.category === 'food_truck';
         const isSelected = selectedId === place.id;
 
         return (
@@ -223,19 +243,27 @@ export function LiveMap({
             onPress={() => onSelect?.(place)}
             title={place.name}
             tracksViewChanges={false}>
-            <View style={[styles.pin, isTruck && styles.truckPin, isSelected && styles.selectedPin]}>
-              {isTruck ? (
-                <FontAwesome6 color="#FFFFFF" name="truck" size={15} />
-              ) : place.logoUrl ? (
-                <Image source={{ uri: place.logoUrl }} style={styles.logo} />
-              ) : (
-                <FontAwesome6 color={palette.ink} name={categoryIcons[place.category]} size={14} />
-              )}
-            </View>
+            <VenueMarker category={place.category} logoUrl={place.logoUrl} selected={isSelected} />
           </Marker>
         );
       }) : null}
     </MapView>
+    <Pressable
+      accessibilityLabel={perspective ? 'Use flat map view' : 'Use 3D map perspective'}
+      accessibilityRole="button"
+      accessibilityState={{ selected: perspective }}
+      onPress={() => {
+        const next = !perspective;
+        setPerspective(next);
+        mapRef.current?.animateCamera(
+          { pitch: next ? 48 : 0, heading: next ? -12 : 0 },
+          { duration: motionDuration(reduceMotion, 320) }
+        );
+      }}
+      style={[styles.perspectiveButton, perspective && styles.perspectiveButtonActive]}>
+      <FontAwesome6 color={perspective ? '#FFFFFF' : palette.ink} name="cube" size={12} />
+      <Text style={[styles.perspectiveText, perspective && styles.perspectiveTextActive]}>3D</Text>
+    </Pressable>
     {pendingViewport && onSearchArea ? (
       <Pressable
         accessibilityRole="button"
@@ -313,8 +341,74 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     width: 42,
   },
-  truckPin: {
+  pin_capsule: {
+    borderRadius: 15,
+    width: 54,
+  },
+  pin_circle: {
+    borderRadius: 999,
+  },
+  pin_market: {
+    borderRadius: 11,
+  },
+  pin_cup: {
+    borderBottomLeftRadius: 9,
+    borderBottomRightRadius: 9,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+  },
+  pin_home: {
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+    borderTopLeftRadius: 9,
+    borderTopRightRadius: 9,
+  },
+  categoryBadge: {
+    alignItems: 'center',
+    backgroundColor: palette.ink,
+    borderColor: '#FFFFFF',
+    borderRadius: 999,
+    borderWidth: 2,
+    bottom: -7,
+    height: 21,
+    justifyContent: 'center',
+    minWidth: 21,
+    paddingHorizontal: 3,
+    position: 'absolute',
+    right: -7,
+  },
+  truckBadge: {
     backgroundColor: palette.dark,
+  },
+  categoryBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 7,
+    fontWeight: '900',
+  },
+  perspectiveButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 253, 248, 0.95)',
+    borderColor: '#FFFFFF',
+    borderRadius: radii.pill,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 13,
+    position: 'absolute',
+    right: 14,
+    top: 14,
+  },
+  perspectiveButtonActive: {
+    backgroundColor: palette.ink,
+  },
+  perspectiveText: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  perspectiveTextActive: {
+    color: '#FFFFFF',
   },
   selectedPin: {
     borderColor: palette.accent,

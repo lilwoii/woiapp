@@ -445,26 +445,33 @@ export async function installSpottrFixture(page: Page) {
       }
       if (
         rpc === 'map_food_places' && method === 'POST' &&
-        body.max_features === 1_200 && body.requested_kinds === null &&
+        body.max_features === 1_200 &&
+        Array.isArray(body.requested_kinds) &&
+        body.requested_kinds.join(',') === 'food_truck,restaurant,pop_up,cafe_bakery' &&
         typeof body.west_longitude === 'number' && typeof body.east_longitude === 'number' &&
         typeof body.south_latitude === 'number' && typeof body.north_latitude === 'number' &&
         typeof body.map_zoom === 'number'
       ) {
         mapRequests.push(body);
-        const features = Array.from({ length: 1_200 }, (_, index) => ({
-          feature_type: 'place',
-          feature_id: `fixture-place-${index}`,
-          place_count: 1,
-          latitude: 34.0355 + (index % 20) * 0.00001,
-          longitude: -118.2324 + Math.floor(index / 20) * 0.00001,
-          category_counts: { food_truck: 1 },
-          dominant_kind: 'food_truck',
-          business_id: index === 0 ? ids.business : null,
-          location_id: index === 0 ? ids.location : null,
-          business_name: index === 0 ? 'Maya Taco Truck' : `Fixture food truck ${index + 1}`,
-          logo_path: null,
-          source_label: 'Owner verified',
-        }));
+        const venueKinds = ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery'] as const;
+        const features = Array.from({ length: 1_200 }, (_, index) => {
+          const kind = index >= 1_198 ? 'home_kitchen' : venueKinds[index % venueKinds.length];
+          const showcase = index < venueKinds.length;
+          return {
+            feature_type: 'place',
+            feature_id: `fixture-place-${index}`,
+            place_count: 1,
+            latitude: showcase ? 34.0355 : 34.0355 + (index % 20) * 0.00001,
+            longitude: showcase ? -118.3524 + index * 0.08 : -118.2324 + Math.floor(index / 20) * 0.00001,
+            category_counts: { [kind]: 1 },
+            dominant_kind: kind,
+            business_id: index === 0 ? ids.business : null,
+            location_id: index === 0 ? ids.location : null,
+            business_name: index === 0 ? 'Maya Taco Truck' : `Fixture ${kind.replaceAll('_', ' ')} ${index + 1}`,
+            logo_path: null,
+            source_label: 'Owner verified',
+          };
+        });
         await json(route, features);
         return;
       }

@@ -11,6 +11,7 @@ import {
   normalizeLongitude,
   viewportIsLiveInventoryEligible,
 } from '@/lib/map-clustering';
+import { categoryMarkerLabel, mapCategoryPresentation } from '@/lib/map-presentation';
 import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 import { Place } from '@/types/marketplace';
@@ -75,108 +76,91 @@ function markerElement(
   place: Pick<Place, 'name' | 'category' | 'categoryLabel' | 'distanceMiles' | 'logoUrl'>,
   selected: boolean
 ) {
+  const presentation = mapCategoryPresentation[place.category];
   const element = document.createElement('button');
   element.type = 'button';
   element.tabIndex = -1;
   element.setAttribute(
     'aria-label',
-    `${place.name}, ${place.categoryLabel}${
+    `${categoryMarkerLabel(place.category, place.name)}${
       place.distanceMiles !== null ? `, ${place.distanceMiles.toFixed(1)} miles away` : ''
     }`
   );
+  element.dataset.category = place.category;
+  element.dataset.markerShape = presentation.shape;
   element.style.alignItems = 'center';
-  element.style.background = place.category === 'food_truck' ? palette.dark : '#FFFFFF';
+  element.style.background = '#FFFFFF';
   element.style.border = `3px solid ${selected ? palette.accentDeep : '#FFFFFF'}`;
-  element.style.borderRadius = '999px';
-  element.style.boxShadow = '0 6px 18px rgba(23, 44, 42, 0.24)';
+  element.style.borderRadius = {
+    capsule: '15px',
+    circle: '999px',
+    market: '11px',
+    cup: '18px 18px 9px 9px',
+    home: '9px 9px 16px 16px',
+  }[presentation.shape];
+  element.style.boxShadow = selected
+    ? '0 10px 26px rgba(23, 44, 42, 0.34)'
+    : '0 6px 18px rgba(23, 44, 42, 0.24)';
   element.style.cursor = 'pointer';
   element.style.display = 'flex';
-  element.style.height = selected ? '52px' : '46px';
+  element.style.height = '46px';
   element.style.justifyContent = 'center';
   element.style.padding = '0';
-  element.style.transition = 'width 160ms ease, height 160ms ease, border-color 160ms ease';
-  element.style.width = selected ? '52px' : '46px';
+  element.style.transform = selected ? 'translateY(-3px) scale(1.1)' : 'none';
+  element.style.transition = 'transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease';
+  element.style.width = presentation.shape === 'capsule' ? '56px' : '46px';
 
-  if (place.category === 'food_truck') {
-    const truck = document.createElement('span');
-    truck.setAttribute('aria-hidden', 'true');
-    truck.style.display = 'block';
-    truck.style.height = '18px';
-    truck.style.position = 'relative';
-    truck.style.width = '25px';
-
-    const body = document.createElement('span');
-    body.style.background = '#FFFFFF';
-    body.style.borderRadius = '3px 2px 2px 3px';
-    body.style.height = '12px';
-    body.style.left = '1px';
-    body.style.position = 'absolute';
-    body.style.top = '1px';
-    body.style.width = '15px';
-    truck.appendChild(body);
-
-    const cab = document.createElement('span');
-    cab.style.background = '#FFFFFF';
-    cab.style.borderRadius = '2px 4px 2px 1px';
-    cab.style.clipPath = 'polygon(0 25%, 58% 25%, 100% 100%, 0 100%)';
-    cab.style.height = '12px';
-    cab.style.left = '14px';
-    cab.style.position = 'absolute';
-    cab.style.top = '1px';
-    cab.style.width = '10px';
-    truck.appendChild(cab);
-
-    [6, 19].forEach((left) => {
-      const wheel = document.createElement('span');
-      wheel.style.background = palette.dark;
-      wheel.style.border = '2px solid #FFFFFF';
-      wheel.style.borderRadius = '999px';
-      wheel.style.bottom = '0';
-      wheel.style.height = '7px';
-      wheel.style.left = `${left}px`;
-      wheel.style.position = 'absolute';
-      wheel.style.width = '7px';
-      truck.appendChild(wheel);
-    });
-    element.appendChild(truck);
-  } else if (place.logoUrl) {
+  if (place.logoUrl) {
     const image = document.createElement('img');
     image.alt = '';
     image.src = place.logoUrl;
-    image.style.borderRadius = '999px';
-    image.style.height = selected ? '42px' : '36px';
+    image.style.borderRadius = presentation.shape === 'circle' ? '999px' : '8px';
+    image.style.height = '36px';
     image.style.objectFit = 'cover';
-    image.style.width = selected ? '42px' : '36px';
+    image.style.width = presentation.shape === 'capsule' ? '46px' : '36px';
     element.appendChild(image);
   } else {
     const symbol = document.createElement('span');
     symbol.setAttribute('aria-hidden', 'true');
-    symbol.textContent = {
-      restaurant: 'R',
-      pop_up: 'P',
-      cafe_bakery: 'C',
-      home_kitchen: 'N',
-      food_truck: 'T',
-    }[place.category];
+    symbol.textContent = presentation.badge;
     symbol.style.color = palette.ink;
     symbol.style.fontFamily = 'system-ui, sans-serif';
-    symbol.style.fontSize = '14px';
+    symbol.style.fontSize = presentation.badge.length > 2 ? '10px' : '14px';
     symbol.style.fontWeight = '900';
     element.appendChild(symbol);
   }
+
+  const badge = document.createElement('span');
+  badge.setAttribute('aria-hidden', 'true');
+  badge.textContent = presentation.badge;
+  badge.style.alignItems = 'center';
+  badge.style.background = place.category === 'food_truck' ? palette.dark : palette.ink;
+  badge.style.border = '2px solid #FFFFFF';
+  badge.style.borderRadius = presentation.shape === 'market' ? '5px' : '999px';
+  badge.style.bottom = '-7px';
+  badge.style.color = '#FFFFFF';
+  badge.style.display = 'flex';
+  badge.style.fontFamily = 'system-ui, sans-serif';
+  badge.style.fontSize = presentation.badge.length > 2 ? '7px' : '8px';
+  badge.style.fontWeight = '900';
+  badge.style.height = '21px';
+  badge.style.justifyContent = 'center';
+  badge.style.letterSpacing = '-0.2px';
+  badge.style.minWidth = '21px';
+  badge.style.padding = '0 3px';
+  badge.style.position = 'absolute';
+  badge.style.right = '-7px';
+  element.appendChild(badge);
 
   return element;
 }
 
 function updateMarkerSelection(element: HTMLButtonElement, selected: boolean) {
   element.style.borderColor = selected ? palette.accentDeep : '#FFFFFF';
-  element.style.height = selected ? '52px' : '46px';
-  element.style.width = selected ? '52px' : '46px';
-  const image = element.querySelector('img');
-  if (image) {
-    image.style.height = selected ? '42px' : '36px';
-    image.style.width = selected ? '42px' : '36px';
-  }
+  element.style.boxShadow = selected
+    ? '0 10px 26px rgba(23, 44, 42, 0.34)'
+    : '0 6px 18px rgba(23, 44, 42, 0.24)';
+  element.style.transform = selected ? 'translateY(-3px) scale(1.1)' : 'none';
 }
 
 function clusterElement(feature: { count: number }) {
@@ -258,6 +242,7 @@ export default function MapLibreMapView({
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
+  const [perspective, setPerspective] = useState(false);
   const [mapZoom, setMapZoom] = useState(11.5);
   const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
   const userMovedMap = useRef(false);
@@ -304,8 +289,10 @@ export default function MapLibreMapView({
         center: first ? [first.longitude, first.latitude] : fallbackCenter,
         container: element,
         cooperativeGestures: true,
+        maxPitch: 60,
         maxZoom: 20,
         minZoom: 2,
+        pitchWithRotate: true,
         style: createMapStyle(),
         zoom: 11.5,
       });
@@ -550,6 +537,23 @@ export default function MapLibreMapView({
           style={styles.controlButton}>
           <FontAwesome6 color={palette.ink} name="minus" size={13} />
         </Pressable>
+        <Pressable
+          accessibilityLabel={perspective ? 'Use flat map view' : 'Use 3D map perspective'}
+          accessibilityRole="button"
+          aria-pressed={perspective}
+          onPress={() => {
+            const next = !perspective;
+            setPerspective(next);
+            mapRef.current?.easeTo({
+              bearing: next ? -12 : 0,
+              duration: motionDuration(reduceMotion, 320),
+              pitch: next ? 48 : 0,
+            });
+          }}
+          style={[styles.controlButton, perspective && styles.controlButtonActive]}>
+          <FontAwesome6 color={perspective ? '#FFFFFF' : palette.ink} name="cube" size={12} />
+          <Text style={[styles.controlText, perspective && styles.controlTextActive]}>3D</Text>
+        </Pressable>
       </View>
       {pendingViewport && onSearchArea ? (
         <Pressable
@@ -631,6 +635,18 @@ const styles = StyleSheet.create({
     height: 44,
     justifyContent: 'center',
     width: 44,
+  },
+  controlButtonActive: {
+    backgroundColor: palette.ink,
+  },
+  controlText: {
+    color: palette.ink,
+    fontSize: 8,
+    fontWeight: '900',
+    marginTop: 1,
+  },
+  controlTextActive: {
+    color: '#FFFFFF',
   },
   attribution: {
     alignItems: 'center',

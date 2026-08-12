@@ -34,6 +34,8 @@ import {
 } from '@/lib/discovery-filters';
 import { featureFlags } from '@/lib/features';
 import { normalizeLongitude, zoomFromLongitudeDelta } from '@/lib/map-clustering';
+import { filterMapInventoryCategories, filterPlacesForEnabledCategories } from '@/lib/map-inventory';
+import { mapCategoryOrder, mapCategoryPresentation } from '@/lib/map-presentation';
 import { fetchMapFoodFeatures } from '@/lib/marketplace-api';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import type { DietaryTag, PaymentMethod, Place } from '@/types/marketplace';
@@ -120,7 +122,7 @@ export default function DiscoverScreen() {
   const { width } = useWindowDimensions();
   const wide = width >= 960;
   const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<DiscoveryCategory>('food_truck');
+  const [category, setCategory] = useState<DiscoveryCategory>('all');
   const [sortMode, setSortMode] = useState<DiscoverySort>('nearby');
   const [openOnly, setOpenOnly] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -149,11 +151,37 @@ export default function DiscoverScreen() {
     () => categoryFilters.filter((item) => item.id !== 'home_kitchen' || featureFlags.homeKitchens),
     []
   );
-  const cuisines = useMemo(() => cuisineFacets(places).slice(0, 14), [places]);
+  const enabledMapCategories = useMemo(
+    () => mapCategoryOrder.filter(
+      (item) => item !== 'home_kitchen' || featureFlags.homeKitchens,
+    ),
+    [],
+  );
+  const enabledCategorySet = useMemo(
+    () => new Set(enabledMapCategories),
+    [enabledMapCategories],
+  );
+  const enabledPlaces = useMemo(
+    () => filterPlacesForEnabledCategories(places, enabledCategorySet),
+    [enabledCategorySet, places],
+  );
+  const requestedMapCategories = useMemo(
+    () => category === 'all'
+      ? enabledMapCategories
+      : enabledCategorySet.has(category as Place['category'])
+        ? [category as Place['category']]
+        : [],
+    [category, enabledCategorySet, enabledMapCategories],
+  );
+  const cuisines = useMemo(() => cuisineFacets(enabledPlaces).slice(0, 14), [enabledPlaces]);
 
   const loadMapInventory = useCallback(async (viewport: MapViewport) => {
     const requestId = ++mapInventoryRequest.current;
-    const result = await fetchMapFoodFeatures(viewport);
+    if (!requestedMapCategories.length) {
+      setMapInventoryFeatures([]);
+      return { ok: true, data: [] } as const;
+    }
+    const result = await fetchMapFoodFeatures(viewport, requestedMapCategories);
     if (requestId !== mapInventoryRequest.current) return result;
     if (!result.ok) {
       setMapInventoryFeatures([]);
@@ -161,7 +189,7 @@ export default function DiscoverScreen() {
     }
     setMapInventoryFeatures(result.data ?? []);
     return result;
-  }, []);
+  }, [requestedMapCategories]);
 
   const toggleSelection = <T extends string | number>(
     value: T,
@@ -346,8 +374,8 @@ export default function DiscoverScreen() {
   );
   const activeFilterCount = discoveryFilterCount(discoveryFilters);
   const ranked = useMemo(
-    () => rankDiscoveryPlaces(places, discoveryFilters, userCoordinates),
-    [discoveryFilters, places, userCoordinates]
+    () => rankDiscoveryPlaces(enabledPlaces, discoveryFilters, userCoordinates),
+    [discoveryFilters, enabledPlaces, userCoordinates]
   );
   const sponsoredPlace = ranked.find(
     (place) =>
@@ -360,16 +388,19 @@ export default function DiscoverScreen() {
   const selected = ranked.find((place) => place.id === selectedId) ?? ranked[0];
   const visibleRanked = ranked.slice(0, visibleCount);
   const mappedPlaces = ranked;
+  const permittedMapInventory = useMemo(
+    () => filterMapInventoryCategories(
+      mapInventoryFeatures,
+      new Set(
+        enabledMapCategories
+      ),
+    ),
+    [enabledMapCategories, mapInventoryFeatures],
+  );
   const visibleMapInventory = useMemo(() => {
-    if (category === 'all') return mapInventoryFeatures;
-    return mapInventoryFeatures.flatMap((feature) => {
-      if (feature.type === 'place') {
-        return feature.dominantCategory === category ? [feature] : [];
-      }
-      const count = feature.categoryCounts[category] ?? 0;
-      return count ? [{ ...feature, count, dominantCategory: category }] : [];
-    });
-  }, [category, mapInventoryFeatures]);
+    if (category === 'all') return permittedMapInventory;
+    return filterMapInventoryCategories(permittedMapInventory, new Set([category]));
+  }, [category, permittedMapInventory]);
 
   const selectPlace = useCallback((place: Place) => setSelectedId(place.id), []);
   const selectBusinessId = useCallback(async (businessId: string) => {
@@ -782,22 +813,32 @@ export default function DiscoverScreen() {
                 selectedId={selected?.id}
                 userCoordinates={userCoordinates}
               />
-              <View accessibilityLabel="Map marker key" style={styles.mapLegend}>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendIcon, styles.legendTruck]}>
-                    <FontAwesome6 color="#FFFFFF" name="truck" size={9} />
-                  </View>
-                  <Text style={styles.legendText}>Trucks</Text>
-                </View>
-                <View style={styles.legendItem}>
-                  <View style={styles.legendIcon}>
-                    <FontAwesome6 color={palette.ink} name="utensils" size={9} />
-                  </View>
-                  <Text style={styles.legendText}>Places</Text>
-                </View>
+              <View
+                accessibilityLabel="Map marker key"
+                style={[styles.mapLegend, !wide && styles.mapLegendCompact]}>
+                {mapCategoryOrder
+                  .filter((item) => item !== 'home_kitchen' || featureFlags.homeKitchens)
+                  .map((item) => {
+                    const presentation = mapCategoryPresentation[item];
+                    return (
+                      <View key={item} style={styles.legendItem}>
+                        <View
+                          style={[
+                            styles.legendIcon,
+                            presentation.shape === 'capsule' && styles.legendCapsule,
+                            presentation.shape === 'market' && styles.legendMarket,
+                            presentation.shape === 'cup' && styles.legendCup,
+                            presentation.shape === 'home' && styles.legendHome,
+                          ]}>
+                          <Text style={styles.legendBadgeText}>{presentation.badge}</Text>
+                        </View>
+                        <Text style={styles.legendText}>{presentation.shortLabel}</Text>
+                      </View>
+                    );
+                  })}
                 <View style={styles.legendItem}>
                   <View style={styles.legendCluster}><Text style={styles.legendClusterText}>12</Text></View>
-                  <Text style={styles.legendText}>Cluster</Text>
+                  <Text style={styles.legendText}>Area</Text>
                 </View>
               </View>
               {selected ? (
@@ -831,7 +872,7 @@ export default function DiscoverScreen() {
               <View style={styles.resultsHeader}>
                 <View>
                   <Text accessibilityRole="header" {...webSectionHeading} style={styles.resultsTitle}>
-                    {category === 'food_truck' ? 'Trucks near you' : 'Places near you'}
+                    {category === 'food_truck' ? 'Trucks near you' : category === 'all' ? 'Food near you' : 'Places near you'}
                   </Text>
                   <Text accessibilityLiveRegion="polite" style={styles.resultsDetail}>
                     {ranked.length}
@@ -1358,12 +1399,18 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: 1,
     flexDirection: 'row',
-    gap: 10,
+    flexWrap: 'wrap',
+    gap: 8,
     left: 14,
+    maxWidth: 324,
     paddingHorizontal: 9,
     paddingVertical: 7,
     position: 'absolute',
     top: 72,
+  },
+  mapLegendCompact: {
+    maxWidth: 250,
+    right: 70,
   },
   legendItem: {
     alignItems: 'center',
@@ -1380,9 +1427,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 22,
   },
-  legendTruck: {
-    backgroundColor: palette.dark,
-    borderColor: palette.dark,
+  legendCapsule: {
+    borderRadius: 7,
+    width: 28,
+  },
+  legendMarket: {
+    borderRadius: 6,
+  },
+  legendCup: {
+    borderBottomLeftRadius: 5,
+    borderBottomRightRadius: 5,
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
+  },
+  legendHome: {
+    borderBottomLeftRadius: 10,
+    borderBottomRightRadius: 10,
+    borderTopLeftRadius: 5,
+    borderTopRightRadius: 5,
+  },
+  legendBadgeText: {
+    color: palette.ink,
+    fontSize: 7,
+    fontWeight: '900',
   },
   legendCluster: {
     alignItems: 'center',

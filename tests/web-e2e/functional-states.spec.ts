@@ -54,9 +54,19 @@ test('populated discovery renders real results and bounds a 1,200-feature map re
   await expect(page.getByText('4.9').first()).toBeVisible();
   await expect(page.getByLabel('Interactive map of nearby food')).toBeVisible();
   await expect.poll(() => fixture?.mapRequests.length ?? 0).toBe(1);
-  expect(fixture?.mapRequests[0]).toMatchObject({ max_features: 1_200, requested_kinds: null });
-  await expect(page.locator('.maplibregl-marker[aria-label="1200 food places in this area. Zoom in to explore."]')).toHaveCount(1);
+  expect(fixture?.mapRequests[0]).toMatchObject({
+    max_features: 1_200,
+    requested_kinds: ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery'],
+  });
+  await expect(page.locator('.maplibregl-marker[aria-label="1194 food places in this area. Zoom in to explore."]')).toHaveCount(1);
   expect(await page.locator('.maplibregl-marker').count()).toBeLessThan(80);
+  for (const category of ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery']) {
+    await expect(page.locator(`button[data-category="${category}"]`).first()).toBeVisible();
+  }
+  await expect(page.locator('[data-category="home_kitchen"]')).toHaveCount(0);
+  const perspective = page.getByRole('button', { name: 'Use 3D map perspective' });
+  await perspective.click();
+  await expect(page.getByRole('button', { name: 'Use flat map view' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.maplibregl-marker[tabindex="0"]')).toHaveCount(0);
   await expect.poll(() => fixture?.realtimeConnections ?? 0).toBeGreaterThan(0);
   await expectNoSeriousAxeViolations(page);

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
@@ -82,4 +83,37 @@ test('maintenance errors never include an upstream response body', async () => {
       return true;
     },
   );
+});
+
+
+const maintenanceWorkflow = await readFile(
+  new URL('../.github/workflows/production-maintenance.yml', import.meta.url),
+  'utf8',
+);
+
+test('privileged maintenance workflow pins actions and scopes production secrets to the run step', () => {
+  const stepsOffset = maintenanceWorkflow.indexOf('    steps:');
+  assert.ok(stepsOffset > 0);
+  assert.doesNotMatch(
+    maintenanceWorkflow.slice(0, stepsOffset),
+    /SPOTTR_MAINTENANCE_|SPOTTR_ACCOUNT_DELETE_|SPOTTR_MEDIA_CLEANUP_/u,
+  );
+  assert.match(maintenanceWorkflow, /uses: actions\/checkout@[0-9a-f]{40} # v4/u);
+  assert.match(maintenanceWorkflow, /uses: actions\/setup-node@[0-9a-f]{40} # v4/u);
+  assert.doesNotMatch(maintenanceWorkflow, /uses: [^\s]+@(v\d+|main|master)(?:\s|$)/u);
+  const maintenanceStep = maintenanceWorkflow.slice(
+    maintenanceWorkflow.indexOf('      - name: Run bounded deletion'),
+  );
+  for (const name of [
+    'SPOTTR_MAINTENANCE_SUPABASE_URL',
+    'SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY',
+    'SPOTTR_ACCOUNT_DELETE_WORKER_SECRET',
+    'SPOTTR_MEDIA_CLEANUP_SECRET',
+    'SPOTTR_MAINTENANCE_HEARTBEAT_URL',
+  ]) {
+    assert.match(
+      maintenanceStep,
+      new RegExp(`\\n          ${name}: \\$\\{\\{ secrets\\.${name} \\}\\}`),
+    );
+  }
 });

@@ -424,7 +424,8 @@ function businessCategory(value: unknown): BusinessCategory | null {
 }
 
 export async function fetchMapFoodFeatures(
-  viewport: MapViewport
+  viewport: MapViewport,
+  requestedCategories: BusinessCategory[],
 ): Promise<ActionResult<MapInventoryFeature[]>> {
   const client = supabase;
   if (!client) return configurationRequired();
@@ -437,6 +438,15 @@ export async function fetchMapFoodFeatures(
     return { ok: false, code: 'INVALID', reason: 'The visible map area is invalid.' };
   }
 
+  const uniqueRequestedCategories = [...new Set(requestedCategories)];
+  if (
+    uniqueRequestedCategories.length < 1 ||
+    uniqueRequestedCategories.length !== requestedCategories.length ||
+    uniqueRequestedCategories.some((category) => !businessCategories.includes(category))
+  ) {
+    return { ok: false, code: 'INVALID', reason: 'Select at least one valid map category.' };
+  }
+
   try {
     const { data, error } = await client.rpc('map_food_places', {
       west_longitude: west,
@@ -444,7 +454,7 @@ export async function fetchMapFoodFeatures(
       east_longitude: east,
       north_latitude: north,
       map_zoom: Math.round(Math.min(18, Math.max(2, viewport.zoom))),
-      requested_kinds: null,
+      requested_kinds: uniqueRequestedCategories,
       max_features: 1200,
     });
     if (error) throw error;
