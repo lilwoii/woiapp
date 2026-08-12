@@ -5,7 +5,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_ROUTE_BYTES = 64 * 1024;
-const MAX_ALL_ROUTES_BYTES = 1_700_000;
+// Static rendering repeats the shared route shell per route. Keep a narrow
+// aggregate allowance for the required navigation route while the 64 KB
+// per-route ceiling continues to prevent an individual route regression.
+const MAX_ALL_ROUTES_BYTES = 1_750_000;
 const MAX_ENTRY_BYTES = 3_200_000;
 const MAX_ENTRY_GZIP_BYTES = 800_000;
 const MAX_MAP_BYTES = 1_100_000;
