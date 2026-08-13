@@ -1,20 +1,29 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { validateFullRuntimeGate, validatePostgresCommands } from './quality-workflow-verifier.mjs';
+import {
+  validateFullRuntimeGate,
+  validateMaintenanceGate,
+  validatePinnedActions,
+  validatePostgresCommands,
+} from './quality-workflow-verifier.mjs';
 
 const command = (file) => `psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -f ${file}`;
 const validWorkflow = [
   '  full-supabase-db:',
-  '      - uses: supabase/setup-cli@v2',
+  '      - uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2',
   '          version: 2.84.2',
   '      - run: npm run test:db-runtime',
+  '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4',
   `if ${command('supabase/tests/psql_fail_fast_probe.sql')}; then`,
   '  exit 1',
   'fi',
   command('supabase/tests/shadow_ordering_runtime_setup.sql'),
   command('supabase/migrations/20260802000000_shadow_ordering_foundation.sql'),
   command('supabase/tests/shadow_ordering_runtime_test.sql'),
+  '  validate:',
+  '      - name: Test production maintenance control plane',
+  '        run: npm run test:maintenance-tools',
 ].join('\n');
 
 test('accepts transactional fail-fast SQL commands and a guarded failure probe', () => {
@@ -38,4 +47,22 @@ test('requires the pinned full Supabase runtime gate', () => {
   );
   assert.ok(errors.some((error) => error.includes('pinned')));
   assert.ok(errors.some((error) => error.includes('full database runtime gate')));
+});
+
+test('requires every action to use an immutable commit', () => {
+  assert.deepEqual(validatePinnedActions(validWorkflow), []);
+  const errors = validatePinnedActions(validWorkflow.replace(
+    'actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4',
+    'actions/checkout@v4',
+  ));
+  assert.ok(errors.some((error) => error.includes('not pinned')));
+});
+
+test('requires privileged production maintenance coverage', () => {
+  assert.deepEqual(validateMaintenanceGate(validWorkflow), []);
+  assert.ok(validateMaintenanceGate(validWorkflow.replace('npm run test:maintenance-tools', 'echo skipped')).length > 0);
+  assert.ok(validateMaintenanceGate(validWorkflow.replace(
+    '  validate:',
+    '  unrelated-job:\n      - run: npm run test:maintenance-tools\n  validate:',
+  ).replace('      - name: Test production maintenance control plane\n        run: npm run test:maintenance-tools', '')).length > 0);
 });

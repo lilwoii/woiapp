@@ -1,4 +1,10 @@
-import { formatRouteDistance, formatRouteDuration, nearestRouteStep, parseRoutePlan } from '../navigation';
+import {
+  formatRouteDistance,
+  formatRouteDuration,
+  nearestRouteStep,
+  parseRoutePlan,
+  shouldRequestAutomaticReroute,
+} from '../navigation';
 
 const now = Date.parse('2026-08-11T18:00:00.000Z');
 const valid = {
@@ -26,5 +32,21 @@ describe('route plan parsing', () => {
     const route = parseRoutePlan(valid, 'walk', now);
     expect(route && nearestRouteStep(route, { latitude: 34.041, longitude: -118.231 })?.instruction)
       .toBe('Turn right on Spring Street');
+  });
+  it('never shares a refreshed origin unless automatic rerouting is explicitly enabled', () => {
+    const request = {
+      previousOrigin: { latitude: 34.0522, longitude: -118.2437 },
+      currentOrigin: { latitude: 34.0508, longitude: -118.2437 },
+      lastRequestAt: now - 120_000,
+      now,
+    };
+    expect(shouldRequestAutomaticReroute({ ...request, enabled: false })).toBe(false);
+    expect(shouldRequestAutomaticReroute({ ...request, enabled: true })).toBe(true);
+    expect(shouldRequestAutomaticReroute({ ...request, enabled: true, lastRequestAt: now - 60_000 })).toBe(false);
+    expect(shouldRequestAutomaticReroute({
+      ...request,
+      enabled: true,
+      currentOrigin: { latitude: 34.0516, longitude: -118.2437 },
+    })).toBe(false);
   });
 });

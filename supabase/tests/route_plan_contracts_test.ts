@@ -34,5 +34,10 @@ Deno.test('routing token stays server-side and requests are authenticated and ra
   assertMatch(navigationScreen, /requestForegroundPermissionsAsync/);
   assert(!navigationScreen.includes('requestBackgroundPermissionsAsync'));
   assert(!navigationScreen.includes('startLocationUpdatesAsync'));
-  assertMatch(navigationScreen, /sends your selected starting point and this public destination to Mapbox/);
+  assertMatch(navigationScreen, /does not send later movement to Mapbox for rerouting unless you separately turn on Automatic rerouting/);
+  assertMatch(navigationScreen, /updated precise current location to Mapbox after at least 100 m of movement and 90 seconds/);
+  assertMatch(navigationScreen, /enabled: automaticReroutingRef\.current/);
+  assertMatch(navigationScreen, /watcherGeneration\.current !== generation/);
+  assertMatch(navigationScreen, /appStateRef\.current !== 'active'/);
+  assertMatch(navigationScreen, /aria-describedby="automatic-rerouting-description"/);
 });

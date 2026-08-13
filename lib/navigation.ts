@@ -104,6 +104,19 @@ export function navigationDistanceMeters(left: NavigationCoordinate, right: Navi
   return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+export function shouldRequestAutomaticReroute(input: {
+  enabled: boolean;
+  previousOrigin: NavigationCoordinate | null;
+  currentOrigin: NavigationCoordinate;
+  lastRequestAt: number;
+  now?: number;
+}): boolean {
+  if (!input.enabled || !input.previousOrigin) return false;
+  const now = input.now ?? Date.now();
+  return now - input.lastRequestAt >= 90_000 &&
+    navigationDistanceMeters(input.previousOrigin, input.currentOrigin) >= 100;
+}
+
 export function nearestRouteStep(route: RoutePlan, current: NavigationCoordinate): RouteStep | null {
   let nearest: RouteStep | null = null;
   let nearestDistance = Number.POSITIVE_INFINITY;

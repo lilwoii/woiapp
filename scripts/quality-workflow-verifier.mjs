@@ -25,7 +25,7 @@ export function validateFullRuntimeGate(workflow) {
   if (!/^  full-supabase-db:\s*$/m.test(workflow)) {
     errors.push('Quality workflow must include the full Supabase database runtime job.');
   }
-  if (!workflow.includes('uses: supabase/setup-cli@v2')) {
+  if (!/uses: supabase\/setup-cli@[0-9a-f]{40}\s+# v2/.test(workflow)) {
     errors.push('Full database runtime must use the official Supabase CLI action.');
   }
   if (!/^\s+version: 2\.84\.2\s*$/m.test(workflow)) {
@@ -37,15 +37,46 @@ export function validateFullRuntimeGate(workflow) {
   return errors;
 }
 
+export function validatePinnedActions(workflow) {
+  const errors = [];
+  const actionLines = workflow.split(/\r?\n/).filter((line) => /\buses:\s*/.test(line));
+  if (!actionLines.length) errors.push('Quality workflow must use reviewed GitHub Actions.');
+  for (const line of actionLines) {
+    if (!/\buses:\s*[^\s@]+@[0-9a-f]{40}(?:\s+#\s*[^\s]+)?\s*$/.test(line)) {
+      errors.push(`GitHub Action is not pinned to an immutable commit: ${line.trim()}`);
+    }
+  }
+  return errors;
+}
+
+export function validateMaintenanceGate(workflow) {
+  const validateStart = workflow.search(/^  validate:\s*$/m);
+  if (validateStart < 0) {
+    return ['Quality workflow must test the privileged production maintenance control plane.'];
+  }
+  const bodyStart = workflow.indexOf('\n', validateStart);
+  const remaining = bodyStart < 0 ? '' : workflow.slice(bodyStart + 1);
+  const nextJob = remaining.search(/^  [a-zA-Z0-9_-]+:\s*$/m);
+  const validateJob = nextJob < 0 ? remaining : remaining.slice(0, nextJob);
+  return /^\s+- name: Test production maintenance control plane\s*$[\s\S]*?^\s+run: npm run test:maintenance-tools\s*$/m.test(validateJob)
+    ? []
+    : ['Quality workflow must test the privileged production maintenance control plane.'];
+}
+
 export async function verifyQualityWorkflow(projectRoot = PROJECT_ROOT) {
   const workflow = await readFile(path.join(projectRoot, '.github', 'workflows', 'quality.yml'), 'utf8');
-  const errors = [...validatePostgresCommands(workflow), ...validateFullRuntimeGate(workflow)];
+  const errors = [
+    ...validatePostgresCommands(workflow),
+    ...validateFullRuntimeGate(workflow),
+    ...validatePinnedActions(workflow),
+    ...validateMaintenanceGate(workflow),
+  ];
   if (errors.length) throw new Error(errors.join('\n'));
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   verifyQualityWorkflow()
-    .then(() => process.stdout.write('Quality workflow SQL execution is fail-fast and transactional.\n'))
+    .then(() => process.stdout.write('Quality workflow is fail-fast, immutable, and covers privileged maintenance.\n'))
     .catch((error) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;

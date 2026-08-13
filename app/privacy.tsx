@@ -11,9 +11,13 @@ export default function PrivacyScreen() {
         sent over an encrypted connection to calculate distance-ranked results. You can search by city or ZIP instead.
       </InfoSection>
       <InfoSection icon="route" title="Routes use a navigation provider">
-        If you explicitly start in-app navigation, Spottr sends your selected starting point, public destination,
-        and travel mode to Mapbox to calculate the route. Spottr does not attach that route to your profile and
-        stops live updates when the app leaves the foreground. You can use your device’s maps app instead.
+        If you explicitly start in-app navigation, Spottr sends your precise current starting location, public destination,
+        and travel mode to Mapbox to calculate one route. Automatic rerouting is off by default. If you turn it on,
+        Spottr may send your updated precise current location again after at least 100 m of movement and 90 seconds while
+        navigation remains active. Turning it off stops additional Mapbox route requests while the foreground live
+        marker continues.
+        Spottr does not attach routes to your profile and stops live updates when the app leaves the foreground. You
+        can use your device’s maps app instead.
       </InfoSection>
       <InfoSection icon="house-lock" title="Home kitchens stay approximate">
         When legally enabled, public results show only a reviewed service area. Residential addresses and raw residence

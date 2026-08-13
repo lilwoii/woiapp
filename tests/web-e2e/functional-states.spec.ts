@@ -116,7 +116,7 @@ test('authenticated foreground navigation draws a provider route and remains use
 
   await page.getByRole('button', { name: 'Navigate in Spottr' }).click();
   await expect(page).toHaveURL(`${fixtureAppOrigin}/navigation/${fixture?.ids.business}`);
-  await expect(page.getByText(/sends your selected starting point and this public destination to Mapbox/i)).toBeVisible();
+  await expect(page.getByText(/does not send later movement to Mapbox for rerouting unless you separately turn on Automatic rerouting/i)).toBeVisible();
   expect(fixture?.routeRequests).toHaveLength(0);
 
   await context.grantPermissions(['geolocation'], { origin: fixtureAppOrigin });
@@ -131,6 +131,14 @@ test('authenticated foreground navigation draws a provider route and remains use
   await expect(page.getByText('Head southeast toward the Arts District')).toBeVisible();
   await expect(page.getByText('26 min · 1.3 mi')).toBeVisible();
   await expect(page.locator('.maplibregl-marker[aria-label="Your live walk position"]')).toHaveCount(1);
+  const automaticRerouting = page.getByRole('switch', { name: 'Automatic rerouting' });
+  await expect(automaticRerouting).toHaveAccessibleDescription(/updated precise current location to Mapbox after at least 100 m of movement and 90 seconds/i);
+  await expect(automaticRerouting).toHaveAttribute('aria-checked', 'false');
+  await automaticRerouting.click();
+  await expect(automaticRerouting).toHaveAttribute('aria-checked', 'true');
+  await automaticRerouting.click();
+  await expect(automaticRerouting).toHaveAttribute('aria-checked', 'false');
+  expect(fixture?.routeRequests).toHaveLength(1);
   await expect(page.getByRole('button', { name: 'Hide route' })).toBeVisible();
   await page.getByRole('button', { name: 'Hide route' }).click();
   await expect(page.getByRole('button', { name: 'Show route' })).toBeVisible();

@@ -23,9 +23,9 @@ import { featureFlags } from '@/lib/features';
 import {
   formatRouteDistance,
   formatRouteDuration,
-  navigationDistanceMeters,
   nearestRouteStep,
   requestRoutePlan,
+  shouldRequestAutomaticReroute,
 } from '@/lib/navigation';
 import type { NavigationCoordinate, RoutePlan, TravelMode } from '@/types/navigation';
 
@@ -34,6 +34,7 @@ const travelModes: { id: TravelMode; label: string; icon: 'car-side' | 'person-w
   { id: 'walk', label: 'Walk', icon: 'person-walking' },
   { id: 'bike', label: 'Bike', icon: 'bicycle' },
 ];
+const automaticReroutingPrivacyNotice = 'When on, Spottr may send your updated precise current location to Mapbox after at least 100 m of movement and 90 seconds to refresh the route. Turn it off to stop additional Mapbox route requests while your foreground live marker continues.';
 
 export default function NavigationScreen() {
   const params = useLocalSearchParams<{ id?: string | string[] }>();
@@ -46,6 +47,7 @@ export default function NavigationScreen() {
   const [routeVisible, setRouteVisible] = useState(true);
   const [mode, setMode] = useState<TravelMode | null>(null);
   const [location, setLocation] = useState<NavigationCoordinate | null>(null);
+  const [automaticRerouting, setAutomaticRerouting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const watcher = useRef<Location.LocationSubscription | null>(null);
@@ -54,6 +56,9 @@ export default function NavigationScreen() {
   const routeRequestOrigin = useRef<NavigationCoordinate | null>(null);
   const lastRouteRequestAt = useRef(0);
   const rerouteInFlight = useRef(false);
+  const automaticReroutingRef = useRef(false);
+  const appStateRef = useRef(AppState.currentState);
+  const watcherGeneration = useRef(0);
 
   useEffect(() => {
     if (!placeId || place) return;
@@ -89,33 +94,60 @@ export default function NavigationScreen() {
   }, [destination]);
 
   const beginWatching = useCallback(async () => {
+    const generation = watcherGeneration.current + 1;
+    watcherGeneration.current = generation;
     watcher.current?.remove();
-    watcher.current = await Location.watchPositionAsync(
+    watcher.current = null;
+    if (!trackingWanted.current || appStateRef.current !== 'active') return;
+    const subscription = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.High, distanceInterval: 10, timeInterval: 4_000 },
       (position) => {
+        if (
+          watcherGeneration.current !== generation ||
+          !trackingWanted.current ||
+          appStateRef.current !== 'active'
+        ) return;
         const next = { latitude: position.coords.latitude, longitude: position.coords.longitude };
         setLocation(next);
         const selectedMode = modeRef.current;
         const priorOrigin = routeRequestOrigin.current;
-        if (
-          selectedMode && priorOrigin && Date.now() - lastRouteRequestAt.current >= 90_000 &&
-          navigationDistanceMeters(priorOrigin, next) >= 100
-        ) void refreshRoute(next, selectedMode);
+        if (selectedMode && shouldRequestAutomaticReroute({
+          enabled: automaticReroutingRef.current,
+          previousOrigin: priorOrigin,
+          currentOrigin: next,
+          lastRequestAt: lastRouteRequestAt.current,
+        })) void refreshRoute(next, selectedMode);
       }
     );
+    if (
+      watcherGeneration.current !== generation ||
+      !trackingWanted.current ||
+      appStateRef.current !== 'active'
+    ) {
+      subscription.remove();
+      return;
+    }
+    watcher.current = subscription;
   }, [refreshRoute]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
+      appStateRef.current = state;
       if (state !== 'active') {
+        watcherGeneration.current += 1;
         watcher.current?.remove();
         watcher.current = null;
       } else if (trackingWanted.current && !watcher.current) {
-        void beginWatching();
+        void beginWatching().catch(() => {
+          if (trackingWanted.current && appStateRef.current === 'active') {
+            setMessage('Live tracking could not resume. Check location services and try again.');
+          }
+        });
       }
     });
     return () => {
       trackingWanted.current = false;
+      watcherGeneration.current += 1;
       watcher.current?.remove();
       watcher.current = null;
       subscription.remove();
@@ -139,6 +171,8 @@ export default function NavigationScreen() {
       const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const origin = { latitude: current.coords.latitude, longitude: current.coords.longitude };
       setLocation(origin);
+      automaticReroutingRef.current = false;
+      setAutomaticRerouting(false);
       setMode(selectedMode);
       modeRef.current = selectedMode;
       const routed = await refreshRoute(origin, selectedMode);
@@ -158,13 +192,22 @@ export default function NavigationScreen() {
 
   const stopTracking = () => {
     trackingWanted.current = false;
+    watcherGeneration.current += 1;
     watcher.current?.remove();
     watcher.current = null;
     modeRef.current = null;
     setMode(null);
     setRoute(null);
     setLocation(null);
+    automaticReroutingRef.current = false;
+    setAutomaticRerouting(false);
     setMessage('Live tracking stopped.');
+  };
+
+  const toggleAutomaticRerouting = () => {
+    const enabled = !automaticReroutingRef.current;
+    automaticReroutingRef.current = enabled;
+    setAutomaticRerouting(enabled);
   };
 
   const openExternalMaps = () => {
@@ -260,7 +303,7 @@ export default function NavigationScreen() {
           {!mode ? (
             <>
               <Text style={styles.controlHeading}>Choose how you’re traveling</Text>
-              <Text style={styles.providerNotice}>Starting navigation sends your selected starting point and this public destination to Mapbox to calculate a route. Spottr does not save your route to your profile.</Text>
+              <Text style={styles.providerNotice}>Starting navigation sends your precise current starting location, this public destination, and travel mode to Mapbox to calculate one route. Spottr does not send later movement to Mapbox for rerouting unless you separately turn on Automatic rerouting. Spottr does not save your route to your profile.</Text>
               <View accessibilityRole="radiogroup" style={styles.modeRow}>
                 {travelModes.map((item) => (
                   <Pressable
@@ -278,16 +321,37 @@ export default function NavigationScreen() {
               </View>
             </>
           ) : (
-            <View style={styles.activeControls}>
-              <Pressable accessibilityRole="button" onPress={() => setRouteVisible((value) => !value)} style={styles.secondaryButton}>
-                <FontAwesome6 color={palette.ink} name={routeVisible ? 'route' : 'eye'} size={13} />
-                <Text style={styles.secondaryButtonText}>{routeVisible ? 'Hide route' : 'Show route'}</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" onPress={stopTracking} style={styles.stopButton}>
-                <FontAwesome6 color="#FFFFFF" name="location-crosshairs" size={13} />
-                <Text style={styles.stopButtonText}>Stop tracking</Text>
-              </Pressable>
-            </View>
+            <>
+              <View style={styles.rerouteControl}>
+                <View style={styles.rerouteCopy}>
+                  <Text style={styles.rerouteTitle}>Automatic rerouting</Text>
+                  <Text nativeID="automatic-rerouting-description" style={styles.rerouteDescription}>{automaticReroutingPrivacyNotice}</Text>
+                </View>
+                <Pressable
+                  aria-describedby="automatic-rerouting-description"
+                  accessibilityHint={automaticReroutingPrivacyNotice}
+                  accessibilityLabel="Automatic rerouting"
+                  accessibilityRole="switch"
+                  accessibilityState={{ checked: automaticRerouting }}
+                  onPress={toggleAutomaticRerouting}
+                  style={styles.rerouteToggle}>
+                  <Text style={styles.rerouteState}>{automaticRerouting ? 'On' : 'Off'}</Text>
+                  <View style={[styles.switchTrack, automaticRerouting && styles.switchTrackActive]}>
+                    <View style={[styles.switchThumb, automaticRerouting && styles.switchThumbActive]} />
+                  </View>
+                </Pressable>
+              </View>
+              <View style={styles.activeControls}>
+                <Pressable accessibilityRole="button" onPress={() => setRouteVisible((value) => !value)} style={styles.secondaryButton}>
+                  <FontAwesome6 color={palette.ink} name={routeVisible ? 'route' : 'eye'} size={13} />
+                  <Text style={styles.secondaryButtonText}>{routeVisible ? 'Hide route' : 'Show route'}</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" onPress={stopTracking} style={styles.stopButton}>
+                  <FontAwesome6 color="#FFFFFF" name="location-crosshairs" size={13} />
+                  <Text style={styles.stopButtonText}>Stop tracking</Text>
+                </Pressable>
+              </View>
+            </>
           )}
           {message ? <Text accessibilityLiveRegion="assertive" style={styles.message}>{message}</Text> : null}
           <Text style={styles.disclaimer}>Foreground only. Route guidance is informational—follow posted signs, closures, and real-world conditions.</Text>
@@ -318,6 +382,16 @@ const styles = StyleSheet.create({
   modeButton: { alignItems: 'center', backgroundColor: palette.bg, borderColor: palette.line, borderRadius: radii.md, borderWidth: 1, flex: 1, gap: 7, justifyContent: 'center', minHeight: 64 },
   modeText: { color: palette.ink, fontSize: 11, fontWeight: '900' },
   activeControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  rerouteControl: { alignItems: 'center', backgroundColor: palette.bg, borderColor: palette.line, borderRadius: radii.md, borderWidth: 1, flexDirection: 'row', gap: 16, minHeight: 72, paddingHorizontal: 16, paddingVertical: 12 },
+  rerouteCopy: { flex: 1, gap: 3 },
+  rerouteTitle: { color: palette.ink, fontSize: 12, fontWeight: '900' },
+  rerouteDescription: { color: palette.muted, fontSize: 10, lineHeight: 15, maxWidth: 720 },
+  rerouteToggle: { alignItems: 'center', borderRadius: radii.sm, gap: 4, minHeight: 48, minWidth: 56, justifyContent: 'center' },
+  rerouteState: { color: palette.ink, fontSize: 10, fontWeight: '900' },
+  switchTrack: { backgroundColor: palette.line, borderRadius: 999, height: 28, justifyContent: 'center', paddingHorizontal: 3, width: 48 },
+  switchTrackActive: { backgroundColor: palette.accentDeep },
+  switchThumb: { backgroundColor: '#FFFFFF', borderRadius: 999, height: 22, width: 22 },
+  switchThumbActive: { alignSelf: 'flex-end' },
   secondaryButton: { alignItems: 'center', borderColor: palette.line, borderRadius: radii.pill, borderWidth: 1, flexDirection: 'row', gap: 8, minHeight: 48, paddingHorizontal: 17 },
   secondaryButtonText: { color: palette.ink, fontSize: 11, fontWeight: '900' },
   stopButton: { alignItems: 'center', backgroundColor: palette.ink, borderRadius: radii.pill, flexDirection: 'row', gap: 8, minHeight: 48, paddingHorizontal: 17 },
