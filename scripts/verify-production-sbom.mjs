@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -83,6 +84,28 @@ function stableReference(packagePath, entry) {
   return `urn:spottr:npm:${digest}`;
 }
 
+function packagePurl(name, version) {
+  const parts = name.startsWith('@') ? name.split('/') : [name];
+  const encodedName = parts.map((part) => encodeURIComponent(part)).join('/');
+  return `pkg:npm/${encodedName}@${encodeURIComponent(version)}`;
+}
+
+function componentFromLock(packagePath, entry) {
+  const identity = packageIdentity(packagePath, entry);
+  const hash = integrityHash(entry.integrity);
+  return {
+    'bom-ref': stableReference(packagePath, entry),
+    type: 'library',
+    name: identity.name,
+    version: identity.version,
+    scope: entry.optional === true ? 'optional' : 'required',
+    purl: packagePurl(identity.name, identity.version),
+    hashes: [hash],
+    properties: [{ name: PACKAGE_PATH_PROPERTY, value: packagePath }],
+    externalReferences: [{ type: 'distribution', url: entry.resolved }],
+  };
+}
+
 function parentPackagePath(packagePath) {
   const marker = packagePath.lastIndexOf('/node_modules/');
   return marker < 0 ? '' : packagePath.slice(0, marker);
@@ -150,13 +173,6 @@ function expectedDependencyGraph(lockfile, references) {
       targets.add(targetReference);
     }
 
-    if (packagePath === '') {
-      for (const [name] of Object.entries(entry.optionalDependencies ?? {})) {
-        const targetPath = resolveDependencyPath('', name, packages);
-        const targetReference = targetPath && references.get(targetPath);
-        if (targetReference) targets.add(targetReference);
-      }
-    }
     graph.set(references.get(packagePath), [...targets].sort());
   }
 
@@ -261,39 +277,52 @@ export function serializeCanonicalSbom(sbom) {
 }
 
 export function buildDeterministicProductionSbom(rawSbom, manifest, lockfile, expectedCommit) {
-  const errors = [
-    ...validateManifestAndLock(manifest, lockfile),
-    ...validateComponentInventory(rawSbom, manifest, lockfile),
-  ];
+  const errors = [...validateManifestAndLock(manifest, lockfile)];
   if (!/^[0-9a-f]{40}$/.test(expectedCommit ?? '')) {
     errors.push('Expected commit must be an exact lowercase Git SHA.');
   }
   if (rawSbom?.bomFormat !== 'CycloneDX' || rawSbom?.specVersion !== '1.5' || rawSbom?.version !== 1) {
     errors.push('npm must emit CycloneDX 1.5 document version 1.');
   }
+  const rawNpmTools = (rawSbom?.metadata?.tools ?? []).filter((tool) => (
+    tool?.vendor === 'npm' && tool?.name === 'cli' && tool?.version === EXPECTED_NPM_VERSION
+  ));
+  if (rawNpmTools.length !== 1 || !Array.isArray(rawSbom?.components) || rawSbom.components.length === 0
+    || !Array.isArray(rawSbom?.dependencies) || rawSbom.dependencies.length === 0) {
+    errors.push('Pinned npm must return a populated SBOM and identify its exact version.');
+  }
   if (errors.length) throw new Error([...new Set(errors)].join('\n'));
-
-  const sbom = structuredClone(rawSbom);
-  delete sbom.serialNumber;
-  delete sbom.metadata.timestamp;
-  const existingProperties = Array.isArray(sbom.metadata.properties)
-    ? sbom.metadata.properties.filter((property) => property?.name !== COMMIT_PROPERTY)
-    : [];
-  sbom.metadata.properties = [...existingProperties, { name: COMMIT_PROPERTY, value: expectedCommit }];
 
   const references = new Map();
   references.set('', stableReference('', lockfile.packages['']));
   for (const [packagePath, entry] of productionInventory(lockfile)) {
     references.set(packagePath, stableReference(packagePath, entry));
   }
-  sbom.metadata.component['bom-ref'] = references.get('');
-  for (const component of sbom.components) {
-    component['bom-ref'] = references.get(componentPath(component));
-  }
-
   const { graph, errors: graphErrors } = expectedDependencyGraph(lockfile, references);
   if (graphErrors.length) throw new Error([...new Set(graphErrors)].join('\n'));
-  sbom.dependencies = [...graph].map(([ref, dependsOn]) => ({ ref, dependsOn }));
+  const sbom = {
+    $schema: CYCLONEDX_SCHEMA_URL,
+    bomFormat: 'CycloneDX',
+    specVersion: '1.5',
+    version: 1,
+    metadata: {
+      lifecycles: [{ phase: 'pre-build' }],
+      tools: [{ vendor: 'npm', name: 'cli', version: EXPECTED_NPM_VERSION }],
+      properties: [{ name: COMMIT_PROPERTY, value: expectedCommit }],
+      component: {
+        'bom-ref': references.get(''),
+        type: 'application',
+        name: manifest.name,
+        version: manifest.version,
+        purl: packagePurl(manifest.name, manifest.version),
+        properties: [{ name: PACKAGE_PATH_PROPERTY, value: '' }],
+      },
+    },
+    components: [...productionInventory(lockfile)].map(([packagePath, entry]) => (
+      componentFromLock(packagePath, entry)
+    )),
+    dependencies: [...graph].map(([ref, dependsOn]) => ({ ref, dependsOn })),
+  };
 
   const normalized = canonicalize(sbom);
   const normalizedErrors = validateProductionSbom(normalized, manifest, lockfile, expectedCommit);

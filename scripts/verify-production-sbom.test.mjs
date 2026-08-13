@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import test from 'node:test';
 
 import {
@@ -114,13 +115,11 @@ test('normalizes random npm fields and duplicate name/version references determi
   assert.ok(serializeCanonicalSbom(first).endsWith('\n'));
 });
 
-test('rejects missing production components and injected development-only components', () => {
+test('restores omitted cross-platform components and strips injected development-only components', () => {
   const missing = rawSbom();
   missing.components.pop();
-  assert.throws(
-    () => buildDeterministicProductionSbom(missing, manifest, lockfile, commit),
-    /exactly equal/,
-  );
+  const restored = buildDeterministicProductionSbom(missing, manifest, lockfile, commit);
+  assert.equal(restored.components.length, 3);
 
   const injected = rawSbom();
   injected.components.push({
@@ -130,10 +129,9 @@ test('rejects missing production components and injected development-only compon
       { name: 'cdx:npm:package:development', value: 'true' },
     ],
   });
-  assert.throws(
-    () => buildDeterministicProductionSbom(injected, manifest, lockfile, commit),
-    /outside the production lock inventory/,
-  );
+  const stripped = buildDeterministicProductionSbom(injected, manifest, lockfile, commit);
+  assert.equal(stripped.components.length, 3);
+  assert.ok(stripped.components.every((item) => item.name !== 'devtool'));
 });
 
 test('rejects malformed commits, unresolved lock dependencies, and npm version drift', () => {

@@ -85,10 +85,12 @@ Two separate least-privilege CI jobs add baseline supply-chain evidence. One
 downloads a checksum-pinned TruffleHog binary and scans the complete reachable
 Git history while keeping potential credential material out of artifacts and
 logs. The other uses the exact npm version pinned for the release to generate
-a CycloneDX 1.5 production inventory, replaces ambiguous package references
-with deterministic path-qualified references, reconstructs the graph from the
-lockfile, embeds the exact source commit, and validates completeness and hashes
-against every production lock entry. It then validates against checksum-pinned
+a CycloneDX 1.5 production inventory. npm first rejects invalid or missing
+dependency edges; Spottr then rebuilds the cross-platform component inventory
+and graph from every production lock entry, replacing npm's checkout-name root,
+host-platform omissions, and ambiguous package references with deterministic
+path-qualified data. It embeds the exact source commit and validates completeness
+and hashes against every production lock entry, then validates against checksum-pinned
 official schemas and uploads the canonical SBOM plus SHA-256 sidecar under an
 artifact name bound to the exact commit SHA. Review both job results and
 preserve the SBOM artifact with the release record. This automation does not

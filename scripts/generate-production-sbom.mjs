@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
