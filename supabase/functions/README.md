@@ -30,7 +30,7 @@ without other users' Auth UUIDs or private moderator attribution.
 `DELETE /functions/v1/delete-account` requires:
 
 - a valid `aal2` bearer JWT;
-- an `Idempotency-Key` of 16Ã¢â‚¬â€œ128 characters;
+- an `Idempotency-Key` of 16–128 characters;
 - `X-Spottr-Delete-Confirmation: DELETE`; and
 - JSON `{ "confirmation": "DELETE" }`.
 
