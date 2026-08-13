@@ -98,6 +98,15 @@ inspect unreachable/deleted Git
 objects, rotate credentials, determine exploitability, review licenses, or
 replace an independent security and dependency review.
 
+The separate CodeQL workflow analyzes JavaScript/TypeScript application code
+and GitHub Actions workflow code on pull requests, main-branch pushes, a weekly
+schedule, and manual dispatch. It uses the extended security query suite and
+uploads findings through GitHub's code-scanning channel with no repository
+secrets. Its actions are immutable-commit pinned and the main quality workflow
+tests those controls. A green CodeQL run is static-analysis evidence for the
+exact commit; it does not replace authenticated runtime penetration testing,
+business-logic review, mobile binary analysis, or target-environment testing.
+
 Required independent evidence before public launch:
 
 - review of the reachable-history secret scan, credential-rotation status, and
