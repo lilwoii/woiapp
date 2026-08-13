@@ -16,28 +16,61 @@ export default () => {
   const termsUrl = process.env.EXPO_PUBLIC_TERMS_URL?.trim();
   const communityRulesUrl = process.env.EXPO_PUBLIC_COMMUNITY_RULES_URL?.trim();
   const supportUrl = process.env.EXPO_PUBLIC_SUPPORT_URL?.trim();
+  const placeholderPattern =
+    /(?:your-|example|\.test(?:[/:]|$)|\.invalid(?:[/:]|$)|00000000-0000-0000-0000-000000000000)/i;
   const isPlaceholder = (value?: string) =>
-    !value ||
-    /(?:your-|example|00000000-0000-0000-0000-000000000000)/i.test(value);
-  const isHttpsUrl = (value?: string) => {
-    if (!value) return false;
+    !value || placeholderPattern.test(value);
+  const isNonPublicHostname = (hostname: string) =>
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.internal') ||
+    /^[0-9.]+$/.test(hostname) ||
+    hostname.includes(':');
+  const parsePublicHttpsUrl = (value?: string) => {
+    if (!value) return null;
     try {
       const parsed = new URL(value);
-      return (
-        parsed.protocol === 'https:' &&
-        parsed.hostname !== 'localhost' &&
-        !parsed.hostname.endsWith('.example')
-      );
+      if (
+        parsed.protocol !== 'https:' ||
+        parsed.username ||
+        parsed.password ||
+        parsed.hash ||
+        isNonPublicHostname(parsed.hostname)
+      ) return null;
+      return parsed;
     } catch {
-      return false;
+      return null;
     }
+  };
+  const isHttpsUrl = (value?: string) => {
+    const parsed = parsePublicHttpsUrl(value);
+    return Boolean(parsed && !isPlaceholder(value));
+  };
+  const isHttpsOrigin = (value?: string) => {
+    const parsed = parsePublicHttpsUrl(value);
+    return Boolean(
+      parsed &&
+      !isPlaceholder(value) &&
+      parsed.pathname === '/' &&
+      !parsed.search &&
+      !parsed.port
+    );
+  };
+  const isSupabaseProjectOrigin = (value?: string) => {
+    const parsed = parsePublicHttpsUrl(value);
+    return Boolean(
+      parsed &&
+      isHttpsOrigin(value) &&
+      /^[a-z0-9-]+\.supabase\.co$/i.test(parsed.hostname)
+    );
   };
   const publicAppUrl = process.env.EXPO_PUBLIC_APP_URL?.trim().replace(/\/+$/, '');
   let universalLinkHost: string | null = null;
-  if (publicAppUrl && isHttpsUrl(publicAppUrl)) {
+  if (publicAppUrl && isHttpsOrigin(publicAppUrl)) {
     try {
       const parsed = new URL(publicAppUrl);
-      if (parsed.protocol === 'https:') universalLinkHost = parsed.host;
+      if (parsed.protocol === 'https:') universalLinkHost = parsed.hostname;
     } catch {
       universalLinkHost = null;
     }
@@ -45,7 +78,7 @@ export default () => {
 
   if (productionBuild) {
     const missing = [
-      (!isHttpsUrl(supabaseUrl) || isPlaceholder(supabaseUrl)) && 'EXPO_PUBLIC_SUPABASE_URL',
+      !isSupabaseProjectOrigin(supabaseUrl) && 'EXPO_PUBLIC_SUPABASE_URL (canonical Supabase project origin)',
       (isPlaceholder(supabaseAnonKey) || (supabaseAnonKey?.length ?? 0) < 20) &&
         'EXPO_PUBLIC_SUPABASE_ANON_KEY',
       (isPlaceholder(easProjectId) ||
@@ -54,14 +87,14 @@ export default () => {
         )) &&
         'EXPO_PUBLIC_EAS_PROJECT_ID',
       isPlaceholder(androidMapsKey) && 'EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY',
-      !isHttpsUrl(mapStyleUrl) && 'EXPO_PUBLIC_MAP_STYLE_URL (valid HTTPS URL)',
+      !isHttpsUrl(mapStyleUrl) && 'EXPO_PUBLIC_MAP_STYLE_URL (public HTTPS URL)',
       isPlaceholder(mapAttribution) && 'EXPO_PUBLIC_MAP_ATTRIBUTION',
-      !isHttpsUrl(mapAttributionUrl) && 'EXPO_PUBLIC_MAP_ATTRIBUTION_URL (valid HTTPS URL)',
-      !universalLinkHost && 'EXPO_PUBLIC_APP_URL (valid HTTPS URL)',
-      !isHttpsUrl(privacyPolicyUrl) && 'EXPO_PUBLIC_PRIVACY_POLICY_URL (valid HTTPS URL)',
-      !isHttpsUrl(termsUrl) && 'EXPO_PUBLIC_TERMS_URL (valid HTTPS URL)',
-      !isHttpsUrl(communityRulesUrl) && 'EXPO_PUBLIC_COMMUNITY_RULES_URL (valid HTTPS URL)',
-      !isHttpsUrl(supportUrl) && 'EXPO_PUBLIC_SUPPORT_URL (valid HTTPS URL)',
+      !isHttpsUrl(mapAttributionUrl) && 'EXPO_PUBLIC_MAP_ATTRIBUTION_URL (public HTTPS URL)',
+      !universalLinkHost && 'EXPO_PUBLIC_APP_URL (canonical public HTTPS origin)',
+      !isHttpsUrl(privacyPolicyUrl) && 'EXPO_PUBLIC_PRIVACY_POLICY_URL (public HTTPS URL)',
+      !isHttpsUrl(termsUrl) && 'EXPO_PUBLIC_TERMS_URL (public HTTPS URL)',
+      !isHttpsUrl(communityRulesUrl) && 'EXPO_PUBLIC_COMMUNITY_RULES_URL (public HTTPS URL)',
+      !isHttpsUrl(supportUrl) && 'EXPO_PUBLIC_SUPPORT_URL (public HTTPS URL)',
     ].filter(Boolean);
     if (missing.length) {
       throw new Error(`Spottr production configuration is incomplete: ${missing.join(', ')}`);
