@@ -10,6 +10,7 @@ import {
   validateSbomImplementationContract,
   validateSbomPackageContract,
   validateSecretHistoryGate,
+  validateTextIntegrityGate,
 } from './quality-workflow-verifier.mjs';
 
 const command = (file) => `psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -f ${file}`;
@@ -65,6 +66,10 @@ const validWorkflow = [
   '          npm run verify:production-sbom',
   '          sha256sum spottr-production.cdx.json > spottr-production.cdx.json.sha256',
   '  validate:',
+  '      - name: Reject malformed source text',
+  '        run: npm run verify:text-integrity',
+  '      - name: Test source-text verifier',
+  '        run: npm run test:text-integrity-tools',
   '      - name: Test production maintenance control plane',
   '        run: npm run test:maintenance-tools',
   '      - name: Test production SBOM verifier',
@@ -110,6 +115,17 @@ test('requires privileged production maintenance coverage', () => {
     '  validate:',
     '  unrelated-job:\n      - run: npm run test:maintenance-tools\n  validate:',
   ).replace('      - name: Test production maintenance control plane\n        run: npm run test:maintenance-tools', '')).length > 0);
+});
+
+test('requires source text-integrity verification in direct and aggregate validation', () => {
+  const manifest = { scripts: {
+    validate: 'npm run verify:text-integrity && npm run test:text-integrity-tools',
+    'verify:text-integrity': 'node scripts/verify-text-integrity.mjs',
+    'test:text-integrity-tools': 'node --test scripts/verify-text-integrity.test.mjs',
+  } };
+  assert.deepEqual(validateTextIntegrityGate(validWorkflow, manifest), []);
+  assert.ok(validateTextIntegrityGate(validWorkflow.replace('run: npm run verify:text-integrity', 'run: echo skipped'), manifest).length > 0);
+  assert.ok(validateTextIntegrityGate(validWorkflow, { scripts: {} }).length > 0);
 });
 
 test('requires a fail-closed full-history secret scan with ephemeral redacted output', () => {

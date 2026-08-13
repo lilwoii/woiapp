@@ -70,6 +70,24 @@ export function validateMaintenanceGate(workflow) {
     : ['Quality workflow must test the privileged production maintenance control plane.'];
 }
 
+export function validateTextIntegrityGate(workflow, manifest) {
+  const validateJob = jobBody(workflow, 'validate');
+  const errors = [];
+  for (const command of ['npm run verify:text-integrity', 'npm run test:text-integrity-tools']) {
+    if (!validateJob.includes(`run: ${command}`)) {
+      errors.push(`Validate job must execute the source text-integrity control: ${command}.`);
+    }
+    if (!manifest?.scripts?.validate?.includes(command)) {
+      errors.push(`Aggregate validation must retain the source text-integrity control: ${command}.`);
+    }
+  }
+  if (manifest?.scripts?.['verify:text-integrity'] !== 'node scripts/verify-text-integrity.mjs'
+    || manifest?.scripts?.['test:text-integrity-tools'] !== 'node --test scripts/verify-text-integrity.test.mjs') {
+    errors.push('Source text-integrity scripts must remain fail-closed and repository-owned.');
+  }
+  return errors;
+}
+
 export function validateSecretHistoryGate(workflow) {
   const job = jobBody(workflow, 'secret-history');
   const errors = [];
@@ -269,6 +287,7 @@ export async function verifyQualityWorkflow(projectRoot = PROJECT_ROOT) {
     ...validateFullRuntimeGate(workflow),
     ...validatePinnedActions(workflow),
     ...validateMaintenanceGate(workflow),
+    ...validateTextIntegrityGate(workflow, JSON.parse(rawManifest)),
     ...validateSecretHistoryGate(workflow),
     ...validateProductionSbomGate(workflow),
     ...validateSbomPackageContract(JSON.parse(rawManifest), JSON.parse(rawLockfile)),
