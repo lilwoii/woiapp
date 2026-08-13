@@ -40,4 +40,5 @@ Deno.test('routing token stays server-side and requests are authenticated and ra
   assertMatch(navigationScreen, /watcherGeneration\.current !== generation/);
   assertMatch(navigationScreen, /appStateRef\.current !== 'active'/);
   assertMatch(navigationScreen, /aria-describedby="automatic-rerouting-description"/);
+  assertMatch(navigationScreen, /aria-checked=\{automaticRerouting\}/);
 });

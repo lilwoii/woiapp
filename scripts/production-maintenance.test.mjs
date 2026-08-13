@@ -98,8 +98,8 @@ test('privileged maintenance workflow pins actions and scopes production secrets
     maintenanceWorkflow.slice(0, stepsOffset),
     /SPOTTR_MAINTENANCE_|SPOTTR_ACCOUNT_DELETE_|SPOTTR_MEDIA_CLEANUP_/u,
   );
-  assert.match(maintenanceWorkflow, /uses: actions\/checkout@[0-9a-f]{40} # v4/u);
-  assert.match(maintenanceWorkflow, /uses: actions\/setup-node@[0-9a-f]{40} # v4/u);
+  assert.match(maintenanceWorkflow, /uses: actions\/checkout@[0-9a-f]{40} # v6/u);
+  assert.match(maintenanceWorkflow, /uses: actions\/setup-node@[0-9a-f]{40} # v6/u);
   assert.doesNotMatch(maintenanceWorkflow, /uses: [^\s]+@(v\d+|main|master)(?:\s|$)/u);
   const maintenanceStep = maintenanceWorkflow.slice(
     maintenanceWorkflow.indexOf('      - name: Run bounded deletion'),

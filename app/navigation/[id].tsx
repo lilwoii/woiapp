@@ -328,6 +328,7 @@ export default function NavigationScreen() {
                   <Text nativeID="automatic-rerouting-description" style={styles.rerouteDescription}>{automaticReroutingPrivacyNotice}</Text>
                 </View>
                 <Pressable
+                  aria-checked={automaticRerouting}
                   aria-describedby="automatic-rerouting-description"
                   accessibilityHint={automaticReroutingPrivacyNotice}
                   accessibilityLabel="Automatic rerouting"

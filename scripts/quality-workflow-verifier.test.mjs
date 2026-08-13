@@ -14,7 +14,7 @@ const validWorkflow = [
   '      - uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2',
   '          version: 2.84.2',
   '      - run: npm run test:db-runtime',
-  '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4',
+  '      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6',
   `if ${command('supabase/tests/psql_fail_fast_probe.sql')}; then`,
   '  exit 1',
   'fi',
@@ -52,8 +52,8 @@ test('requires the pinned full Supabase runtime gate', () => {
 test('requires every action to use an immutable commit', () => {
   assert.deepEqual(validatePinnedActions(validWorkflow), []);
   const errors = validatePinnedActions(validWorkflow.replace(
-    'actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4',
-    'actions/checkout@v4',
+    'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6',
+    'actions/checkout@v6',
   ));
   assert.ok(errors.some((error) => error.includes('not pinned')));
 });
