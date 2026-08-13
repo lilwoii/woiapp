@@ -138,6 +138,7 @@ test('requires a commit-bound, narrowly uploaded production SBOM and its verifie
 test('requires the security-fixed SBOM generator and lockfile identity', () => {
   const manifest = {
     devDependencies: { '@cyclonedx/cyclonedx-npm': '6.0.1' },
+    dependencies: { 'react-native-gesture-handler': '~2.32.0' },
     overrides: { libxmljs2: '0.37.0', tar: '7.5.22' },
     scripts: {
       'generate:production-sbom': 'cyclonedx-npm --package-lock-only --omit dev --spec-version 1.6 --output-reproducible --output-format JSON --output-file spottr-production.cdx.json --validate',
@@ -145,13 +146,30 @@ test('requires the security-fixed SBOM generator and lockfile identity', () => {
       'test:production-sbom-tools': 'node --test scripts/verify-production-sbom.test.mjs',
     },
   };
+  manifest.devDependencies['@react-native/metro-config'] = '0.86.2';
+  manifest.devDependencies['@testing-library/dom'] = '10.4.1';
   const lockfile = { packages: {
     'node_modules/@cyclonedx/cyclonedx-npm': { version: '6.0.1', dev: true },
+    'node_modules/@react-native/metro-config': { version: '0.86.2', dev: true },
+    'node_modules/@testing-library/dom': { version: '10.4.1', dev: true },
     'node_modules/libxmljs2': { version: '0.37.0' },
+    'node_modules/react-native-gesture-handler': { version: '2.32.0' },
     'node_modules/tar': { version: '7.5.22' },
   } };
   assert.deepEqual(validateSbomPackageContract(manifest, lockfile), []);
   assert.ok(validateSbomPackageContract({ ...manifest, devDependencies: {} }, lockfile).length > 0);
   assert.ok(validateSbomPackageContract(manifest, { packages: {} }).length > 0);
   assert.ok(validateSbomPackageContract({ ...manifest, scripts: {} }, lockfile).length > 0);
+  assert.ok(validateSbomPackageContract({
+    ...manifest,
+    devDependencies: { ...manifest.devDependencies, '@react-native/metro-config': 'latest' },
+  }, lockfile).length > 0);
+  assert.ok(validateSbomPackageContract({
+    ...manifest,
+    dependencies: {},
+  }, lockfile).length > 0);
+  assert.ok(validateSbomPackageContract({
+    ...manifest,
+    scripts: { ...manifest.scripts, 'generate:production-sbom': `${manifest.scripts['generate:production-sbom']} --ignore-npm-errors` },
+  }, lockfile).length > 0);
 });

@@ -160,6 +160,11 @@ export function validateSbomPackageContract(manifest, lockfile) {
   if (manifest?.devDependencies?.['@cyclonedx/cyclonedx-npm'] !== '6.0.1') {
     errors.push('CycloneDX npm generator must remain exactly pinned to 6.0.1.');
   }
+  if (manifest?.devDependencies?.['@react-native/metro-config'] !== '0.86.2'
+    || manifest?.devDependencies?.['@testing-library/dom'] !== '10.4.1'
+    || manifest?.dependencies?.['react-native-gesture-handler'] !== '~2.32.0') {
+    errors.push('Production dependency graph peers must remain present in their reviewed runtime/tooling scopes.');
+  }
   if (manifest?.scripts?.['generate:production-sbom'] !== expectedGenerator
     || manifest?.scripts?.['verify:production-sbom'] !== 'node scripts/verify-production-sbom.mjs spottr-production.cdx.json'
     || manifest?.scripts?.['test:production-sbom-tools'] !== 'node --test scripts/verify-production-sbom.test.mjs') {
@@ -175,6 +180,14 @@ export function validateSbomPackageContract(manifest, lockfile) {
   if (lockfile?.packages?.['node_modules/libxmljs2']?.version !== '0.37.0'
     || lockfile?.packages?.['node_modules/tar']?.version !== '7.5.22') {
     errors.push('Lockfile must retain the reviewed SBOM-generator transitive versions.');
+  }
+  const metro = lockfile?.packages?.['node_modules/@react-native/metro-config'];
+  const testingDom = lockfile?.packages?.['node_modules/@testing-library/dom'];
+  const gestureHandler = lockfile?.packages?.['node_modules/react-native-gesture-handler'];
+  if (metro?.version !== '0.86.2' || metro?.dev !== true
+    || testingDom?.version !== '10.4.1' || testingDom?.dev !== true
+    || gestureHandler?.version !== '2.32.0' || gestureHandler?.dev === true) {
+    errors.push('Lockfile must satisfy the reviewed production graph peers without moving tooling into runtime scope.');
   }
   return errors;
 }
