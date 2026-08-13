@@ -196,6 +196,12 @@ jobs:
       - name: Reject parser-risk and malformed build assets
         run: npm run verify:build-assets
 
+      - name: Reject malformed source text
+        run: npm run verify:text-integrity
+
+      - name: Test source-text verifier
+        run: npm run test:text-integrity-tools
+
       - name: Test build-asset verifier
         run: npm run test:build-asset-tools
 
