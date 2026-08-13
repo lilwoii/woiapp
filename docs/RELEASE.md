@@ -81,9 +81,20 @@ hydration, Studio, and private-conversation listing. These are application-integ
 fixtures, not proof of an MFA ceremony or database RLS;
 populated production data and authorization still require live staging evidence.
 
+Two separate least-privilege CI jobs add baseline supply-chain evidence. One
+downloads a checksum-pinned TruffleHog binary and scans the complete reachable
+Git history while keeping potential credential material out of artifacts and
+logs. The other generates a validated, reproducible CycloneDX 1.6 production
+SBOM plus SHA-256 sidecar, uploaded under an artifact name bound to the exact
+commit SHA. Review both job results and preserve the SBOM artifact with the
+release record. This automation does not inspect unreachable/deleted Git
+objects, rotate credentials, determine exploitability, review licenses, or
+replace an independent security and dependency review.
+
 Required independent evidence before public launch:
 
-- secret scan and dependency/SBOM review;
+- review of the reachable-history secret scan, credential-rotation status, and
+  commit-bound dependency/SBOM evidence;
 - database migration review and adversarial RLS tests;
 - web, mobile, Edge Function, and Supabase API penetration tests;
 - accessibility checks on keyboard, screen reader, text scaling, contrast,

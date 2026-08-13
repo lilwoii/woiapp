@@ -48,6 +48,8 @@ yarn-error.*
 coverage/
 playwright-report/
 test-results/
+spottr-production.cdx.json
+spottr-production.cdx.json.sha256
 .tmp-pglast/
 dist-ios/
 dist-android/
