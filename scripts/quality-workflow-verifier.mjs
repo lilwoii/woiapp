@@ -129,6 +129,21 @@ export function validateProductionSbomGate(workflow) {
   if (!/^          GITHUB_SHA: \$\{\{ github\.sha \}\}\s*$/m.test(job)) {
     errors.push('Production SBOM verification must receive the exact workflow commit SHA.');
   }
+  if (!/^          SPOTTR_CYCLONEDX_SCHEMA_DIR: \$\{\{ runner\.temp \}\}\/cyclonedx-schema-1\.5\s*$/m.test(job)) {
+    errors.push('Production SBOM verification must use the isolated official-schema directory.');
+  }
+  const schemaContract = [
+    'CycloneDX/specification/c320fc0f0b46873864927d9d5684eea7ba439728/schema',
+    '067f7824b08653839ea050ae9e09ca48375eadc2652b0e2a299476e7db90335b',
+    '8bae002c25e723db7ee1f26afde680ae1a2b1a8f6b4b4b0fd65dc3becb090aae',
+    '4f6e2b05c05d26a4f2dc5879fbc2fca94b0a28db46289d0c51345621b71cfbfc',
+    "--proto '=https'",
+    '--tlsv1.2',
+    'sha256sum --check --status',
+  ];
+  for (const token of schemaContract) {
+    if (!job.includes(token)) errors.push(`Production-SBOM schema contract is missing: ${token}`);
+  }
   if (!/^          sha256sum spottr-production\.cdx\.json > spottr-production\.cdx\.json\.sha256\s*$/m.test(job)) {
     errors.push('Production SBOM must include a SHA-256 sidecar.');
   }
@@ -156,9 +171,18 @@ export function validateProductionSbomGate(workflow) {
 
 export function validateSbomPackageContract(manifest, lockfile) {
   const errors = [];
-  const expectedGenerator = 'cyclonedx-npm --package-lock-only --omit dev --spec-version 1.6 --output-reproducible --output-format JSON --output-file spottr-production.cdx.json --validate';
-  if (manifest?.devDependencies?.['@cyclonedx/cyclonedx-npm'] !== '6.0.1') {
-    errors.push('CycloneDX npm generator must remain exactly pinned to 6.0.1.');
+  const expectedGenerator = 'node scripts/generate-production-sbom.mjs spottr-production.cdx.json';
+  if (manifest?.packageManager !== 'npm@10.9.2') {
+    errors.push('Production SBOM package manager must remain exactly pinned to npm 10.9.2.');
+  }
+  if (manifest?.devDependencies?.['@cyclonedx/cyclonedx-npm'] !== undefined
+    || lockfile?.packages?.['node_modules/@cyclonedx/cyclonedx-npm'] !== undefined) {
+    errors.push('The crashing third-party CycloneDX generator must not return to the release path.');
+  }
+  if (manifest?.devDependencies?.ajv !== '8.20.0'
+    || manifest?.devDependencies?.['ajv-formats'] !== '3.0.1'
+    || manifest?.devDependencies?.['ajv-formats-draft2019'] !== '1.6.1') {
+    errors.push('Official CycloneDX schema validators must remain exactly pinned.');
   }
   if (manifest?.devDependencies?.['@react-native/metro-config'] !== '0.86.2'
     || manifest?.devDependencies?.['@testing-library/dom'] !== '10.4.1'
@@ -170,16 +194,18 @@ export function validateSbomPackageContract(manifest, lockfile) {
     || manifest?.scripts?.['test:production-sbom-tools'] !== 'node --test scripts/verify-production-sbom.test.mjs') {
     errors.push('Production SBOM generation and verification scripts must remain fail-closed and reproducible.');
   }
-  if (manifest?.overrides?.libxmljs2 !== '0.37.0' || manifest?.overrides?.tar !== '7.5.22') {
-    errors.push('SBOM generator transitive security overrides must remain pinned.');
+  if (manifest?.overrides?.libxmljs2 !== undefined || manifest?.overrides?.tar !== undefined
+    || lockfile?.packages?.['node_modules/libxmljs2'] !== undefined
+    || lockfile?.packages?.['node_modules/tar'] !== undefined) {
+    errors.push('Obsolete third-party generator dependencies and overrides must remain absent.');
   }
-  const locked = lockfile?.packages?.['node_modules/@cyclonedx/cyclonedx-npm'];
-  if (locked?.version !== '6.0.1' || locked?.dev !== true) {
-    errors.push('Lockfile must contain the exact CycloneDX development dependency.');
-  }
-  if (lockfile?.packages?.['node_modules/libxmljs2']?.version !== '0.37.0'
-    || lockfile?.packages?.['node_modules/tar']?.version !== '7.5.22') {
-    errors.push('Lockfile must retain the reviewed SBOM-generator transitive versions.');
+  const ajv = lockfile?.packages?.['node_modules/ajv'];
+  const ajvFormats = lockfile?.packages?.['node_modules/ajv-formats'];
+  const draftFormats = lockfile?.packages?.['node_modules/ajv-formats-draft2019'];
+  if (ajv?.version !== '8.20.0' || ajv?.dev !== true
+    || ajvFormats?.version !== '3.0.1' || ajvFormats?.dev !== true
+    || draftFormats?.version !== '1.6.1' || draftFormats?.dev !== true) {
+    errors.push('Lockfile must retain exact schema-validator versions.');
   }
   const metro = lockfile?.packages?.['node_modules/@react-native/metro-config'];
   const testingDom = lockfile?.packages?.['node_modules/@testing-library/dom'];
@@ -192,11 +218,51 @@ export function validateSbomPackageContract(manifest, lockfile) {
   return errors;
 }
 
+export function validateSbomImplementationContract(generator, verifier) {
+  const errors = [];
+  const generatorControls = [
+    'spawnSync(process.execPath',
+    "'sbom'",
+    "'--package-lock-only'",
+    "'--omit=dev'",
+    "'--sbom-format=cyclonedx'",
+    "'--sbom-type=application'",
+    'maxBuffer: MAX_OUTPUT_BYTES',
+    'result.stderr.trim().length > 0',
+    'buildDeterministicProductionSbom',
+    'validateAgainstOfficialSchema',
+  ];
+  for (const token of generatorControls) {
+    if (!generator.includes(token)) errors.push(`Production SBOM generator is missing: ${token}`);
+  }
+  if (/--(?:force|ignore-npm-errors)|shell:\s*true|\bexec(?:File)?Sync\s*\(/.test(generator)) {
+    errors.push('Production SBOM generator must not bypass npm errors or invoke a shell.');
+  }
+  const verifierControls = [
+    'spottr:source-commit',
+    'productionInventory',
+    'expectedDependencyGraph',
+    'stableReference',
+    'validateAgainstOfficialSchema',
+    'SBOM component paths must exactly equal the production package-lock inventory.',
+    'Production SBOM dependency graph must exactly match production lockfile resolution.',
+    '067f7824b08653839ea050ae9e09ca48375eadc2652b0e2a299476e7db90335b',
+    '8bae002c25e723db7ee1f26afde680ae1a2b1a8f6b4b4b0fd65dc3becb090aae',
+    '4f6e2b05c05d26a4f2dc5879fbc2fca94b0a28db46289d0c51345621b71cfbfc',
+  ];
+  for (const token of verifierControls) {
+    if (!verifier.includes(token)) errors.push(`Production SBOM verifier is missing: ${token}`);
+  }
+  return errors;
+}
+
 export async function verifyQualityWorkflow(projectRoot = PROJECT_ROOT) {
-  const [workflow, rawManifest, rawLockfile] = await Promise.all([
+  const [workflow, rawManifest, rawLockfile, generator, verifier] = await Promise.all([
     readFile(path.join(projectRoot, '.github', 'workflows', 'quality.yml'), 'utf8'),
     readFile(path.join(projectRoot, 'package.json'), 'utf8'),
     readFile(path.join(projectRoot, 'package-lock.json'), 'utf8'),
+    readFile(path.join(projectRoot, 'scripts', 'generate-production-sbom.mjs'), 'utf8'),
+    readFile(path.join(projectRoot, 'scripts', 'verify-production-sbom.mjs'), 'utf8'),
   ]);
   const errors = [
     ...validatePostgresCommands(workflow),
@@ -206,6 +272,7 @@ export async function verifyQualityWorkflow(projectRoot = PROJECT_ROOT) {
     ...validateSecretHistoryGate(workflow),
     ...validateProductionSbomGate(workflow),
     ...validateSbomPackageContract(JSON.parse(rawManifest), JSON.parse(rawLockfile)),
+    ...validateSbomImplementationContract(generator, verifier),
   ];
   if (errors.length) throw new Error(errors.join('\n'));
 }

@@ -5,6 +5,7 @@
   "engines": {
     "node": ">=22.13.0"
   },
+  "packageManager": "npm@10.9.2",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -31,7 +32,7 @@
     "verify:native-artifacts": "node scripts/native-release-verifier.mjs --artifacts",
     "verify:native-release": "npm run verify:native-config && npm run export:ios && npm run export:android && npm run verify:native-artifacts",
     "test:maintenance-tools": "node --test scripts/production-maintenance.test.mjs",
-    "generate:production-sbom": "cyclonedx-npm --package-lock-only --omit dev --spec-version 1.6 --output-reproducible --output-format JSON --output-file spottr-production.cdx.json --validate",
+    "generate:production-sbom": "node scripts/generate-production-sbom.mjs spottr-production.cdx.json",
     "verify:production-sbom": "node scripts/verify-production-sbom.mjs spottr-production.cdx.json",
     "test:production-sbom-tools": "node --test scripts/verify-production-sbom.test.mjs",
     "test:audit-tools": "node --test scripts/production-audit-gate.test.mjs",
@@ -76,7 +77,9 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
-    "@cyclonedx/cyclonedx-npm": "6.0.1",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "ajv-formats-draft2019": "1.6.1",
     "@playwright/test": "^1.62.1",
     "@react-native/jest-preset": "^0.86.2",
     "@react-native/metro-config": "0.86.2",
@@ -94,9 +97,7 @@
   },
   "overrides": {
     "brace-expansion": "5.0.9",
-    "libxmljs2": "0.37.0",
     "postcss": "8.5.23",
-    "tar": "7.5.22",
     "uuid": "11.1.1",
     "ws": "8.21.1"
   },

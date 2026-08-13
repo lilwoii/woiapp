@@ -7,6 +7,7 @@ import {
   validatePinnedActions,
   validatePostgresCommands,
   validateProductionSbomGate,
+  validateSbomImplementationContract,
   validateSbomPackageContract,
   validateSecretHistoryGate,
 } from './quality-workflow-verifier.mjs';
@@ -53,6 +54,13 @@ const validWorkflow = [
   '          overwrite: false',
   '          include-hidden-files: false',
   '      - run: npm ci',
+  '          https://raw.githubusercontent.com/CycloneDX/specification/c320fc0f0b46873864927d9d5684eea7ba439728/schema',
+  "          curl --proto '=https' --tlsv1.2",
+  '          067f7824b08653839ea050ae9e09ca48375eadc2652b0e2a299476e7db90335b',
+  '          8bae002c25e723db7ee1f26afde680ae1a2b1a8f6b4b4b0fd65dc3becb090aae',
+  '          4f6e2b05c05d26a4f2dc5879fbc2fca94b0a28db46289d0c51345621b71cfbfc',
+  '          sha256sum --check --status',
+  '          SPOTTR_CYCLONEDX_SCHEMA_DIR: ${{ runner.temp }}/cyclonedx-schema-1.5',
   '          npm run generate:production-sbom',
   '          npm run verify:production-sbom',
   '          sha256sum spottr-production.cdx.json > spottr-production.cdx.json.sha256',
@@ -130,6 +138,8 @@ test('requires a commit-bound, narrowly uploaded production SBOM and its verifie
     ['spottr-production.cdx.json.sha256', '**/*'],
     ['npm run verify:production-sbom', 'echo skipped'],
     ['GITHUB_SHA: ${{ github.sha }}', 'GITHUB_SHA: deadbeef'],
+    ['c320fc0f0b46873864927d9d5684eea7ba439728', 'main'],
+    ['067f7824b08653839ea050ae9e09ca48375eadc2652b0e2a299476e7db90335b', '0'.repeat(64)],
   ]) {
     assert.ok(validateProductionSbomGate(validWorkflow.replace(...mutation)).length > 0);
   }
@@ -137,11 +147,16 @@ test('requires a commit-bound, narrowly uploaded production SBOM and its verifie
 
 test('requires the security-fixed SBOM generator and lockfile identity', () => {
   const manifest = {
-    devDependencies: { '@cyclonedx/cyclonedx-npm': '6.0.1' },
+    packageManager: 'npm@10.9.2',
+    devDependencies: {
+      ajv: '8.20.0',
+      'ajv-formats': '3.0.1',
+      'ajv-formats-draft2019': '1.6.1',
+    },
     dependencies: { 'react-native-gesture-handler': '~2.32.0' },
-    overrides: { libxmljs2: '0.37.0', tar: '7.5.22' },
+    overrides: {},
     scripts: {
-      'generate:production-sbom': 'cyclonedx-npm --package-lock-only --omit dev --spec-version 1.6 --output-reproducible --output-format JSON --output-file spottr-production.cdx.json --validate',
+      'generate:production-sbom': 'node scripts/generate-production-sbom.mjs spottr-production.cdx.json',
       'verify:production-sbom': 'node scripts/verify-production-sbom.mjs spottr-production.cdx.json',
       'test:production-sbom-tools': 'node --test scripts/verify-production-sbom.test.mjs',
     },
@@ -149,12 +164,12 @@ test('requires the security-fixed SBOM generator and lockfile identity', () => {
   manifest.devDependencies['@react-native/metro-config'] = '0.86.2';
   manifest.devDependencies['@testing-library/dom'] = '10.4.1';
   const lockfile = { packages: {
-    'node_modules/@cyclonedx/cyclonedx-npm': { version: '6.0.1', dev: true },
     'node_modules/@react-native/metro-config': { version: '0.86.2', dev: true },
     'node_modules/@testing-library/dom': { version: '10.4.1', dev: true },
-    'node_modules/libxmljs2': { version: '0.37.0' },
+    'node_modules/ajv': { version: '8.20.0', dev: true },
+    'node_modules/ajv-formats': { version: '3.0.1', dev: true },
+    'node_modules/ajv-formats-draft2019': { version: '1.6.1', dev: true },
     'node_modules/react-native-gesture-handler': { version: '2.32.0' },
-    'node_modules/tar': { version: '7.5.22' },
   } };
   assert.deepEqual(validateSbomPackageContract(manifest, lockfile), []);
   assert.ok(validateSbomPackageContract({ ...manifest, devDependencies: {} }, lockfile).length > 0);
@@ -172,4 +187,34 @@ test('requires the security-fixed SBOM generator and lockfile identity', () => {
     ...manifest,
     scripts: { ...manifest.scripts, 'generate:production-sbom': `${manifest.scripts['generate:production-sbom']} --ignore-npm-errors` },
   }, lockfile).length > 0);
+});
+
+test('requires a shell-free npm generator and lock-complete official-schema verifier', () => {
+  const generator = [
+    'spawnSync(process.execPath',
+    "'sbom'",
+    "'--package-lock-only'",
+    "'--omit=dev'",
+    "'--sbom-format=cyclonedx'",
+    "'--sbom-type=application'",
+    'maxBuffer: MAX_OUTPUT_BYTES',
+    'result.stderr.trim().length > 0',
+    'buildDeterministicProductionSbom',
+    'validateAgainstOfficialSchema',
+  ].join('\n');
+  const verifier = [
+    'spottr:source-commit',
+    'productionInventory',
+    'expectedDependencyGraph',
+    'stableReference',
+    'validateAgainstOfficialSchema',
+    'SBOM component paths must exactly equal the production package-lock inventory.',
+    'Production SBOM dependency graph must exactly match production lockfile resolution.',
+    '067f7824b08653839ea050ae9e09ca48375eadc2652b0e2a299476e7db90335b',
+    '8bae002c25e723db7ee1f26afde680ae1a2b1a8f6b4b4b0fd65dc3becb090aae',
+    '4f6e2b05c05d26a4f2dc5879fbc2fca94b0a28db46289d0c51345621b71cfbfc',
+  ].join('\n');
+  assert.deepEqual(validateSbomImplementationContract(generator, verifier), []);
+  assert.ok(validateSbomImplementationContract(`${generator}\nshell: true`, verifier).length > 0);
+  assert.ok(validateSbomImplementationContract(generator, verifier.replace('productionInventory', '')).length > 0);
 });
