@@ -40,10 +40,14 @@ const initialRegion = {
 function VenueMarker({
   category,
   logoUrl,
+  onLogoError,
+  onLogoSettled,
   selected,
 }: {
   category: Place['category'];
   logoUrl?: string;
+  onLogoError?: () => void;
+  onLogoSettled?: () => void;
   selected: boolean;
 }) {
   const presentation = mapCategoryPresentation[category];
@@ -55,7 +59,7 @@ function VenueMarker({
         selected && styles.selectedPin,
       ]}>
       {logoUrl ? (
-        <Image source={{ uri: logoUrl }} style={styles.logo} />
+        <Image onError={onLogoError} onLoadEnd={onLogoSettled} source={{ uri: logoUrl }} style={styles.logo} />
       ) : (
         <FontAwesome6 color={palette.ink} name={presentation.icon} size={14} />
       )}
@@ -63,6 +67,43 @@ function VenueMarker({
         <Text style={styles.categoryBadgeText}>{presentation.badge}</Text>
       </View>
     </View>
+  );
+}
+
+function VenueMapMarker({
+  category,
+  coordinate,
+  description,
+  logoUrl,
+  onPress,
+  selected,
+  title,
+}: {
+  category: Place['category'];
+  coordinate: { latitude: number; longitude: number };
+  description?: string;
+  logoUrl?: string;
+  onPress?: () => void;
+  selected: boolean;
+  title: string;
+}) {
+  const [logoFailed, setLogoFailed] = useState(false);
+  const [tracksLogo, setTracksLogo] = useState(Boolean(logoUrl));
+  return (
+    <Marker
+      coordinate={coordinate}
+      description={description}
+      onPress={onPress}
+      title={title}
+      tracksViewChanges={tracksLogo}>
+      <VenueMarker
+        category={category}
+        logoUrl={logoFailed ? undefined : logoUrl}
+        onLogoError={() => setLogoFailed(true)}
+        onLogoSettled={() => setTracksLogo(false)}
+        selected={selected}
+      />
+    </Marker>
   );
 }
 
@@ -113,7 +154,7 @@ export function LiveMap({
     [places, region.longitudeDelta]
   );
   const renderedInventoryFeatures = useMemo(
-    () => clusterInventoryFeatures(inventoryFeatures, zoomFromLongitudeDelta(region.longitudeDelta)),
+    () => clusterInventoryFeatures(inventoryFeatures, zoomFromLongitudeDelta(region.longitudeDelta), 120),
     [inventoryFeatures, region.longitudeDelta]
   );
   const placesById = useMemo(
@@ -191,7 +232,7 @@ export function LiveMap({
         </>
       ) : null}
       {navigationMode && userCoordinates ? (
-        <Marker coordinate={userCoordinates} tracksViewChanges>
+        <Marker coordinate={userCoordinates} tracksViewChanges={false}>
           <View accessibilityLabel={`Your live ${navigationMode} position`} style={styles.navigationMarker}>
             <FontAwesome6
               color="#FFFFFF"
@@ -223,22 +264,19 @@ export function LiveMap({
         }
         const place = feature.businessId ? placesById.get(feature.businessId) : undefined;
         return (
-          <Marker
+          <VenueMapMarker
+            category={feature.dominantCategory}
             coordinate={{ latitude: feature.latitude, longitude: feature.longitude }}
             description={place?.todayHours ?? feature.sourceLabel}
             key={`${feature.id}:${feature.logoUrl ?? ''}:${feature.businessId === selectedId}`}
+            logoUrl={feature.logoUrl}
             onPress={() => {
               if (place) onSelect?.(place);
               else if (feature.businessId) onSelectBusinessId?.(feature.businessId);
             }}
+            selected={feature.businessId === selectedId}
             title={place?.name ?? feature.name ?? 'Food place'}
-            tracksViewChanges={false}>
-            <VenueMarker
-              category={feature.dominantCategory}
-              logoUrl={feature.logoUrl}
-              selected={feature.businessId === selectedId}
-            />
-          </Marker>
+          />
         );
       })}
       {!inventoryFeatures.length ? clientFeatures.map((feature) => {
@@ -266,15 +304,16 @@ export function LiveMap({
         const isSelected = selectedId === place.id;
 
         return (
-          <Marker
+          <VenueMapMarker
+            category={place.category}
             coordinate={{ latitude: place.latitude, longitude: place.longitude }}
             description={`${place.categoryLabel} · ${place.todayHours}`}
-            key={place.id}
+            key={`${place.id}:${place.logoUrl}:${isSelected}`}
+            logoUrl={place.logoUrl}
             onPress={() => onSelect?.(place)}
+            selected={isSelected}
             title={place.name}
-            tracksViewChanges={false}>
-            <VenueMarker category={place.category} logoUrl={place.logoUrl} selected={isSelected} />
-          </Marker>
+          />
         );
       }) : null}
     </MapView>
