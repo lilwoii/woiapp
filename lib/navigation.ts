@@ -61,6 +61,20 @@ export function parseRoutePlan(value: unknown, expectedMode?: TravelMode, now = 
   };
 }
 
+export function externalDirectionsUrl(
+  destination: NavigationCoordinate,
+  platform: string,
+): string | null {
+  const validDestination = coordinate(destination);
+  if (!validDestination) return null;
+  const encodedDestination = encodeURIComponent(
+    `${validDestination.latitude},${validDestination.longitude}`,
+  );
+  return platform === 'ios'
+    ? `https://maps.apple.com/?daddr=${encodedDestination}`
+    : `https://www.google.com/maps/dir/?api=1&destination=${encodedDestination}`;
+}
+
 export async function requestRoutePlan(input: {
   origin: NavigationCoordinate;
   destination: NavigationCoordinate;

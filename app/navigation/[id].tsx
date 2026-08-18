@@ -21,6 +21,7 @@ import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
 import { featureFlags } from '@/lib/features';
 import {
+  externalDirectionsUrl,
   formatRouteDistance,
   formatRouteDuration,
   nearestRouteStep,
@@ -212,10 +213,14 @@ export default function NavigationScreen() {
 
   const openExternalMaps = () => {
     if (!place) return;
-    const url = Platform.OS === 'ios'
-      ? `maps://?daddr=${place.latitude},${place.longitude}`
-      : `https://www.google.com/maps/dir/?api=1&destination=${place.latitude},${place.longitude}`;
-    void Linking.openURL(url);
+    const url = externalDirectionsUrl(place, Platform.OS);
+    if (!url) {
+      setMessage('This listing does not have a valid public destination.');
+      return;
+    }
+    void Linking.openURL(url).catch(() => {
+      setMessage('Your maps app could not open this destination.');
+    });
   };
 
   if ((!place && placeRequestPending) || auth.status === 'loading') {
