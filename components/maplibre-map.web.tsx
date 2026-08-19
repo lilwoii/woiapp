@@ -502,7 +502,18 @@ export default function MapLibreMapView({
         : navigationMode === 'bike'
           ? 'bicycle'
           : null;
-    dot.textContent = navigationIcon ? String.fromCodePoint(FontAwesome6.glyphMap[navigationIcon]) : '';
+    const navigationGlyphMap = navigationIcon
+      ? FontAwesome6.getRawGlyphMap?.('solid') as Record<string, number> | undefined
+      : undefined;
+    const navigationCodePoint = navigationIcon ? navigationGlyphMap?.[navigationIcon] : undefined;
+    const navigationFontFamily = navigationIcon ? FontAwesome6.getFontFamily?.('solid') : undefined;
+    const hasNavigationGlyph =
+      Number.isInteger(navigationCodePoint) &&
+      typeof navigationFontFamily === 'string' &&
+      navigationFontFamily.length > 0;
+    dot.textContent = hasNavigationGlyph
+      ? String.fromCodePoint(navigationCodePoint as number)
+      : '';
     dot.style.alignItems = 'center';
     dot.style.background = '#2166D3';
     dot.style.border = '4px solid #FFFFFF';
@@ -510,10 +521,10 @@ export default function MapLibreMapView({
     dot.style.boxShadow = '0 0 0 8px rgba(33, 102, 211, 0.18)';
     dot.style.color = '#FFFFFF';
     dot.style.display = 'flex';
-    dot.style.fontFamily = navigationMode
-      ? (Object.keys(FontAwesome6.font)[0] ?? 'system-ui, sans-serif')
+    dot.style.fontFamily = hasNavigationGlyph
+      ? navigationFontFamily
       : 'system-ui, sans-serif';
-    dot.style.fontSize = navigationMode ? '15px' : '0';
+    dot.style.fontSize = hasNavigationGlyph ? '15px' : '0';
     dot.style.fontWeight = '900';
     dot.style.height = navigationMode ? '34px' : '18px';
     dot.style.justifyContent = 'center';

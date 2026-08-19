@@ -130,7 +130,26 @@ test('authenticated foreground navigation draws a provider route and remains use
   });
   await expect(page.getByText('Head southeast toward the Arts District')).toBeVisible();
   await expect(page.getByText('26 min · 1.3 mi')).toBeVisible();
-  await expect(page.locator('.maplibregl-marker[aria-label="Your live walk position"]')).toHaveCount(1);
+  const walkMarker = page.locator('.maplibregl-marker[aria-label="Your live walk position"]');
+  await expect(walkMarker).toHaveCount(1);
+  await expect(walkMarker).not.toHaveText('');
+  await expect(walkMarker).toHaveCSS('font-family', /FontAwesome6Free-Solid/u);
+
+  await page.getByRole('radio', { name: 'Drive' }).click();
+  await expect.poll(() => fixture?.routeRequests.length ?? 0).toBe(2);
+  expect(fixture?.routeRequests[1]).toMatchObject({ mode: 'drive' });
+  const driveMarker = page.locator('.maplibregl-marker[aria-label="Your live drive position"]');
+  await expect(driveMarker).toHaveCount(1);
+  await expect(driveMarker).not.toHaveText('');
+  await expect(driveMarker).toHaveCSS('font-family', /FontAwesome6Free-Solid/u);
+
+  await page.getByRole('radio', { name: 'Bike' }).click();
+  await expect.poll(() => fixture?.routeRequests.length ?? 0).toBe(3);
+  expect(fixture?.routeRequests[2]).toMatchObject({ mode: 'bike' });
+  const bikeMarker = page.locator('.maplibregl-marker[aria-label="Your live bike position"]');
+  await expect(bikeMarker).toHaveCount(1);
+  await expect(bikeMarker).not.toHaveText('');
+  await expect(bikeMarker).toHaveCSS('font-family', /FontAwesome6Free-Solid/u);
   const automaticRerouting = page.getByRole('switch', { name: 'Automatic rerouting' });
   await expect(automaticRerouting).toHaveAccessibleDescription(/updated precise current location to Mapbox after at least 100 m of movement and 90 seconds/i);
   await expect(automaticRerouting).toHaveAttribute('aria-checked', 'false');
@@ -138,7 +157,7 @@ test('authenticated foreground navigation draws a provider route and remains use
   await expect(automaticRerouting).toHaveAttribute('aria-checked', 'true');
   await automaticRerouting.click();
   await expect(automaticRerouting).toHaveAttribute('aria-checked', 'false');
-  expect(fixture?.routeRequests).toHaveLength(1);
+  expect(fixture?.routeRequests).toHaveLength(3);
   await expect(page.getByRole('button', { name: 'Hide route' })).toBeVisible();
   await page.getByRole('button', { name: 'Hide route' }).click();
   await expect(page.getByRole('button', { name: 'Show route' })).toBeVisible();

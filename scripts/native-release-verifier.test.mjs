@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import {
   parsePrivacyAccessRequirements,
   validateArtifactMetadata,
   validateNativeConfiguration,
+  verifyArtifact,
 } from './native-release-verifier.mjs';
 
 const require = createRequire(import.meta.url);
@@ -50,4 +54,34 @@ test('artifact metadata rejects traversal and non-Hermes bundles', () => {
   }, 'ios');
   assert.ok(errors.some((error) => error.includes('unsafe')));
   assert.ok(errors.some((error) => error.includes('Hermes')));
+});
+
+test('native artifact verifier rejects fixture state in a non-bundle asset', async (context) => {
+  const projectRoot = await mkdtemp(path.join(tmpdir(), 'spottr-native-purity-'));
+  context.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const outputRoot = path.join(projectRoot, 'dist-ios');
+  const bundlePath = path.join(outputRoot, 'bundles', 'app.hbc');
+  const assetPath = path.join(outputRoot, 'assets', 'icon.txt');
+  await Promise.all([
+    mkdir(path.dirname(bundlePath), { recursive: true }),
+    mkdir(path.dirname(assetPath), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(bundlePath, Buffer.alloc(100_001, 0x61)),
+    writeFile(assetPath, 'spottr-fixture.supabase.co'),
+    writeFile(path.join(outputRoot, 'metadata.json'), JSON.stringify({
+      bundler: 'metro',
+      fileMetadata: {
+        ios: {
+          bundle: 'bundles/app.hbc',
+          assets: [{ path: 'assets/icon.txt' }],
+        },
+      },
+    })),
+  ]);
+
+  await assert.rejects(
+    verifyArtifact(projectRoot, 'ios'),
+    /production output contains synthetic fixture state/,
+  );
 });

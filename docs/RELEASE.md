@@ -80,6 +80,10 @@ map response, real password sign-in, customer hydration, synthetic AAL2 owner-se
 hydration, Studio, and private-conversation listing. These are application-integration
 fixtures, not proof of an MFA ceremony or database RLS;
 populated production data and authorization still require live staging evidence.
+Both web and native release verifiers reject the fixture host, synthetic key,
+test credentials, test accounts, fixture role, and refresh-token markers if
+they appear in a production artifact. A fixture-contaminated export cannot
+satisfy the release gate or be deployed as Spottr.
 
 Two separate least-privilege CI jobs add baseline supply-chain evidence. One
 downloads a checksum-pinned TruffleHog binary and scans the complete reachable

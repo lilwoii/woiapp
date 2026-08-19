@@ -447,8 +447,10 @@ export async function installSpottrFixture(page: Page) {
       const keys = Object.keys(body).sort().join(',');
       const origin = body.origin as Record<string, unknown> | undefined;
       const destination = body.destination as Record<string, unknown> | undefined;
+      const mode = body.mode;
       if (
-        role !== 'customer' || keys !== 'destination,mode,origin' || body.mode !== 'walk' ||
+        role !== 'customer' || keys !== 'destination,mode,origin' ||
+        (mode !== 'drive' && mode !== 'walk' && mode !== 'bike') ||
         origin?.latitude !== 34.0522 || origin.longitude !== -118.2437 ||
         destination?.latitude !== location.latitude || destination.longitude !== location.longitude
       ) {
@@ -460,7 +462,7 @@ export async function installSpottrFixture(page: Page) {
       const generatedAt = new Date();
       await json(route, {
         provider: 'mapbox',
-        mode: 'walk',
+        mode,
         distanceMeters: 2_140,
         durationSeconds: 1_560,
         coordinates: [

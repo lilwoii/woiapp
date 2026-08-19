@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
   validateBundleBudgets,
   validateRouteHtml,
+  validateProductionArtifactTree,
 } from './web-quality-verifier.mjs';
+import { validateProductionArtifactContent } from './production-artifact-purity.mjs';
 
 const VALID_HTML = `<!doctype html><html lang="en"><head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -45,4 +50,42 @@ test('bundle budgets fail closed when a JavaScript regression crosses a ceiling'
     allRouteBytes: 1_500_000,
   });
   assert.ok(errors.some((error) => error.includes('entry JavaScript exceeds')));
+});
+
+test('production artifact verifier rejects isolated browser-fixture state', () => {
+  for (const marker of [
+    'https://spottr-fixture.supabase.co',
+    'spottr-public-fixture-anon-key',
+    'Fixture-password-123!',
+    'owner@spottr.test',
+    'customer@spottr.test',
+    'spottr_fixture_role',
+    'fixture-refresh-customer',
+  ]) {
+    const errors = validateProductionArtifactContent(
+      '_expo/static/js/web/entry-release.js',
+      Buffer.from(`release-prefix:${marker}:release-suffix`),
+    );
+    assert.equal(errors.length, 1, marker);
+    assert.match(errors[0], /synthetic fixture state/u);
+  }
+});
+
+test('production artifact verifier accepts ordinary release content', () => {
+  assert.deepEqual(
+    validateProductionArtifactContent('index.html', '<main>Live local food, mapped.</main>'),
+    [],
+  );
+});
+
+test('production artifact tree rejects fixture state outside HTML and JavaScript', async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'spottr-web-purity-'));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const nestedAsset = path.join(root, 'assets', 'release-manifest.json');
+  await mkdir(path.dirname(nestedAsset), { recursive: true });
+  await writeFile(nestedAsset, '{"endpoint":"https://spottr-fixture.supabase.co"}');
+
+  const errors = await validateProductionArtifactTree(root);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /production output contains synthetic fixture state/u);
 });
