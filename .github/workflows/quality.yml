@@ -14,6 +14,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  expo-lock-refresh:
+    if: github.event_name == 'pull_request' && github.head_ref == 'production-hardening-rc'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Use Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.13.1
+
+      - name: Refresh and validate Expo lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit --fund=false
+          npm ci --ignore-scripts --no-audit --fund=false
+          ./node_modules/.bin/expo install --check
+          sha256sum package-lock.json > package-lock.json.sha256
+
+      - name: Upload refreshed Expo lockfile
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spottr-expo-lock-${{ github.sha }}
+          path: |
+            package-lock.json
+            package-lock.json.sha256
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: false
+          include-hidden-files: false
+
   secret-history:
     permissions:
       contents: read
@@ -31,8 +67,9 @@ jobs:
           set -euo pipefail
           archive="$RUNNER_TEMP/trufflehog.tar.gz"
           scanner="$RUNNER_TEMP/trufflehog"
-          output="$RUNNER_TEMP/trufflehog-output"
-          trap 'rm -f "$archive" "$scanner" "$output"' EXIT
+          output="$RUNNER_TEMP/trufflehog-output.jsonl"
+          scanner_error="$RUNNER_TEMP/trufflehog-stderr"
+          trap 'rm -f "$archive" "$scanner" "$output" "$scanner_error"' EXIT
           curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
             --output "$archive" \
             'https://github.com/trufflesecurity/trufflehog/releases/download/v3.96.0/trufflehog_3.96.0_linux_amd64.tar.gz'
@@ -40,15 +77,15 @@ jobs:
             '7105f1cd6577f058a9e39d0578f1a99c8a1e481e4d3512cd8a09acfe22a0fdc0' \
             "$archive" | sha256sum --check --status
           tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP" trufflehog
-          if ! "$scanner" git "file://$GITHUB_WORKSPACE" \
-            --results=verified,unknown \
+          scanner_status=0
+          "$scanner" --log-level=-1 --json git "file://$GITHUB_WORKSPACE" \
+            --no-verification \
+            --results=unverified,unknown \
             --fail \
             --fail-on-scan-errors \
             --no-update \
-            --github-actions >"$output" 2>&1; then
-            echo 'Secret-history scan failed or found a potential credential. A security owner must diagnose it in a protected environment and rotate any exposed credential.' >&2
-            exit 1
-          fi
+            >"$output" 2>"$scanner_error" || scanner_status=$?
+          node scripts/verify-trufflehog-output.mjs "$output" "$scanner_error" "$scanner_status"
           echo 'Reachable Git history passed the redacted secret scan.'
 
   production-sbom:
@@ -210,6 +247,9 @@ jobs:
 
       - name: Verify quality workflow invariants
         run: npm run test:workflow-tools
+
+      - name: Test secret-history finding policy
+        run: npm run test:secret-history-tools
 
       - name: Verify CodeQL workflow invariants
         run: npm run test:codeql-tools

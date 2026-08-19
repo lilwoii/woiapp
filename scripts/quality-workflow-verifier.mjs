@@ -88,7 +88,7 @@ export function validateTextIntegrityGate(workflow, manifest) {
   return errors;
 }
 
-export function validateSecretHistoryGate(workflow) {
+export function validateSecretHistoryGate(workflow, manifest) {
   const job = jobBody(workflow, 'secret-history');
   const errors = [];
   if (!job) return ['Quality workflow must include a secret-history job.'];
@@ -105,10 +105,15 @@ export function validateSecretHistoryGate(workflow) {
     ['--tlsv1.2', 'TLS minimum'],
     ['sha256sum --check --status', 'archive checksum verification'],
     ['file://$GITHUB_WORKSPACE', 'local full-history source'],
-    ['--results=verified,unknown', 'verified and unknown result coverage'],
+    ['--no-verification', 'detector verification and credentialed lookups disabled'],
+    ['--results=unverified,unknown', 'unverified and unknown result coverage'],
     ['--fail-on-scan-errors', 'scan-error fail-closed behavior'],
     ['--no-update', 'disabled scanner self-update'],
-    ['--github-actions', 'GitHub-aware scan mode'],
+    ['--log-level=-1', 'quiet scanner logging'],
+    ['--json', 'machine-readable scanner output'],
+    ['scanner_status=0', 'preserved scanner status'],
+    ['|| scanner_status=$?', 'preserved scanner status on findings/errors'],
+    ['node scripts/verify-trufflehog-output.mjs "$output" "$scanner_error" "$scanner_status"', 'repository-owned fail-closed parser'],
   ];
   for (const [token, label] of required) {
     if (!job.includes(token)) errors.push(`Secret-history job is missing required control: ${label}`);
@@ -118,11 +123,20 @@ export function validateSecretHistoryGate(workflow) {
   }
   if (job.includes('continue-on-error')) errors.push('Secret-history job must fail closed.');
   if (job.includes('upload-artifact')) errors.push('Secret-history findings must never be uploaded as an artifact.');
-  if (/\bset\s+-[^\n]*x/.test(job) || /\b(?:cat|tail|head)\s+"?\$output/.test(job)) {
+  if (/\bset\s+-[^\n]*x/.test(job) || /\b(?:cat|tail|head)\s+[^\n]*(?:\$output|\$scanner_error|trufflehog)/.test(job)) {
     errors.push('Secret-history findings must never be echoed into the job log.');
   }
-  if (!/>>?"\$output" 2>&1/.test(job) || !/trap 'rm -f "\$archive" "\$scanner" "\$output"' EXIT/.test(job)) {
+  if (/--exclude-(?:detectors|paths|globs)/.test(job)) {
+    errors.push('Secret-history job must scan the complete repository without TruffleHog exclusions.');
+  }
+  if (!/>"\$output" 2>"\$scanner_error"/.test(job) || !/trap 'rm -f "\$archive" "\$scanner" "\$output" "\$scanner_error"' EXIT/.test(job)) {
     errors.push('Secret-history output must remain redacted and ephemeral.');
+  }
+  const validateJob = jobBody(workflow, 'validate');
+  if (!validateJob.includes('npm run test:secret-history-tools')
+    || manifest?.scripts?.['test:secret-history-tools'] !== 'node --test scripts/verify-trufflehog-output.test.mjs'
+    || !manifest?.scripts?.validate?.includes('test:secret-history-tools')) {
+    errors.push('validate must run the exact repository-owned secret-history parser test through package.json');
   }
   return errors;
 }
@@ -282,15 +296,17 @@ export async function verifyQualityWorkflow(projectRoot = PROJECT_ROOT) {
     readFile(path.join(projectRoot, 'scripts', 'generate-production-sbom.mjs'), 'utf8'),
     readFile(path.join(projectRoot, 'scripts', 'verify-production-sbom.mjs'), 'utf8'),
   ]);
+  const manifest = JSON.parse(rawManifest);
+  const lockfile = JSON.parse(rawLockfile);
   const errors = [
     ...validatePostgresCommands(workflow),
     ...validateFullRuntimeGate(workflow),
     ...validatePinnedActions(workflow),
     ...validateMaintenanceGate(workflow),
-    ...validateTextIntegrityGate(workflow, JSON.parse(rawManifest)),
-    ...validateSecretHistoryGate(workflow),
+    ...validateTextIntegrityGate(workflow, manifest),
+    ...validateSecretHistoryGate(workflow, manifest),
     ...validateProductionSbomGate(workflow),
-    ...validateSbomPackageContract(JSON.parse(rawManifest), JSON.parse(rawLockfile)),
+    ...validateSbomPackageContract(manifest, lockfile),
     ...validateSbomImplementationContract(generator, verifier),
   ];
   if (errors.length) throw new Error(errors.join('\n'));

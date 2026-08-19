@@ -32,12 +32,14 @@ const validWorkflow = [
   '    runs-on: ubuntu-latest',
   '      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6',
   '          fetch-depth: 0',
-  "          trap 'rm -f \"$archive\" \"$scanner\" \"$output\"' EXIT",
+  "          trap 'rm -f \"$archive\" \"$scanner\" \"$output\" \"$scanner_error\"' EXIT",
   "          curl --proto '=https' --tlsv1.2",
   '          https://github.com/trufflesecurity/trufflehog/releases/download/v3.96.0/trufflehog_3.96.0_linux_amd64.tar.gz',
   '          7105f1cd6577f058a9e39d0578f1a99c8a1e481e4d3512cd8a09acfe22a0fdc0',
   '          sha256sum --check --status',
-  '          "$scanner" git "file://$GITHUB_WORKSPACE" --results=verified,unknown --fail --fail-on-scan-errors --no-update --github-actions >"$output" 2>&1',
+  '          scanner_status=0',
+  '          "$scanner" --log-level=-1 --json git "file://$GITHUB_WORKSPACE" --no-verification --results=unverified,unknown --fail --fail-on-scan-errors --no-update >"$output" 2>"$scanner_error" || scanner_status=$?',
+  '          node scripts/verify-trufflehog-output.mjs "$output" "$scanner_error" "$scanner_status"',
   '  production-sbom:',
   '    permissions:',
   '      contents: read',
@@ -74,6 +76,8 @@ const validWorkflow = [
   '        run: npm run test:maintenance-tools',
   '      - name: Test production SBOM verifier',
   '        run: npm run test:production-sbom-tools',
+  '      - name: Test secret-history finding policy',
+  '        run: npm run test:secret-history-tools',
 ].join('\n');
 
 test('accepts transactional fail-fast SQL commands and a guarded failure probe', () => {
@@ -129,21 +133,40 @@ test('requires source text-integrity verification in direct and aggregate valida
 });
 
 test('requires a fail-closed full-history secret scan with ephemeral redacted output', () => {
-  assert.deepEqual(validateSecretHistoryGate(validWorkflow), []);
+  const manifest = { scripts: {
+    validate: 'npm run test:secret-history-tools',
+    'test:secret-history-tools': 'node --test scripts/verify-trufflehog-output.test.mjs',
+  } };
+  assert.deepEqual(validateSecretHistoryGate(validWorkflow, manifest), []);
   for (const mutation of [
     ['fetch-depth: 0', 'fetch-depth: 1'],
-    ['--results=verified,unknown --fail --fail-on-scan-errors', '--results=verified,unknown --fail-on-scan-errors'],
-    ['--fail-on-scan-errors', '--no-verification-overlap'],
+    ['--fail --fail-on-scan-errors', '--fail-on-scan-errors'],
+    ['--fail-on-scan-errors', '--no-scan-error-policy'],
     ['7105f1cd6577f058a9e39d0578f1a99c8a1e481e4d3512cd8a09acfe22a0fdc0', '0'.repeat(64)],
     ['file://$GITHUB_WORKSPACE', 'https://github.com/example/repo'],
+    ['--no-verification', '--allow-verification'],
+    ['--json', '--no-json'],
+    ['node scripts/verify-trufflehog-output.mjs', 'node scripts/skip-trufflehog-output.mjs'],
+    ['--no-update >"$output"', '--no-update --exclude-paths fixtures.txt >"$output"'],
+    ['>"$output" 2>"$scanner_error"', '>"$output" 2>&1'],
+    ['"$output" "$scanner_error"\' EXIT', '"$output"\' EXIT'],
   ]) {
-    assert.ok(validateSecretHistoryGate(validWorkflow.replace(...mutation)).length > 0);
+    assert.notEqual(validWorkflow.replace(...mutation), validWorkflow);
+    assert.ok(validateSecretHistoryGate(validWorkflow.replace(...mutation), manifest).length > 0);
   }
   assert.ok(validateSecretHistoryGate(validWorkflow.replace(
     '      contents: read\n    runs-on: ubuntu-latest',
     '      contents: read\n      issues: write\n    runs-on: ubuntu-latest',
-  )).length > 0);
-  assert.ok(validateSecretHistoryGate(validWorkflow.replace('  production-sbom:', '      continue-on-error: true\n  production-sbom:')).length > 0);
+  ), manifest).length > 0);
+  assert.ok(validateSecretHistoryGate(
+    validWorkflow.replace('  production-sbom:', '      continue-on-error: true\n  production-sbom:'),
+    manifest,
+  ).length > 0);
+  assert.ok(validateSecretHistoryGate(
+    validWorkflow.replace('run: npm run test:secret-history-tools', 'run: echo skipped'),
+    manifest,
+  ).length > 0);
+  assert.ok(validateSecretHistoryGate(validWorkflow, { scripts: {} }).length > 0);
 });
 
 test('requires a commit-bound, narrowly uploaded production SBOM and its verifier tests', () => {
