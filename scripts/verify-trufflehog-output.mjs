@@ -19,6 +19,25 @@ function isRecord(value) {
 function sha256(value) {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
+function safeFindingDiagnostic(finding, git) {
+  const commit = typeof git?.commit === 'string' && /^[0-9a-f]{40}$/u.test(git.commit) ? git.commit : 'invalid';
+  const line = Number.isInteger(git?.line) ? String(git.line) : 'invalid';
+  const detector = typeof finding?.DetectorName === 'string' && /^[A-Za-z0-9_-]{1,32}$/u.test(finding.DetectorName)
+    ? finding.DetectorName : 'invalid';
+  const decoder = typeof finding?.DecoderName === 'string' && /^[A-Za-z0-9_-]{1,32}$/u.test(finding.DecoderName)
+    ? finding.DecoderName : 'invalid';
+  const rawHash = typeof finding?.RawV2 === 'string' ? sha256(finding.RawV2) : 'missing';
+  return [
+    `commit=${commit}`,
+    `line=${line}`,
+    `file=${git?.file === APPROVED_FILE ? 'approved' : 'other'}`,
+    `detector=${detector}`,
+    `decoder=${decoder}`,
+    `verified=${finding?.Verified === false ? 'false' : 'other'}`,
+    `rawv2sha256=${rawHash}`,
+  ].join(';');
+}
+
 
 export function validateTruffleHogOutput({ stdout, stderr, exitCode }) {
   const errors = [];
@@ -51,12 +70,12 @@ export function validateTruffleHogOutput({ stdout, stderr, exitCode }) {
       || typeof git.commit !== 'string'
       || !Number.isInteger(git.line)
       || typeof finding.RawV2 !== 'string') {
-      errors.push('Secret-history scanner reported an unapproved finding.');
+      errors.push(`Secret-history scanner reported an unapproved finding (${safeFindingDiagnostic(finding, git)}).`);
       continue;
     }
     const key = `${git.commit}:${git.line}:${sha256(finding.RawV2)}`;
     if (!APPROVED_FINDINGS.has(key)) {
-      errors.push('Secret-history scanner reported an unapproved finding.');
+      errors.push(`Secret-history scanner reported an unapproved finding (${safeFindingDiagnostic(finding, git)}).`);
       continue;
     }
     if (seen.has(key)) {

@@ -79,4 +79,8 @@ test('errors never echo a raw or redacted finding value', () => {
   const message = errors.join('\n');
   assert.equal(message.includes(appFixture), false);
   assert.equal(message.includes('user:secret'), false);
+  assert.match(
+    message,
+    /commit=[0-9a-f]{40};line=87;file=approved;detector=URI;decoder=PLAIN;verified=false;rawv2sha256=[0-9a-f]{64}/u,
+  );
 });
