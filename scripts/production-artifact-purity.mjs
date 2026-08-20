@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+
 export const NON_PRODUCTION_ARTIFACT_MARKERS = Object.freeze([
   'spottr-fixture.supabase.co',
   'spottr-public-fixture-anon-key',

@@ -4,12 +4,14 @@ import test from 'node:test';
 
 import {
   REVIEWED_TRUFFLEHOG_FINDING_COUNT,
+  REVIEWED_TRUFFLEHOG_REQUIRED_GROUP_COUNT,
   validateTruffleHogOutput,
 } from './verify-trufflehog-output.mjs';
 
 const appFixture = ['https://', 'user:', 'secret', '@release-check.spottr.app'].join('');
 const mapHostFixture = ['https://', 'token:', 'secret', '@tiles-release-check.spottr.app'].join('');
 const mapFixture = `${mapHostFixture}/style.json`;
+const linkFixture = ['https://', 'blocked:', 'secret', '@links-release-check.spottr.app/path'].join('');
 
 function finding({
   commit = '59ed1ca33d55dcd3c8df19adb3cc09fc9ca58d63',
@@ -36,7 +38,7 @@ function validate(records, exitCode = records.length > 0 ? 183 : 0, stderr = '')
     stdout: records.map((record) => JSON.stringify(record)).join('\n'),
     stderr,
     exitCode,
-    approvedFindings: approvedFindingPolicy(),
+    findingGroups: approvedFindingPolicy(),
   });
 }
 
@@ -46,6 +48,13 @@ function approvedFindings() {
     finding({ line: 90, raw: mapHostFixture, rawV2: mapFixture }),
     finding({ commit: 'f6ed53c894e8cf577d965314ffc8d3b2a115fe80' }),
     finding({ commit: 'f6ed53c894e8cf577d965314ffc8d3b2a115fe80', line: 90, raw: mapHostFixture, rawV2: mapFixture }),
+    finding({
+      commit: 'ef8c8780ea4d447b4a91a5cf0ec94cf6672db6e8',
+      file: 'lib/__tests__/links.test.ts',
+      line: 7,
+      raw: linkFixture,
+      rawV2: linkFixture,
+    }),
   ];
 }
 
@@ -56,11 +65,16 @@ function findingKey(record) {
 }
 
 function approvedFindingPolicy() {
-  return new Set(approvedFindings().map(findingKey));
+  return new Map(approvedFindings().map((record) => {
+    const git = record.SourceMetadata.Data.Git;
+    const groupType = git.file === 'lib/__tests__/links.test.ts' ? 'links' : 'config';
+    return [findingKey(record), `${groupType}-${git.commit}`];
+  }));
 }
 
-test('pins the production policy to the three reviewed historical fixtures', () => {
-  assert.equal(REVIEWED_TRUFFLEHOG_FINDING_COUNT, 3);
+test('pins the production policy to five exact findings across three required groups', () => {
+  assert.equal(REVIEWED_TRUFFLEHOG_FINDING_COUNT, 5);
+  assert.equal(REVIEWED_TRUFFLEHOG_REQUIRED_GROUP_COUNT, 3);
   assert.ok(validateTruffleHogOutput({
     stdout: JSON.stringify(finding()),
     stderr: '',
@@ -68,10 +82,12 @@ test('pins the production policy to the three reviewed historical fixtures', () 
   }).length > 0);
 });
 
-test('accepts exactly the complete immutable synthetic URI fixture set', () => {
-  assert.deepEqual(validate(approvedFindings()), []);
-  assert.ok(validate([]).some((error) => error.includes('complete reviewed fixture set')));
-  assert.ok(validate(approvedFindings().slice(0, 3)).some((error) => error.includes('complete reviewed fixture set')));
+test('accepts exact alternatives while requiring every reviewed fixture group', () => {
+  const records = approvedFindings();
+  assert.deepEqual(validate(records), []);
+  assert.deepEqual(validate([records[0], records[2], records[4]]), []);
+  assert.ok(validate([]).some((error) => error.includes('every required reviewed fixture group')));
+  assert.ok(validate(records.slice(0, 2)).some((error) => error.includes('every required reviewed fixture group')));
 });
 
 test('rejects verified, changed, moved, duplicated, or differently decoded findings', () => {
