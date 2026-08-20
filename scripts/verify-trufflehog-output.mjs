@@ -4,13 +4,15 @@ import { pathToFileURL } from 'node:url';
 
 const MAX_SCAN_OUTPUT_BYTES = 10 * 1024 * 1024;
 const FINDINGS_EXIT_CODE = 183;
-const APPROVED_FILE = 'scripts/verify-production-config-gate.mjs';
+const APPROVED_CONFIG_FILE = 'scripts/verify-production-config-gate.mjs';
+const APPROVED_LINK_TEST_FILE = 'lib/__tests__/links.test.ts';
+const APPROVED_FILES = new Set([APPROVED_CONFIG_FILE, APPROVED_LINK_TEST_FILE]);
 const APPROVED_FINDINGS = new Set([
-  'f6ed53c894e8cf577d965314ffc8d3b2a115fe80:87:a7f6887e112e6db66533958fb2ebe693c12ac696c52839a917103046ea3d5409',
-  'f6ed53c894e8cf577d965314ffc8d3b2a115fe80:90:a04013df5bdedd975d85f54e9144c19e353bdf4752b8b965318d864e8c76a523',
-  '59ed1ca33d55dcd3c8df19adb3cc09fc9ca58d63:87:a7f6887e112e6db66533958fb2ebe693c12ac696c52839a917103046ea3d5409',
-  '59ed1ca33d55dcd3c8df19adb3cc09fc9ca58d63:90:a04013df5bdedd975d85f54e9144c19e353bdf4752b8b965318d864e8c76a523',
+  'f6ed53c894e8cf577d965314ffc8d3b2a115fe80:scripts/verify-production-config-gate.mjs:90:c40d05f65009500bb1583fba187eb601f44faa2ba20a948c971f7ba1869478fa',
+  '59ed1ca33d55dcd3c8df19adb3cc09fc9ca58d63:scripts/verify-production-config-gate.mjs:90:c40d05f65009500bb1583fba187eb601f44faa2ba20a948c971f7ba1869478fa',
+  'ef8c8780ea4d447b4a91a5cf0ec94cf6672db6e8:lib/__tests__/links.test.ts:7:8d3331ee208c72c30fba199e4e2b8a65d69a5034e49875a2f20dbea3a4f2f976',
 ]);
+export const REVIEWED_TRUFFLEHOG_FINDING_COUNT = APPROVED_FINDINGS.size;
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -30,7 +32,7 @@ function safeFindingDiagnostic(finding, git) {
   return [
     `commit=${commit}`,
     `line=${line}`,
-    `file=${git?.file === APPROVED_FILE ? 'approved' : 'other'}`,
+    `file=${APPROVED_FILES.has(git?.file) ? 'approved' : 'other'}`,
     `detector=${detector}`,
     `decoder=${decoder}`,
     `verified=${finding?.Verified === false ? 'false' : 'other'}`,
@@ -38,10 +40,15 @@ function safeFindingDiagnostic(finding, git) {
   ].join(';');
 }
 
-
-export function validateTruffleHogOutput({ stdout, stderr, exitCode }) {
+export function validateTruffleHogOutput({
+  stdout,
+  stderr,
+  exitCode,
+  approvedFindings = APPROVED_FINDINGS,
+}) {
   const errors = [];
-  if (typeof stdout !== 'string' || typeof stderr !== 'string' || !Number.isInteger(exitCode)) {
+  if (typeof stdout !== 'string' || typeof stderr !== 'string' || !Number.isInteger(exitCode)
+    || !(approvedFindings instanceof Set) || approvedFindings.size === 0) {
     return ['Secret-history scanner evidence is malformed.'];
   }
   if (Buffer.byteLength(stdout, 'utf8') > MAX_SCAN_OUTPUT_BYTES) {
@@ -66,15 +73,15 @@ export function validateTruffleHogOutput({ stdout, stderr, exitCode }) {
       || finding.DetectorName !== 'URI'
       || finding.DecoderName !== 'PLAIN'
       || finding.Verified !== false
-      || git.file !== APPROVED_FILE
+      || typeof git.file !== 'string'
       || typeof git.commit !== 'string'
       || !Number.isInteger(git.line)
       || typeof finding.RawV2 !== 'string') {
       errors.push(`Secret-history scanner reported an unapproved finding (${safeFindingDiagnostic(finding, git)}).`);
       continue;
     }
-    const key = `${git.commit}:${git.line}:${sha256(finding.RawV2)}`;
-    if (!APPROVED_FINDINGS.has(key)) {
+    const key = `${git.commit}:${git.file}:${git.line}:${sha256(finding.RawV2)}`;
+    if (!approvedFindings.has(key)) {
       errors.push(`Secret-history scanner reported an unapproved finding (${safeFindingDiagnostic(finding, git)}).`);
       continue;
     }
@@ -84,7 +91,7 @@ export function validateTruffleHogOutput({ stdout, stderr, exitCode }) {
     }
     seen.add(key);
   }
-  if (seen.size !== APPROVED_FINDINGS.size) {
+  if (seen.size !== approvedFindings.size) {
     errors.push('Secret-history scanner did not report the complete reviewed fixture set.');
   }
 
