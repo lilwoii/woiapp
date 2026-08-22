@@ -659,6 +659,7 @@ do $public_discovery_service_success$
 declare
   response jsonb;
   acquired_lease_hmac text;
+  release_response jsonb;
 begin
   response := public.acquire_public_discovery_lease(
     'map', repeat('a', 64), null, repeat('b', 64)
@@ -682,7 +683,8 @@ begin
     raise exception 'Discovery lease state was not persisted as digest-only data';
   end if;
 
-  if not (public.release_public_discovery_lease(acquired_lease_hmac)->>'released')::boolean
+  release_response := public.release_public_discovery_lease(acquired_lease_hmac);
+  if not (release_response->>'released')::boolean
     or exists (
       select 1 from private.public_discovery_leases lease
       where lease.lease_hmac = acquired_lease_hmac
@@ -771,6 +773,7 @@ declare
   response jsonb;
   stale_lease text := repeat('b', 62) || '01';
   cleanup_response jsonb;
+  release_response jsonb;
 begin
   for index_value in 1..32 loop
     ip_digest := repeat('a', 62) || lpad(to_hex(index_value), 2, '0');
@@ -824,7 +827,8 @@ begin
     raise exception 'Discovery cleanup did not reclaim a stale lease';
   end if;
 
-  if not (public.release_public_discovery_lease(response->>'lease_hmac')->>'released')::boolean
+  release_response := public.release_public_discovery_lease(response->>'lease_hmac');
+  if not (release_response->>'released')::boolean
     or exists (
       select 1 from private.public_discovery_leases lease
       where lease.lease_hmac = response->>'lease_hmac'
