@@ -41,6 +41,7 @@ import {
 } from "@/lib/marketplace-chat";
 import { blockUser } from "@/lib/marketplace-api";
 import { mediaProcessingStates, stageMediaUpload } from "@/lib/media-upload";
+import { externalDirectionsUrl } from "@/lib/navigation";
 import { confirmAction, showMessage } from "@/lib/platform-dialog";
 import type {
   MarketplaceChatMessage,
@@ -427,15 +428,16 @@ export default function ConversationScreen() {
 
   const openPickupDirections = async () => {
     if (!pickupDetail) return;
-    const destination = `${pickupDetail.latitude},${pickupDetail.longitude}`;
-    const url = Platform.OS === "ios"
-      ? `https://maps.apple.com/?daddr=${
-        encodeURIComponent(destination)
-      }&dirflg=d`
-      : `https://www.google.com/maps/dir/?api=1&destination=${
-        encodeURIComponent(destination)
-      }`;
-    await Linking.openURL(url);
+    const url = externalDirectionsUrl(pickupDetail, Platform.OS);
+    if (!url) {
+      showMessage("Directions unavailable", "This pickup card does not contain a valid destination.");
+      return;
+    }
+    try {
+      await Linking.openURL(url);
+    } catch {
+      showMessage("Directions unavailable", "Your maps app could not open this destination.");
+    }
   };
 
   const safetyAction = async (message: MarketplaceChatMessage) => {

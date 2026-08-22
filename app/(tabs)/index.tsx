@@ -184,7 +184,8 @@ export default function DiscoverScreen() {
     const result = await fetchMapFoodFeatures(viewport, requestedMapCategories);
     if (requestId !== mapInventoryRequest.current) return result;
     if (!result.ok) {
-      setMapInventoryFeatures([]);
+      // Keep the last verified inventory visible during a brief gateway quota
+      // or availability event. A successful later viewport request replaces it.
       return result;
     }
     setMapInventoryFeatures(result.data ?? []);

@@ -497,8 +497,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
         body: { confirmation: 'DELETE' },
       });
       if (error) throw error;
-      const processing =
-        data && typeof data === 'object' && data.status === 'processing';
+      const response =
+        data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+      const processing = response?.status === 'processing';
+      const accountRemoved =
+        processing &&
+        response?.phase === 'receipt_finalization' &&
+        response?.account_removed === true;
+      if (accountRemoved) {
+        deletionIdempotencyKey.current = null;
+        await client.auth.signOut({ scope: 'local' });
+        return {
+          ok: true,
+          message:
+            'Your Spottr account was removed. Its final internal deletion receipt is finishing automatically.',
+        };
+      }
       if (processing) {
         return {
           ok: false,

@@ -4,6 +4,35 @@ All public functions are fail-closed and return `Cache-Control: no-store`.
 Browser origins must appear in the comma-separated `SPOTTR_ALLOWED_ORIGINS`
 environment variable. Native requests may omit `Origin`.
 
+## Public discovery
+
+`POST /functions/v1/public-discovery` is the only client boundary for the
+costly `map`, `nearby`, and `search` database queries. The request is limited to
+4 KB, has an exact operation-specific shape, and the response is field-
+whitelisted. The original RPCs are executable only by `service_role`. The Edge
+request aborts its database HTTP call after 2.5 seconds; production acceptance
+must separately prove backend query cancellation and database-side timeout
+policy because a timeout set from inside a PostgreSQL function cannot bound the
+already-running outer statement.
+
+The gateway fails closed unless Supabase supplies `cf-connecting-ip` and
+`SPOTTR_DISCOVERY_RATE_SECRET` contains at least 32 random characters. It HMACs
+the address before database admission; raw addresses and Auth user IDs are not
+stored in Spottr discovery tables or written to application logs. Every request
+must first pass the 60-per-minute operation/network quota before an unrecognized
+bearer token can reach Auth. A validated user session must also pass its
+240-per-minute operation/account quota. Successful calls release their lease in
+`finally`. If HTTP cancellation or a transport failure cannot prove that the
+outer database statement stopped, the two-minute lease is deliberately retained until expiry so the
+concurrency cap fails closed. A `429` includes `Retry-After`; clients retain
+their last successful map instead of automatically retrying.
+
+Before production activation, prove that the deployed Edge environment owns
+and supplies `cf-connecting-ip`. If that trust property is unavailable, keep
+the endpoint unavailable and put an owned WAF/gateway in front of it. Configure
+and review Supabase platform-log retention separately because provider-level
+request metadata is outside the application tables.
+
 ## Text moderation
 
 Reviews, owner updates, and business responses are always created in `pending`.
@@ -30,7 +59,7 @@ without other users' Auth UUIDs or private moderator attribution.
 `DELETE /functions/v1/delete-account` requires:
 
 - a valid `aal2` bearer JWT;
-- an `Idempotency-Key` of 16Ã¢â‚¬â€œ128 characters;
+- an `Idempotency-Key` of 16–128 characters;
 - `X-Spottr-Delete-Confirmation: DELETE`; and
 - JSON `{ "confirmation": "DELETE" }`.
 
@@ -39,12 +68,18 @@ outstanding signed upload capabilities and scan leases, checkpoints owned
 storage objects in durable request-scoped batches, archives a sole-owned
 business, anonymizes retained audit attribution, and only then deletes the Auth
 user. A failed storage or Auth operation leaves the request frozen and retryable
-without claiming completion.
+without claiming completion. If Auth deletion succeeds but final receipt
+persistence is interrupted, the function returns `202` and the account is
+signed out locally; it does not claim the deletion receipt is complete. An
+ambiguous Auth-provider response leaves the sealed request retryable because the
+provider may have committed the deletion before the response was lost.
 
 The service-only `delete-account-worker` continues frozen deletion requests
 without relying on the user's browser session. Invoke it on a recurring schedule
 with `SPOTTR_ACCOUNT_DELETE_WORKER_SECRET`; it claims one request at a time and
-uses the same durable storage seal as the user-facing function. Do not launch
+uses the same durable storage seal as the user-facing function. The worker first
+atomically finalizes one sealed receipt orphaned by a successful Auth deletion,
+then continues ordinary frozen requests. Do not launch
 account deletion until that schedule, secret rotation, alerts, and retry drills
 are operational.
 

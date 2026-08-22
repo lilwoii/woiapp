@@ -3,6 +3,8 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { validateProductionArtifactContent } from './production-artifact-purity.mjs';
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SCRIPT_DIR, '..');
 
@@ -245,7 +247,7 @@ async function sha256(filePath) {
   return createHash('sha256').update(await readFile(filePath)).digest('hex');
 }
 
-async function verifyArtifact(projectRoot, platform) {
+export async function verifyArtifact(projectRoot, platform) {
   const outputRoot = path.join(projectRoot, `dist-${platform}`);
   const metadataPath = path.join(outputRoot, 'metadata.json');
   const metadata = await readJson(metadataPath);
@@ -262,10 +264,22 @@ async function verifyArtifact(projectRoot, platform) {
       errors.push(`${platform} artifact is missing: ${relativePath}`);
     }
   }
+  for (const artifactFile of await walkFiles(outputRoot)) {
+    const relativePath = path.relative(outputRoot, artifactFile).replaceAll('\\', '/');
+    try {
+      errors.push(...validateProductionArtifactContent(
+        `${platform} production artifact ${relativePath}`,
+        await readFile(artifactFile),
+      ));
+    } catch {
+      errors.push(`${platform} artifact could not be inspected: ${relativePath}`);
+    }
+  }
   const bundlePath = safeArtifactPath(outputRoot, platformMetadata?.bundle);
   if (bundlePath) {
     try {
-      if ((await stat(bundlePath)).size < 100_000) errors.push(`${platform} bundle is unexpectedly small.`);
+      const bundle = await readFile(bundlePath);
+      if (bundle.length < 100_000) errors.push(`${platform} bundle is unexpectedly small.`);
     } catch {
       // Missing file already reported above.
     }

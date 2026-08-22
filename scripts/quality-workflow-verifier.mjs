@@ -70,7 +70,57 @@ export function validateMaintenanceGate(workflow) {
     : ['Quality workflow must test the privileged production maintenance control plane.'];
 }
 
-export function validateSecretHistoryGate(workflow) {
+export function validateSitesReleaseArtifactGate(workflow) {
+  const validateJob = jobBody(workflow, 'validate');
+  const errors = [];
+  if (!/^  workflow_dispatch:\s*$/m.test(workflow)) {
+    errors.push('Quality workflow must support a manual, branch-head Sites release run.');
+  }
+  const buildIndex = validateJob.indexOf('run: npm run build:sites');
+  const renderedIndex = validateJob.indexOf('run: npm run test:web-e2e');
+  const auditIndex = validateJob.indexOf('run: npm run test:audit-tools && npm run audit:production');
+  const uploadIndex = validateJob.indexOf('name: Upload verified Sites release artifact');
+  if (buildIndex < 0 || renderedIndex < buildIndex || auditIndex < renderedIndex || uploadIndex < auditIndex) {
+    errors.push('Sites release artifact must be uploaded only after build, rendered acceptance, and production audit succeed.');
+  }
+  const required = [
+    "if: github.event_name == 'workflow_dispatch'",
+    'uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1',
+    'name: spottr-sites-dist-${{ github.sha }}',
+    'path: dist/',
+    'if-no-files-found: error',
+    'retention-days: 7',
+    'overwrite: false',
+    'include-hidden-files: true',
+  ];
+  for (const token of required) {
+    if (!validateJob.includes(token)) errors.push(`Sites release artifact contract is missing: ${token}`);
+  }
+  if (validateJob.includes('continue-on-error')) {
+    errors.push('Sites release artifact path must remain fail closed.');
+  }
+  return errors;
+}
+
+export function validateTextIntegrityGate(workflow, manifest) {
+  const validateJob = jobBody(workflow, 'validate');
+  const errors = [];
+  for (const command of ['npm run verify:text-integrity', 'npm run test:text-integrity-tools']) {
+    if (!validateJob.includes(`run: ${command}`)) {
+      errors.push(`Validate job must execute the source text-integrity control: ${command}.`);
+    }
+    if (!manifest?.scripts?.validate?.includes(command)) {
+      errors.push(`Aggregate validation must retain the source text-integrity control: ${command}.`);
+    }
+  }
+  if (manifest?.scripts?.['verify:text-integrity'] !== 'node scripts/verify-text-integrity.mjs'
+    || manifest?.scripts?.['test:text-integrity-tools'] !== 'node --test scripts/verify-text-integrity.test.mjs') {
+    errors.push('Source text-integrity scripts must remain fail-closed and repository-owned.');
+  }
+  return errors;
+}
+
+export function validateSecretHistoryGate(workflow, manifest) {
   const job = jobBody(workflow, 'secret-history');
   const errors = [];
   if (!job) return ['Quality workflow must include a secret-history job.'];
@@ -87,10 +137,15 @@ export function validateSecretHistoryGate(workflow) {
     ['--tlsv1.2', 'TLS minimum'],
     ['sha256sum --check --status', 'archive checksum verification'],
     ['file://$GITHUB_WORKSPACE', 'local full-history source'],
-    ['--results=verified,unknown', 'verified and unknown result coverage'],
+    ['--no-verification', 'detector verification and credentialed lookups disabled'],
+    ['--results=unverified,unknown', 'unverified and unknown result coverage'],
     ['--fail-on-scan-errors', 'scan-error fail-closed behavior'],
     ['--no-update', 'disabled scanner self-update'],
-    ['--github-actions', 'GitHub-aware scan mode'],
+    ['--log-level=-1', 'quiet scanner logging'],
+    ['--json', 'machine-readable scanner output'],
+    ['scanner_status=0', 'preserved scanner status'],
+    ['|| scanner_status=$?', 'preserved scanner status on findings/errors'],
+    ['node scripts/verify-trufflehog-output.mjs "$output" "$scanner_error" "$scanner_status"', 'repository-owned fail-closed parser'],
   ];
   for (const [token, label] of required) {
     if (!job.includes(token)) errors.push(`Secret-history job is missing required control: ${label}`);
@@ -100,11 +155,20 @@ export function validateSecretHistoryGate(workflow) {
   }
   if (job.includes('continue-on-error')) errors.push('Secret-history job must fail closed.');
   if (job.includes('upload-artifact')) errors.push('Secret-history findings must never be uploaded as an artifact.');
-  if (/\bset\s+-[^\n]*x/.test(job) || /\b(?:cat|tail|head)\s+"?\$output/.test(job)) {
+  if (/\bset\s+-[^\n]*x/.test(job) || /\b(?:cat|tail|head)\s+[^\n]*(?:\$output|\$scanner_error|trufflehog)/.test(job)) {
     errors.push('Secret-history findings must never be echoed into the job log.');
   }
-  if (!/>>?"\$output" 2>&1/.test(job) || !/trap 'rm -f "\$archive" "\$scanner" "\$output"' EXIT/.test(job)) {
+  if (/--exclude-(?:detectors|paths|globs)/.test(job)) {
+    errors.push('Secret-history job must scan the complete repository without TruffleHog exclusions.');
+  }
+  if (!/>"\$output" 2>"\$scanner_error"/.test(job) || !/trap 'rm -f "\$archive" "\$scanner" "\$output" "\$scanner_error"' EXIT/.test(job)) {
     errors.push('Secret-history output must remain redacted and ephemeral.');
+  }
+  const validateJob = jobBody(workflow, 'validate');
+  if (!validateJob.includes('npm run test:secret-history-tools')
+    || manifest?.scripts?.['test:secret-history-tools'] !== 'node --test scripts/verify-trufflehog-output.test.mjs'
+    || !manifest?.scripts?.validate?.includes('test:secret-history-tools')) {
+    errors.push('validate must run the exact repository-owned secret-history parser test through package.json');
   }
   return errors;
 }
@@ -264,14 +328,18 @@ export async function verifyQualityWorkflow(projectRoot = PROJECT_ROOT) {
     readFile(path.join(projectRoot, 'scripts', 'generate-production-sbom.mjs'), 'utf8'),
     readFile(path.join(projectRoot, 'scripts', 'verify-production-sbom.mjs'), 'utf8'),
   ]);
+  const manifest = JSON.parse(rawManifest);
+  const lockfile = JSON.parse(rawLockfile);
   const errors = [
     ...validatePostgresCommands(workflow),
     ...validateFullRuntimeGate(workflow),
     ...validatePinnedActions(workflow),
     ...validateMaintenanceGate(workflow),
-    ...validateSecretHistoryGate(workflow),
+    ...validateSitesReleaseArtifactGate(workflow),
+    ...validateTextIntegrityGate(workflow, manifest),
+    ...validateSecretHistoryGate(workflow, manifest),
     ...validateProductionSbomGate(workflow),
-    ...validateSbomPackageContract(JSON.parse(rawManifest), JSON.parse(rawLockfile)),
+    ...validateSbomPackageContract(manifest, lockfile),
     ...validateSbomImplementationContract(generator, verifier),
   ];
   if (errors.length) throw new Error(errors.join('\n'));

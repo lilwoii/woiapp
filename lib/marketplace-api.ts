@@ -17,6 +17,35 @@ import {
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 
 type Row = Record<string, unknown>;
+type PublicDiscoveryRequest =
+  | {
+      operation: 'map';
+      west_longitude: number;
+      south_latitude: number;
+      east_longitude: number;
+      north_latitude: number;
+      map_zoom: number;
+      requested_kinds: BusinessCategory[];
+      max_features: number;
+    }
+  | {
+      operation: 'nearby';
+      search_lat: number;
+      search_lng: number;
+      radius_meters: number;
+      result_limit: number;
+      result_offset: number;
+    }
+  | {
+      operation: 'search';
+      search_text: string;
+      result_limit: number;
+      result_offset: number;
+    };
+type PublicDiscoveryResponse<TOperation extends PublicDiscoveryRequest['operation']> = {
+  operation: TOperation;
+  rows: Row[];
+};
 export type MarketplacePage = {
   places: Place[];
   hasMore: boolean;
@@ -46,6 +75,38 @@ function configurationRequired<T = undefined>(): ActionResult<T> {
     code: 'CONFIG_REQUIRED',
     reason: 'Live Spottr services are not configured for this build.',
   };
+}
+
+async function invokePublicDiscovery<TRequest extends PublicDiscoveryRequest>(
+  request: TRequest,
+): Promise<PublicDiscoveryResponse<TRequest['operation']>> {
+  const client = supabase;
+  if (!client) throw new Error('PUBLIC_DISCOVERY_NOT_CONFIGURED');
+
+  const { data, error } = await client.functions.invoke<
+    PublicDiscoveryResponse<TRequest['operation']>
+  >('public-discovery', { body: request });
+  if (error) throw error;
+  if (
+    !data ||
+    data.operation !== request.operation ||
+    !Array.isArray(data.rows)
+  ) {
+    throw new Error('INVALID_PUBLIC_DISCOVERY_RESPONSE');
+  }
+  return { operation: data.operation, rows: rows(data.rows) };
+}
+
+function toDiscoveryActionError<T>(error: unknown, fallback: string): ActionResult<T> {
+  const result = toActionError(error, fallback);
+  if (!result.ok && result.code === 'RATE_LIMITED') {
+    return {
+      ok: false,
+      code: 'RATE_LIMITED',
+      reason: 'The map is busy. Try again shortly.',
+    };
+  }
+  return result;
 }
 
 export function createMarketplaceIdempotencyKey(
@@ -448,7 +509,8 @@ export async function fetchMapFoodFeatures(
   }
 
   try {
-    const { data, error } = await client.rpc('map_food_places', {
+    const { rows: mapRows } = await invokePublicDiscovery({
+      operation: 'map',
       west_longitude: west,
       south_latitude: south,
       east_longitude: east,
@@ -457,8 +519,6 @@ export async function fetchMapFoodFeatures(
       requested_kinds: uniqueRequestedCategories,
       max_features: 1200,
     });
-    if (error) throw error;
-    const mapRows = rows(data);
     const logoPaths = mapRows.map((entry) => stringValue(entry.logo_path)).filter(Boolean);
     const logoUrls = await createSignedMediaUrls(logoPaths);
     const features: MapInventoryFeature[] = [];
@@ -506,7 +566,7 @@ export async function fetchMapFoodFeatures(
     }
     return { ok: true, data: features };
   } catch (error) {
-    return toActionError(error, 'The visible map inventory could not be loaded.');
+    return toDiscoveryActionError(error, 'The visible map inventory could not be loaded.');
   }
 }
 
@@ -524,7 +584,10 @@ export async function fetchMarketplacePlaces(
 
   try {
     const includeDetails = options.includeDetails === true;
-    const resultLimit = Math.min(100, Math.max(1, options.resultLimit ?? 100));
+    const resultLimit = Math.min(
+      100,
+      Math.max(1, Math.trunc(options.resultLimit ?? 100))
+    );
     const resultOffset = Math.min(
       10_000,
       Math.max(0, Math.trunc(options.resultOffset ?? 0))
@@ -538,6 +601,7 @@ export async function fetchMarketplacePlaces(
       if (
         !Number.isFinite(latitude) ||
         !Number.isFinite(longitude) ||
+        !Number.isFinite(radiusMeters) ||
         latitude < -90 ||
         latitude > 90 ||
         longitude < -180 ||
@@ -545,15 +609,15 @@ export async function fetchMarketplacePlaces(
       ) {
         return { ok: false, code: 'INVALID', reason: 'The search location is invalid.' };
       }
-      const nearbyResult = await client.rpc('nearby_businesses', {
+      const { rows: nearbyResultRows } = await invokePublicDiscovery({
+        operation: 'nearby',
         search_lat: latitude,
         search_lng: longitude,
-        radius_meters: radiusMeters,
+        radius_meters: Math.min(80_467, Math.max(500, Math.trunc(radiusMeters))),
         result_limit: resultLimit,
         result_offset: resultOffset,
       });
-      if (nearbyResult.error) throw nearbyResult.error;
-      nearbyRows = rows(nearbyResult.data);
+      nearbyRows = nearbyResultRows;
     }
 
     const nearbyIds = nearbyRows
@@ -955,7 +1019,7 @@ export async function fetchMarketplacePlaces(
       },
     };
   } catch (error) {
-    return toActionError(error, 'Live listings could not be loaded.');
+    return toDiscoveryActionError(error, 'Live listings could not be loaded.');
   }
 }
 
@@ -1074,18 +1138,21 @@ export async function searchMarketplacePlaces(
   }
 
   try {
-    const resultLimit = Math.min(100, Math.max(1, options.resultLimit ?? 100));
+    const resultLimit = Math.min(
+      100,
+      Math.max(1, Math.trunc(options.resultLimit ?? 100))
+    );
     const resultOffset = Math.min(
       10_000,
       Math.max(0, Math.trunc(options.resultOffset ?? 0))
     );
-    const { data, error } = await client.rpc('search_businesses', {
+    const { rows: searchRows } = await invokePublicDiscovery({
+      operation: 'search',
       search_text: clean,
       result_limit: resultLimit,
       result_offset: resultOffset,
     });
-    if (error) throw error;
-    const rankedIds = rows(data)
+    const rankedIds = searchRows
       .map((entry) => stringValue(entry.business_id))
       .filter((id) => uuidPattern.test(id));
     const includedIds = [
@@ -1107,14 +1174,14 @@ export async function searchMarketplacePlaces(
             (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
             (rank.get(right.id) ?? Number.MAX_SAFE_INTEGER)
         ),
-        hasMore: rows(data).some((entry) => entry.has_more === true),
-        nextOffset: rows(data).some((entry) => entry.has_more === true)
+        hasMore: searchRows.some((entry) => entry.has_more === true),
+        nextOffset: searchRows.some((entry) => entry.has_more === true)
           ? resultOffset + resultLimit
           : resultOffset,
       },
     };
   } catch (error) {
-    return toActionError(error, 'This area could not be searched.');
+    return toDiscoveryActionError(error, 'This area could not be searched.');
   }
 }
 

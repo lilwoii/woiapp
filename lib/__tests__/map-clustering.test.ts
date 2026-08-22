@@ -68,5 +68,9 @@ describe('map clustering', () => {
     const rendered = clusterInventoryFeatures(features, 14, 300);
     expect(rendered.length).toBeLessThanOrEqual(300);
     expect(rendered.reduce((count, feature) => count + feature.count, 0)).toBe(1_200);
+
+    const nativeRendered = clusterInventoryFeatures(features, 14, 120);
+    expect(nativeRendered.length).toBeLessThanOrEqual(120);
+    expect(nativeRendered.reduce((count, feature) => count + feature.count, 0)).toBe(1_200);
   });
 });

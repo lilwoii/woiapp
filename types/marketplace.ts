@@ -174,5 +174,6 @@ export type ActionResult<T = undefined> =
         | 'INVALID'
         | 'NETWORK'
         | 'NOT_FOUND'
+        | 'RATE_LIMITED'
         | 'UNKNOWN';
     };

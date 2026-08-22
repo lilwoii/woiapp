@@ -494,7 +494,26 @@ export default function MapLibreMapView({
 
     const dot = document.createElement('div');
     dot.setAttribute('aria-label', navigationMode ? `Your live ${navigationMode} position` : 'Your approximate current location');
-    dot.textContent = navigationMode === 'drive' ? 'D' : navigationMode === 'walk' ? 'W' : navigationMode === 'bike' ? 'B' : '';
+    dot.setAttribute('role', 'img');
+    const navigationIcon = navigationMode === 'drive'
+      ? 'car-side'
+      : navigationMode === 'walk'
+        ? 'person-walking'
+        : navigationMode === 'bike'
+          ? 'bicycle'
+          : null;
+    const navigationGlyphMap = navigationIcon
+      ? FontAwesome6.getRawGlyphMap?.('solid') as Record<string, number> | undefined
+      : undefined;
+    const navigationCodePoint = navigationIcon ? navigationGlyphMap?.[navigationIcon] : undefined;
+    const navigationFontFamily = navigationIcon ? FontAwesome6.getFontFamily?.('solid') : undefined;
+    const hasNavigationGlyph =
+      Number.isInteger(navigationCodePoint) &&
+      typeof navigationFontFamily === 'string' &&
+      navigationFontFamily.length > 0;
+    dot.textContent = hasNavigationGlyph
+      ? String.fromCodePoint(navigationCodePoint as number)
+      : '';
     dot.style.alignItems = 'center';
     dot.style.background = '#2166D3';
     dot.style.border = '4px solid #FFFFFF';
@@ -502,8 +521,10 @@ export default function MapLibreMapView({
     dot.style.boxShadow = '0 0 0 8px rgba(33, 102, 211, 0.18)';
     dot.style.color = '#FFFFFF';
     dot.style.display = 'flex';
-    dot.style.fontFamily = 'system-ui, sans-serif';
-    dot.style.fontSize = navigationMode ? '11px' : '0';
+    dot.style.fontFamily = hasNavigationGlyph
+      ? navigationFontFamily
+      : 'system-ui, sans-serif';
+    dot.style.fontSize = hasNavigationGlyph ? '15px' : '0';
     dot.style.fontWeight = '900';
     dot.style.height = navigationMode ? '34px' : '18px';
     dot.style.justifyContent = 'center';
@@ -516,6 +537,12 @@ export default function MapLibreMapView({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
+    const routeSource = map.getSource('spottr-route') as GeoJSONSource | undefined;
+    if (routeCoordinates.length < 2) {
+      routeSource?.setData({ type: 'FeatureCollection', features: [] });
+      fittedRouteKey.current = '';
+      return;
+    }
     const routeData: GeoJSON.Feature<GeoJSON.LineString> = {
       type: 'Feature',
       properties: {},
@@ -524,8 +551,7 @@ export default function MapLibreMapView({
         coordinates: routeCoordinates.map((point) => [point.longitude, point.latitude]),
       },
     };
-    const source = map.getSource('spottr-route') as GeoJSONSource | undefined;
-    if (source) source.setData(routeData);
+    if (routeSource) routeSource.setData(routeData);
     else {
       map.addSource('spottr-route', { type: 'geojson', data: routeData });
       map.addLayer({
@@ -538,10 +564,6 @@ export default function MapLibreMapView({
         paint: { 'line-color': palette.accent, 'line-width': 5, 'line-opacity': 1 },
         layout: { 'line-cap': 'round', 'line-join': 'round' },
       });
-    }
-    if (routeCoordinates.length < 2) {
-      fittedRouteKey.current = '';
-      return;
     }
     const key = `${routeCoordinates[0].latitude}:${routeCoordinates[0].longitude}:${routeCoordinates.at(-1)?.latitude}:${routeCoordinates.at(-1)?.longitude}`;
     if (key === fittedRouteKey.current) return;

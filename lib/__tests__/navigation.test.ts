@@ -1,4 +1,5 @@
 import {
+  externalDirectionsUrl,
   formatRouteDistance,
   formatRouteDuration,
   nearestRouteStep,
@@ -23,6 +24,14 @@ describe('route plan parsing', () => {
     expect(parseRoutePlan({ ...valid, expiresAt: new Date(now).toISOString() }, 'walk', now)).toBeNull();
     expect(parseRoutePlan(valid, 'drive', now)).toBeNull();
     expect(parseRoutePlan({ ...valid, coordinates: [{ latitude: 91, longitude: 0 }, valid.coordinates[1]] }, 'walk', now)).toBeNull();
+  });
+  it('builds validated HTTPS directions URLs for Apple and Google Maps', () => {
+    const destination = { latitude: 34.05, longitude: -118.24 };
+    expect(externalDirectionsUrl(destination, 'ios'))
+      .toBe('https://maps.apple.com/?daddr=34.05%2C-118.24');
+    expect(externalDirectionsUrl(destination, 'android'))
+      .toBe('https://www.google.com/maps/dir/?api=1&destination=34.05%2C-118.24');
+    expect(externalDirectionsUrl({ latitude: 91, longitude: 0 }, 'ios')).toBeNull();
   });
   it('formats compact route guidance values', () => {
     expect(formatRouteDistance(1_550)).toBe('1.0 mi');

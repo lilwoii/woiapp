@@ -31,6 +31,7 @@ import { useMarketplaceStore } from '@/context/marketplace-store';
 import { featureFlags } from '@/lib/features';
 import { phoneHref, placeShareUrl, safeHttpsUrl } from '@/lib/links';
 import { isMarketplaceChatAvailable, startMarketplaceConversation } from '@/lib/marketplace-chat';
+import { externalDirectionsUrl } from '@/lib/navigation';
 import {
   blockUser,
   createMarketplaceIdempotencyKey,
@@ -165,11 +166,14 @@ export default function PlaceDetailScreen() {
   const canOpenPublicDirections = place.category !== 'home_kitchen';
 
   const openDirections = () => {
-    const url =
-      Platform.OS === 'ios'
-        ? `maps://?daddr=${place.latitude},${place.longitude}`
-        : `https://www.google.com/maps/dir/?api=1&destination=${place.latitude},${place.longitude}`;
-    void Linking.openURL(url);
+    const url = externalDirectionsUrl(place, Platform.OS);
+    if (!url) {
+      showMessage('Directions unavailable', 'This listing does not have a valid public destination.');
+      return;
+    }
+    void Linking.openURL(url).catch(() => {
+      showMessage('Directions unavailable', 'Your maps app could not open this destination.');
+    });
   };
 
   const openSpottrNavigation = () => {

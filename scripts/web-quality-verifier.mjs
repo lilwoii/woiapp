@@ -3,6 +3,8 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { validateProductionArtifactContent } from './production-artifact-purity.mjs';
+
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_ROUTE_BYTES = 64 * 1024;
 // Static rendering repeats the shared route shell per route. Keep a narrow
@@ -81,14 +83,25 @@ export function validateBundleBudgets(metrics) {
   return errors;
 }
 
-async function collectFiles(root, extension) {
+async function collectFiles(root, extension = null) {
   const files = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
     const target = path.join(root, entry.name);
     if (entry.isDirectory()) files.push(...await collectFiles(target, extension));
-    else if (entry.isFile() && entry.name.endsWith(extension)) files.push(target);
+    else if (entry.isFile() && (!extension || entry.name.endsWith(extension))) files.push(target);
   }
   return files;
+}
+
+export async function validateProductionArtifactTree(root) {
+  const errors = [];
+  for (const file of await collectFiles(root)) {
+    errors.push(...validateProductionArtifactContent(
+      path.relative(root, file).replaceAll('\\', '/'),
+      await readFile(file),
+    ));
+  }
+  return errors;
 }
 
 export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
@@ -112,6 +125,8 @@ export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
     largestRouteBytes = Math.max(largestRouteBytes, buffer.length);
     errors.push(...validateRouteHtml(relative, buffer.toString('utf8')));
   }
+
+  errors.push(...await validateProductionArtifactTree(dist));
 
   const jsRoot = path.join(dist, '_expo', 'static', 'js', 'web');
   const jsFiles = await collectFiles(jsRoot, '.js');

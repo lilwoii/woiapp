@@ -318,11 +318,12 @@ error codes and intentionally logs none of those values.
 ## Current limitations
 
 - The private source, snapshot, receipt, rate-limit, history, and field-
-  precedence tables and the transactional RPC migration are checked in. The
-  migration has static contract coverage, but it has not yet been applied and
-  exercised against a production-equivalent PostgreSQL/Supabase instance in
-  this workspace. Until deployment applies it, the Edge Function returns
-  `INGESTION_STORE_UNAVAILABLE` and performs no writes.
+  precedence tables and the transactional RPC migration are checked in. CI
+  applies the baseline and every migration to its pinned Supabase runtime and
+  runs post-chain security contracts. That proves fresh-chain compatibility,
+  not provider-ingestion behavior in the target staging or production project.
+  Until the approved deployment applies this migration, the Edge Function
+  returns `INGESTION_STORE_UNAVAILABLE` and performs no writes.
 - Runtime evidence is still required for concurrent same-key calls, full
   rollback, source-order conflicts, paginated snapshot recovery, owner-edit
   hash detection, PostGIS materialization, and query plans at the contractual

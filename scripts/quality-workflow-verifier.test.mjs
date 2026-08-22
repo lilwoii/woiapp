@@ -10,10 +10,14 @@ import {
   validateSbomImplementationContract,
   validateSbomPackageContract,
   validateSecretHistoryGate,
+  validateSitesReleaseArtifactGate,
+  validateTextIntegrityGate,
 } from './quality-workflow-verifier.mjs';
 
 const command = (file) => `psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -f ${file}`;
 const validWorkflow = [
+  'on:',
+  '  workflow_dispatch:',
   '  full-supabase-db:',
   '      - uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2',
   '          version: 2.84.2',
@@ -31,12 +35,14 @@ const validWorkflow = [
   '    runs-on: ubuntu-latest',
   '      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6',
   '          fetch-depth: 0',
-  "          trap 'rm -f \"$archive\" \"$scanner\" \"$output\"' EXIT",
+  "          trap 'rm -f \"$archive\" \"$scanner\" \"$output\" \"$scanner_error\"' EXIT",
   "          curl --proto '=https' --tlsv1.2",
   '          https://github.com/trufflesecurity/trufflehog/releases/download/v3.96.0/trufflehog_3.96.0_linux_amd64.tar.gz',
   '          7105f1cd6577f058a9e39d0578f1a99c8a1e481e4d3512cd8a09acfe22a0fdc0',
   '          sha256sum --check --status',
-  '          "$scanner" git "file://$GITHUB_WORKSPACE" --results=verified,unknown --fail --fail-on-scan-errors --no-update --github-actions >"$output" 2>&1',
+  '          scanner_status=0',
+  '          "$scanner" --log-level=-1 --json git "file://$GITHUB_WORKSPACE" --no-verification --results=unverified,unknown --fail --fail-on-scan-errors --no-update >"$output" 2>"$scanner_error" || scanner_status=$?',
+  '          node scripts/verify-trufflehog-output.mjs "$output" "$scanner_error" "$scanner_status"',
   '  production-sbom:',
   '    permissions:',
   '      contents: read',
@@ -65,10 +71,32 @@ const validWorkflow = [
   '          npm run verify:production-sbom',
   '          sha256sum spottr-production.cdx.json > spottr-production.cdx.json.sha256',
   '  validate:',
+  '      - name: Reject malformed source text',
+  '        run: npm run verify:text-integrity',
+  '      - name: Test source-text verifier',
+  '        run: npm run test:text-integrity-tools',
   '      - name: Test production maintenance control plane',
   '        run: npm run test:maintenance-tools',
   '      - name: Test production SBOM verifier',
   '        run: npm run test:production-sbom-tools',
+  '      - name: Test secret-history finding policy',
+  '        run: npm run test:secret-history-tools',
+  '      - name: Build production web artifact',
+  '        run: npm run build:sites',
+  '      - name: Test rendered accessibility and keyboard behavior',
+  '        run: npm run test:web-e2e',
+  '      - name: Audit production dependencies',
+  '        run: npm run test:audit-tools && npm run audit:production',
+  '      - name: Upload verified Sites release artifact',
+  "        if: github.event_name == 'workflow_dispatch'",
+  '        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1',
+  '        with:',
+  '          name: spottr-sites-dist-${{ github.sha }}',
+  '          path: dist/',
+  '          if-no-files-found: error',
+  '          retention-days: 7',
+  '          overwrite: false',
+  '          include-hidden-files: true',
 ].join('\n');
 
 test('accepts transactional fail-fast SQL commands and a guarded failure probe', () => {
@@ -112,22 +140,74 @@ test('requires privileged production maintenance coverage', () => {
   ).replace('      - name: Test production maintenance control plane\n        run: npm run test:maintenance-tools', '')).length > 0);
 });
 
+test('requires a manual, commit-bound Sites artifact after every web release gate', () => {
+  assert.deepEqual(validateSitesReleaseArtifactGate(validWorkflow), []);
+  for (const mutation of [
+    ['  workflow_dispatch:', '  schedule:'],
+    ["if: github.event_name == 'workflow_dispatch'", "if: github.event_name == 'pull_request'"],
+    ['spottr-sites-dist-${{ github.sha }}', 'spottr-sites-dist-latest'],
+    ['path: dist/', 'path: **/*'],
+    ['include-hidden-files: true', 'include-hidden-files: false'],
+    ['retention-days: 7', 'retention-days: 90'],
+  ]) {
+    assert.ok(validateSitesReleaseArtifactGate(validWorkflow.replace(...mutation)).length > 0);
+  }
+  const premature = validWorkflow.replace(
+    "      - name: Upload verified Sites release artifact\n        if: github.event_name == 'workflow_dispatch'",
+    "      - name: Upload verified Sites release artifact early\n        if: github.event_name == 'workflow_dispatch'",
+  ).replace(
+    '      - name: Build production web artifact',
+    "      - name: Upload verified Sites release artifact\n        if: github.event_name == 'workflow_dispatch'\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n      - name: Build production web artifact",
+  );
+  assert.ok(validateSitesReleaseArtifactGate(premature).length > 0);
+});
+
+test('requires source text-integrity verification in direct and aggregate validation', () => {
+  const manifest = { scripts: {
+    validate: 'npm run verify:text-integrity && npm run test:text-integrity-tools',
+    'verify:text-integrity': 'node scripts/verify-text-integrity.mjs',
+    'test:text-integrity-tools': 'node --test scripts/verify-text-integrity.test.mjs',
+  } };
+  assert.deepEqual(validateTextIntegrityGate(validWorkflow, manifest), []);
+  assert.ok(validateTextIntegrityGate(validWorkflow.replace('run: npm run verify:text-integrity', 'run: echo skipped'), manifest).length > 0);
+  assert.ok(validateTextIntegrityGate(validWorkflow, { scripts: {} }).length > 0);
+});
+
 test('requires a fail-closed full-history secret scan with ephemeral redacted output', () => {
-  assert.deepEqual(validateSecretHistoryGate(validWorkflow), []);
+  const manifest = { scripts: {
+    validate: 'npm run test:secret-history-tools',
+    'test:secret-history-tools': 'node --test scripts/verify-trufflehog-output.test.mjs',
+  } };
+  assert.deepEqual(validateSecretHistoryGate(validWorkflow, manifest), []);
   for (const mutation of [
     ['fetch-depth: 0', 'fetch-depth: 1'],
-    ['--results=verified,unknown --fail --fail-on-scan-errors', '--results=verified,unknown --fail-on-scan-errors'],
-    ['--fail-on-scan-errors', '--no-verification-overlap'],
+    ['--fail --fail-on-scan-errors', '--fail-on-scan-errors'],
+    ['--fail-on-scan-errors', '--no-scan-error-policy'],
     ['7105f1cd6577f058a9e39d0578f1a99c8a1e481e4d3512cd8a09acfe22a0fdc0', '0'.repeat(64)],
     ['file://$GITHUB_WORKSPACE', 'https://github.com/example/repo'],
+    ['--no-verification', '--allow-verification'],
+    ['--json', '--no-json'],
+    ['node scripts/verify-trufflehog-output.mjs', 'node scripts/skip-trufflehog-output.mjs'],
+    ['--no-update >"$output"', '--no-update --exclude-paths fixtures.txt >"$output"'],
+    ['>"$output" 2>"$scanner_error"', '>"$output" 2>&1'],
+    ['"$output" "$scanner_error"\' EXIT', '"$output"\' EXIT'],
   ]) {
-    assert.ok(validateSecretHistoryGate(validWorkflow.replace(...mutation)).length > 0);
+    assert.notEqual(validWorkflow.replace(...mutation), validWorkflow);
+    assert.ok(validateSecretHistoryGate(validWorkflow.replace(...mutation), manifest).length > 0);
   }
   assert.ok(validateSecretHistoryGate(validWorkflow.replace(
     '      contents: read\n    runs-on: ubuntu-latest',
     '      contents: read\n      issues: write\n    runs-on: ubuntu-latest',
-  )).length > 0);
-  assert.ok(validateSecretHistoryGate(validWorkflow.replace('  production-sbom:', '      continue-on-error: true\n  production-sbom:')).length > 0);
+  ), manifest).length > 0);
+  assert.ok(validateSecretHistoryGate(
+    validWorkflow.replace('  production-sbom:', '      continue-on-error: true\n  production-sbom:'),
+    manifest,
+  ).length > 0);
+  assert.ok(validateSecretHistoryGate(
+    validWorkflow.replace('run: npm run test:secret-history-tools', 'run: echo skipped'),
+    manifest,
+  ).length > 0);
+  assert.ok(validateSecretHistoryGate(validWorkflow, { scripts: {} }).length > 0);
 });
 
 test('requires a commit-bound, narrowly uploaded production SBOM and its verifier tests', () => {

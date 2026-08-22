@@ -80,6 +80,10 @@ map response, real password sign-in, customer hydration, synthetic AAL2 owner-se
 hydration, Studio, and private-conversation listing. These are application-integration
 fixtures, not proof of an MFA ceremony or database RLS;
 populated production data and authorization still require live staging evidence.
+Both web and native release verifiers reject the fixture host, synthetic key,
+test credentials, test accounts, fixture role, and refresh-token markers if
+they appear in a production artifact. A fixture-contaminated export cannot
+satisfy the release gate or be deployed as Spottr.
 
 Two separate least-privilege CI jobs add baseline supply-chain evidence. One
 downloads a checksum-pinned TruffleHog binary and scans the complete reachable
@@ -97,6 +101,15 @@ preserve the SBOM artifact with the release record. This automation does not
 inspect unreachable/deleted Git
 objects, rotate credentials, determine exploitability, review licenses, or
 replace an independent security and dependency review.
+
+The separate CodeQL workflow analyzes JavaScript/TypeScript application code
+and GitHub Actions workflow code on pull requests, main-branch pushes, a weekly
+schedule, and manual dispatch. It uses the extended security query suite and
+uploads findings through GitHub's code-scanning channel with no repository
+secrets. Its actions are immutable-commit pinned and the main quality workflow
+tests those controls. A green CodeQL run is static-analysis evidence for the
+exact commit; it does not replace authenticated runtime penetration testing,
+business-logic review, mobile binary analysis, or target-environment testing.
 
 Required independent evidence before public launch:
 
@@ -163,9 +176,30 @@ Deploy and test:
 - `media-scan`
 - `media-cleanup`
 - `route-plan`
+- `public-discovery`
 
-Migration `20260810000000_media_lifecycle_serialization.sql` and the last four
-functions above are one controlled release unit. Keep both media gates false,
+Configure `SPOTTR_DISCOVERY_RATE_SECRET` as a dedicated 32+-character random
+server secret. Deploy the gateway while no client depends on it, apply
+`20260823000000_public_discovery_guard.sql` and
+`20260824000000_global_map_geography_bbox_repair.sql` in the same reviewed
+database change, smoke-test the gateway, and only then publish the matching
+clients. Do not revoke the direct RPC grants while a
+supported production client still calls them; use an explicitly reviewed
+compatibility rollout if that condition ever exists. Verify in the target
+project that `cf-connecting-ip` is supplied
+by the trusted Edge platform, that a missing header fails closed, and that raw
+IP addresses never appear in application tables or logs. Run map/nearby/search
+quota, concurrency, timeout, malformed-response, and lease-release drills under
+staging load before accepting the endpoint. Prove that timed-out PostgREST
+requests stop consuming database capacity under the target project's timeout
+and cancellation policy; the Edge HTTP abort alone is not that proof. The
+repository guard does not
+replace an external WAF, capacity evidence, or review of Supabase platform-log
+retention.
+
+Migration `20260810000000_media_lifecycle_serialization.sql` plus `media-stage`,
+`media-scan`, `media-cleanup`, and `route-plan` are one controlled release unit.
+Keep both media gates false,
 pause cleanup and deletion workers, drain legacy signed URLs for their full TTL
 plus scanner grace (or invalidate them), apply the migrations, deploy all
 matching functions, configure the internal deletion worker on a five-minute or
@@ -342,7 +376,15 @@ conversation with a clean attachment and expired pickup disclosure.
 5. Inject a storage or Auth failure and prove the response does not claim
    completion, the same idempotency key can safely retry, and duplicate calls do
    not create contradictory outcomes.
-6. Verify the private deletion receipt expires and the public/privacy copy
+6. Inject a final-receipt persistence failure after Auth deletion. Verify the
+   user-facing endpoint returns `202` instead of claiming completion, local Auth
+   state is cleared, and the recurring worker changes the sealed orphan receipt
+   from `storage_deleted` to `completed` exactly once.
+7. Inject an ambiguous Auth-provider response after the deletion request is
+   sealed. Verify neither Edge path changes the receipt to `failed`; the next
+   worker run either retries the still-present Auth user or finalizes the
+   FK-orphaned receipt.
+8. Verify the private deletion receipt expires and the public/privacy copy
    matches the observed retention behavior.
 
 Record database queries with personal data redacted, storage/Auth checks,

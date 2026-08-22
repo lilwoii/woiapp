@@ -49,16 +49,25 @@ test('populated discovery renders real results and bounds a 1,200-feature map re
   await page.getByRole('button', { name: 'Set area' }).click();
 
   await expect(page.getByRole('link', { name: 'View Maya Taco Truck' }).first()).toBeVisible();
+  await expect.poll(() => fixture?.searchRequests.length ?? 0).toBe(1);
+  expect(fixture?.searchRequests[0]).toEqual({
+    operation: 'search',
+    search_text: 'Los Angeles, CA',
+    result_limit: 100,
+    result_offset: 0,
+  });
   await expect(page.getByText('700 S Santa Fe Ave').first()).toBeVisible();
   await expect(page.getByText(/Food truck · Mexican · Street food/u).first()).toBeVisible();
   await expect(page.getByText('4.9').first()).toBeVisible();
   await expect(page.getByLabel('Interactive map of nearby food')).toBeVisible();
   await expect.poll(() => fixture?.mapRequests.length ?? 0).toBe(1);
   expect(fixture?.mapRequests[0]).toMatchObject({
+    operation: 'map',
     max_features: 1_200,
     requested_kinds: ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery'],
   });
-  await expect(page.locator('.maplibregl-marker[aria-label="1194 food places in this area. Zoom in to explore."]')).toHaveCount(1);
+  expect(fixture?.calls.some((call) => call.startsWith('POST /functions/v1/public-discovery'))).toBe(true);
+  await expect(page.locator('.maplibregl-marker[aria-label="1196 food places in this area. Zoom in to explore."]')).toHaveCount(1);
   expect(await page.locator('.maplibregl-marker').count()).toBeLessThan(80);
   for (const category of ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery']) {
     await expect(page.locator(`button[data-category="${category}"]`).first()).toBeVisible();
@@ -121,7 +130,9 @@ test('authenticated foreground navigation draws a provider route and remains use
 
   await context.grantPermissions(['geolocation'], { origin: fixtureAppOrigin });
   await context.setGeolocation({ latitude: 34.0522, longitude: -118.2437 });
-  await page.getByRole('radio', { name: 'Walk' }).click();
+  const walkMode = page.getByRole('radio', { name: 'Walk' });
+  await expect(walkMode).toHaveAccessibleDescription(/Starting navigation sends your precise current starting location.*to Mapbox/i);
+  await walkMode.click();
   await expect.poll(() => fixture?.routeRequests.length ?? 0).toBe(1);
   expect(fixture?.routeRequests[0]).toEqual({
     origin: { latitude: 34.0522, longitude: -118.2437 },
@@ -130,7 +141,31 @@ test('authenticated foreground navigation draws a provider route and remains use
   });
   await expect(page.getByText('Head southeast toward the Arts District')).toBeVisible();
   await expect(page.getByText('26 min · 1.3 mi')).toBeVisible();
-  await expect(page.locator('.maplibregl-marker[aria-label="Your live walk position"]')).toHaveCount(1);
+  const walkMarker = page.locator('.maplibregl-marker[aria-label="Your live walk position"]');
+  await expect(walkMarker).toHaveCount(1);
+  await expect(walkMarker).not.toHaveText('');
+  await expect(walkMarker).toHaveCSS('font-family', /FontAwesome6Free-Solid/u);
+  await expect(walkMode).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByText(/Changing travel mode sends your current precise location.*to Mapbox/i)).toBeVisible();
+
+  const driveMode = page.getByRole('radio', { name: 'Drive' });
+  await expect(driveMode).toHaveAccessibleDescription(/Changing travel mode sends your current precise location.*to Mapbox/i);
+  await driveMode.click();
+  await expect.poll(() => fixture?.routeRequests.length ?? 0).toBe(2);
+  expect(fixture?.routeRequests[1]).toMatchObject({ mode: 'drive' });
+  await expect(driveMode).toHaveAttribute('aria-checked', 'true');
+  const driveMarker = page.locator('.maplibregl-marker[aria-label="Your live drive position"]');
+  await expect(driveMarker).toHaveCount(1);
+  await expect(driveMarker).not.toHaveText('');
+  await expect(driveMarker).toHaveCSS('font-family', /FontAwesome6Free-Solid/u);
+
+  await page.getByRole('radio', { name: 'Bike' }).click();
+  await expect.poll(() => fixture?.routeRequests.length ?? 0).toBe(3);
+  expect(fixture?.routeRequests[2]).toMatchObject({ mode: 'bike' });
+  const bikeMarker = page.locator('.maplibregl-marker[aria-label="Your live bike position"]');
+  await expect(bikeMarker).toHaveCount(1);
+  await expect(bikeMarker).not.toHaveText('');
+  await expect(bikeMarker).toHaveCSS('font-family', /FontAwesome6Free-Solid/u);
   const automaticRerouting = page.getByRole('switch', { name: 'Automatic rerouting' });
   await expect(automaticRerouting).toHaveAccessibleDescription(/updated precise current location to Mapbox after at least 100 m of movement and 90 seconds/i);
   await expect(automaticRerouting).toHaveAttribute('aria-checked', 'false');
@@ -138,12 +173,12 @@ test('authenticated foreground navigation draws a provider route and remains use
   await expect(automaticRerouting).toHaveAttribute('aria-checked', 'true');
   await automaticRerouting.click();
   await expect(automaticRerouting).toHaveAttribute('aria-checked', 'false');
-  expect(fixture?.routeRequests).toHaveLength(1);
+  expect(fixture?.routeRequests).toHaveLength(3);
   await expect(page.getByRole('button', { name: 'Hide route' })).toBeVisible();
   await page.getByRole('button', { name: 'Hide route' }).click();
   await expect(page.getByRole('button', { name: 'Show route' })).toBeVisible();
   await page.getByRole('button', { name: 'Stop tracking' }).click();
   await expect(page.getByText('Live tracking stopped.')).toBeVisible();
-  await expect(page.getByRole('radio', { name: 'Walk' })).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Walk' })).toHaveAttribute('aria-checked', 'false');
   await expectNoSeriousAxeViolations(page);
 });
