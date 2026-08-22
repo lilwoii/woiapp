@@ -180,8 +180,10 @@ Deploy and test:
 
 Configure `SPOTTR_DISCOVERY_RATE_SECRET` as a dedicated 32+-character random
 server secret. Deploy the gateway while no client depends on it, apply
-`20260823000000_public_discovery_guard.sql`, smoke-test the gateway, and only
-then publish the matching clients. Do not revoke the direct RPC grants while a
+`20260823000000_public_discovery_guard.sql` and
+`20260824000000_global_map_geography_bbox_repair.sql` in the same reviewed
+database change, smoke-test the gateway, and only then publish the matching
+clients. Do not revoke the direct RPC grants while a
 supported production client still calls them; use an explicitly reviewed
 compatibility rollout if that condition ever exists. Verify in the target
 project that `cf-connecting-ip` is supplied

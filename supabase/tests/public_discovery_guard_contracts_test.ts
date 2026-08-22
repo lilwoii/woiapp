@@ -15,6 +15,12 @@ const migration = await Deno.readTextFile(
     import.meta.url,
   ),
 );
+const mapGeographyRepair = await Deno.readTextFile(
+  new URL(
+    "../migrations/20260824000000_global_map_geography_bbox_repair.sql",
+    import.meta.url,
+  ),
+);
 const runtime = await Deno.readTextFile(
   new URL("./full_stack_security_runtime_test.sql", import.meta.url),
 );
@@ -83,6 +89,19 @@ Deno.test("all discovery query and lifecycle RPC grants are fail-closed", () => 
     );
   }
   assertMatch(migration, /set search_path = ''/);
+});
+
+Deno.test("global map viewport uses geography-compatible index-aware filtering", () => {
+  assertMatch(mapGeographyRepair, /public\.st_intersects\(/);
+  assert(!/bl\.point\s+&&\s+public\.st_makeenvelope/.test(mapGeographyRepair));
+  assertMatch(
+    mapGeographyRepair,
+    /revoke all on function public\.map_food_places[\s\S]+from public, anon, authenticated/,
+  );
+  assertMatch(
+    mapGeographyRepair,
+    /grant execute on function public\.map_food_places[\s\S]+to service_role/,
+  );
 });
 
 Deno.test("full-schema runtime assertions exercise denial, admission, recovery, and release", () => {
