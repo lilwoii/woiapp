@@ -86,3 +86,26 @@ test('native artifact verifier rejects fixture state in a non-bundle asset', asy
     /production output contains synthetic fixture state/,
   );
 });
+
+test('native artifact verifier rejects fictional listing data in a bundle', async (context) => {
+  const projectRoot = await mkdtemp(path.join(tmpdir(), 'spottr-native-demo-purity-'));
+  context.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const outputRoot = path.join(projectRoot, 'dist-ios');
+  const bundlePath = path.join(outputRoot, 'bundles', 'app.hbc');
+  await mkdir(path.dirname(bundlePath), { recursive: true });
+  await Promise.all([
+    writeFile(bundlePath, Buffer.concat([
+      Buffer.alloc(100_001, 0x61),
+      Buffer.from('preview-sponsored-copper-coyote'),
+    ])),
+    writeFile(path.join(outputRoot, 'metadata.json'), JSON.stringify({
+      bundler: 'metro',
+      fileMetadata: { ios: { bundle: 'bundles/app.hbc', assets: [] } },
+    })),
+  ]);
+
+  await assert.rejects(
+    verifyArtifact(projectRoot, 'ios'),
+    /production output contains synthetic fixture state/,
+  );
+});

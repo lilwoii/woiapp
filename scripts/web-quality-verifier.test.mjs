@@ -62,6 +62,8 @@ test('production artifact verifier rejects isolated browser-fixture state', () =
     'customer@spottr.test',
     'spottr_fixture_role',
     'fixture-refresh-customer',
+    'preview-sponsored-copper-coyote',
+    'cc-review-1',
   ]) {
     const errors = validateProductionArtifactContent(
       '_expo/static/js/web/entry-release.js',

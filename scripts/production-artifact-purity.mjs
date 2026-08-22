@@ -8,6 +8,8 @@ export const NON_PRODUCTION_ARTIFACT_MARKERS = Object.freeze([
   'customer@spottr.test',
   'spottr_fixture_role',
   'fixture-refresh-',
+  'preview-sponsored-copper-coyote',
+  'cc-review-1',
 ]);
 
 export function validateProductionArtifactContent(relativePath, content) {
