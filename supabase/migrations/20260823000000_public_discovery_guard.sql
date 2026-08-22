@@ -99,7 +99,7 @@ begin
   end if;
 
   bucket_start := pg_catalog.to_timestamp(
-    pg_catalog.floor(pg_catalog.extract(epoch from target_now) / 60) * 60
+    pg_catalog.floor(pg_catalog.date_part('epoch', target_now) / 60) * 60
   );
 
   insert into private.public_discovery_rate_buckets (
