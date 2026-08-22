@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 const MAX_SCAN_OUTPUT_BYTES = 10 * 1024 * 1024;
@@ -112,12 +112,28 @@ export function validateTruffleHogOutput({
   return errors;
 }
 
-async function readBoundedFile(filePath) {
-  const details = await stat(filePath);
-  if (!details.isFile() || details.size > MAX_SCAN_OUTPUT_BYTES) {
-    throw new Error('Secret-history scanner evidence is missing or oversized.');
+export async function readBoundedFile(filePath) {
+  const handle = await open(filePath, 'r');
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || before.size > MAX_SCAN_OUTPUT_BYTES) {
+      throw new Error('Secret-history scanner evidence is missing or oversized.');
+    }
+    const contents = await handle.readFile();
+    const after = await handle.stat();
+    if (
+      !after.isFile() ||
+      contents.byteLength !== before.size ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs
+    ) {
+      throw new Error('Secret-history scanner evidence changed during verification.');
+    }
+    return contents.toString('utf8');
+  } finally {
+    await handle.close();
   }
-  return readFile(filePath, 'utf8');
 }
 
 export async function verifyTruffleHogFiles(outputPath, errorPath, rawExitCode) {

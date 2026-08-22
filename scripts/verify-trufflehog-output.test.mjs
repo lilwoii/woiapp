@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
   REVIEWED_TRUFFLEHOG_FINDING_COUNT,
   REVIEWED_TRUFFLEHOG_REQUIRED_GROUP_COUNT,
+  readBoundedFile,
   validateTruffleHogOutput,
 } from './verify-trufflehog-output.mjs';
 
@@ -123,4 +127,15 @@ test('errors never echo a raw or redacted finding value', () => {
     message,
     /commit=[0-9a-f]{40};line=87;file=approved;detector=URI;decoder=PLAIN;verified=false;rawv2sha256=[0-9a-f]{64}/u,
   );
+});
+
+test('verifies bounded scanner evidence through stable file handles', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'spottr-secret-evidence-'));
+  const outputPath = join(directory, 'scanner.jsonl');
+  try {
+    await writeFile(outputPath, 'bounded evidence\n', 'utf8');
+    assert.equal(await readBoundedFile(outputPath), 'bounded evidence\n');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
