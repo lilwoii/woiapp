@@ -658,13 +658,13 @@ reset role;
 do $public_discovery_service_success$
 declare
   response jsonb;
-  lease_hmac text;
+  acquired_lease_hmac text;
 begin
   response := public.acquire_public_discovery_lease(
     'map', repeat('a', 64), null, repeat('b', 64)
   );
-  lease_hmac := response->>'lease_hmac';
-  if lease_hmac is null or lease_hmac !~ '^[0-9a-f]{64}$'
+  acquired_lease_hmac := response->>'lease_hmac';
+  if acquired_lease_hmac is null or acquired_lease_hmac !~ '^[0-9a-f]{64}$'
     or response->>'operation' <> 'map'
   then
     raise exception 'Service role did not receive a valid discovery lease';
@@ -673,7 +673,7 @@ begin
   if not exists (
     select 1
     from private.public_discovery_leases lease
-    where lease.lease_hmac = lease_hmac
+    where lease.lease_hmac = acquired_lease_hmac
       and lease.ip_hmac = repeat('a', 64)
       and lease.account_hmac is null
       and lease.expires_at > clock_timestamp()
@@ -682,10 +682,10 @@ begin
     raise exception 'Discovery lease state was not persisted as digest-only data';
   end if;
 
-  if not (public.release_public_discovery_lease(lease_hmac)->>'released')::boolean
+  if not (public.release_public_discovery_lease(acquired_lease_hmac)->>'released')::boolean
     or exists (
       select 1 from private.public_discovery_leases lease
-      where lease.lease_hmac = lease_hmac
+      where lease.lease_hmac = acquired_lease_hmac
     )
   then
     raise exception 'Discovery lease release did not remove the active lease';
