@@ -163,6 +163,10 @@ Launch requires:
 - Request foreground location only and always provide city/ZIP fallback.
 - Do not persist customer search coordinates to profiles or marketplace tables.
 - Redact or round coordinates in telemetry and security logs.
+- Public map/search admission stores only server-keyed HMAC digests for network
+  and account rate buckets. Raw client addresses and Auth IDs never enter those
+  discovery tables or application logs. Supabase platform-log retention and
+  access remain a separate production privacy control.
 - Food-truck locations are owner-published stops, not continuous owner-device
   tracking.
 - Never expose a home residence address or precise marker in public APIs,

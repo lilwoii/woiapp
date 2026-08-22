@@ -463,6 +463,378 @@ begin
 end;
 $receipt_rejections$;
 
+-- Public discovery is reachable only through the service-role proxy.  The
+-- proxy supplies HMAC digests; this runtime drill never inserts a raw IP.
+set local role anon;
+
+do $public_discovery_denial$
+begin
+  begin
+    perform public.acquire_public_discovery_lease(
+      'map', repeat('a', 64), null, repeat('b', 64)
+    );
+    raise exception 'Anonymous role unexpectedly acquired a discovery lease';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform public.release_public_discovery_lease(repeat('b', 64));
+    raise exception 'Anonymous role unexpectedly released a discovery lease';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform public.attach_public_discovery_account(
+      repeat('b', 64), repeat('c', 64)
+    );
+    raise exception 'Anonymous role unexpectedly attached a discovery account';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform public.cleanup_public_discovery_leases();
+    raise exception 'Anonymous role unexpectedly cleaned discovery leases';
+  exception
+    when insufficient_privilege then null;
+  end;
+end;
+$public_discovery_denial$;
+
+reset role;
+
+do $public_discovery_privileges$
+begin
+  if has_function_privilege(
+      'anon',
+      'public.map_food_places(double precision,double precision,double precision,double precision,integer,text[],integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.map_food_places(double precision,double precision,double precision,double precision,integer,text[],integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.nearby_businesses(double precision,double precision,integer,integer,integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.nearby_businesses(double precision,double precision,integer,integer,integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.search_businesses(text,integer,integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.search_businesses(text,integer,integer)',
+      'execute'
+    )
+  then
+    raise exception 'Anonymous or authenticated discovery execution was not revoked';
+  end if;
+
+  if not has_function_privilege(
+      'service_role',
+      'public.map_food_places(double precision,double precision,double precision,double precision,integer,text[],integer)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.nearby_businesses(double precision,double precision,integer,integer,integer)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.search_businesses(text,integer,integer)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.acquire_public_discovery_lease(text,text,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.attach_public_discovery_account(text,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.release_public_discovery_lease(text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.cleanup_public_discovery_leases()',
+      'execute'
+    )
+  then
+    raise exception 'Service role lost a discovery query grant';
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.pg_attribute attribute
+    join pg_catalog.pg_class relation on relation.oid = attribute.attrelid
+    join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'private'
+      and relation.relname in (
+        'public_discovery_rate_buckets',
+        'public_discovery_leases'
+      )
+      and attribute.attnum > 0
+      and not attribute.attisdropped
+      and pg_catalog.format_type(attribute.atttypid, attribute.atttypmod) in ('inet', 'cidr')
+  ) then
+    raise exception 'Public discovery state stores a raw network address';
+  end if;
+end;
+$public_discovery_privileges$;
+
+set local role service_role;
+
+do $public_discovery_service_execution$
+declare
+  lease_response jsonb;
+  attach_response jsonb;
+  generated_lease text;
+  map_lease text;
+  search_lease text;
+begin
+  lease_response := public.acquire_public_discovery_lease(
+    'nearby', repeat('f', 64), null
+  );
+  generated_lease := lease_response->>'lease_hmac';
+  if generated_lease is null or generated_lease !~ '^[0-9a-f]{64}$' then
+    raise exception 'Service role did not receive a generated lease digest';
+  end if;
+
+  attach_response := public.attach_public_discovery_account(
+    generated_lease, repeat('e', 64)
+  );
+  if not coalesce((attach_response->>'attached')::boolean, false)
+    or attach_response->>'operation' <> 'nearby'
+  then
+    raise exception 'Service role did not attach an account quota';
+  end if;
+
+  perform 1 from public.nearby_businesses(34.0, -118.4, 500, 1, 0) limit 1;
+  if not (public.release_public_discovery_lease(generated_lease)->>'released')::boolean then
+    raise exception 'Service role could not release a generated lease';
+  end if;
+
+  map_lease := public.acquire_public_discovery_lease(
+    'map', repeat('1', 64), null
+  )->>'lease_hmac';
+  if map_lease = generated_lease then
+    raise exception 'Generated discovery lease digests were not unique';
+  end if;
+  perform 1 from public.map_food_places(
+    -118.5, 33.9, -118.4, 34.0, 11, array['food_truck']::text[], 1
+  ) limit 1;
+  perform public.release_public_discovery_lease(map_lease);
+
+  search_lease := public.acquire_public_discovery_lease(
+    'search', repeat('2', 64), null
+  )->>'lease_hmac';
+  if search_lease in (generated_lease, map_lease) then
+    raise exception 'Generated discovery lease digests were not unique';
+  end if;
+  perform 1 from public.search_businesses('Los Angeles', 1, 0) limit 1;
+  perform public.release_public_discovery_lease(search_lease);
+end;
+$public_discovery_service_execution$;
+
+reset role;
+
+do $public_discovery_service_success$
+declare
+  response jsonb;
+  lease_hmac text;
+begin
+  response := public.acquire_public_discovery_lease(
+    'map', repeat('a', 64), null, repeat('b', 64)
+  );
+  lease_hmac := response->>'lease_hmac';
+  if lease_hmac is null or lease_hmac !~ '^[0-9a-f]{64}$'
+    or response->>'operation' <> 'map'
+  then
+    raise exception 'Service role did not receive a valid discovery lease';
+  end if;
+
+  if not exists (
+    select 1
+    from private.public_discovery_leases lease
+    where lease.lease_hmac = lease_hmac
+      and lease.ip_hmac = repeat('a', 64)
+      and lease.account_hmac is null
+      and lease.expires_at > clock_timestamp()
+      and lease.expires_at <= lease.created_at + interval '2 minutes'
+  ) then
+    raise exception 'Discovery lease state was not persisted as digest-only data';
+  end if;
+
+  if not (public.release_public_discovery_lease(lease_hmac)->>'released')::boolean
+    or exists (
+      select 1 from private.public_discovery_leases lease
+      where lease.lease_hmac = lease_hmac
+    )
+  then
+    raise exception 'Discovery lease release did not remove the active lease';
+  end if;
+end;
+$public_discovery_service_success$;
+
+-- The pre-auth IP admission persists, while a rejected account attachment must
+-- leave the lease anonymous and the exhausted account bucket unchanged.
+insert into private.public_discovery_rate_buckets (
+  operation,
+  subject_kind,
+  subject_hmac,
+  bucket_started_at,
+  request_count
+)
+values (
+  'search',
+  'account',
+  repeat('c', 64),
+  to_timestamp(floor(extract(epoch from clock_timestamp()) / 60) * 60),
+  240
+);
+
+do $public_discovery_quota_atomicity$
+begin
+  perform public.acquire_public_discovery_lease(
+    'search', repeat('d', 64), null, repeat('e', 64)
+  );
+
+  begin
+    perform public.attach_public_discovery_account(
+      repeat('e', 64), repeat('c', 64)
+    );
+    raise exception 'An exhausted account quota unexpectedly admitted a request';
+  exception
+    when sqlstate 'P0001' then null;
+  end;
+
+  if not exists (
+    select 1
+    from private.public_discovery_rate_buckets bucket
+    where bucket.operation = 'search'
+      and bucket.subject_kind = 'ip'
+      and bucket.subject_hmac = repeat('d', 64)
+      and bucket.bucket_started_at = to_timestamp(floor(extract(epoch from clock_timestamp()) / 60) * 60)
+      and bucket.request_count = 1
+  ) then
+    raise exception 'Pre-authenticated IP admission was not retained';
+  end if;
+
+  if not exists (
+    select 1
+    from private.public_discovery_rate_buckets bucket
+    where bucket.operation = 'search'
+      and bucket.subject_kind = 'account'
+      and bucket.subject_hmac = repeat('c', 64)
+      and bucket.request_count = 240
+  ) then
+    raise exception 'Authenticated account quota bucket changed after rejection';
+  end if;
+
+  if not exists (
+    select 1
+    from private.public_discovery_leases lease
+    where lease.lease_hmac = repeat('e', 64)
+      and lease.account_hmac is null
+  ) then
+    raise exception 'Rejected account attachment changed the anonymous lease';
+  end if;
+
+  perform public.release_public_discovery_lease(repeat('e', 64));
+end;
+$public_discovery_quota_atomicity$;
+
+-- Fill the map cap with distinct digest identities, then prove that one stale
+-- lease is reclaimed without waiting and that cleanup/release remain effective.
+do $public_discovery_lease_cap$
+declare
+  index_value integer;
+  ip_digest text;
+  lease_digest text;
+  response jsonb;
+  stale_lease text := repeat('b', 62) || '01';
+  cleanup_response jsonb;
+begin
+  for index_value in 1..32 loop
+    ip_digest := repeat('a', 62) || lpad(to_hex(index_value), 2, '0');
+    lease_digest := repeat('b', 62) || lpad(to_hex(index_value), 2, '0');
+    perform public.acquire_public_discovery_lease(
+      'map', ip_digest, null, lease_digest
+    );
+  end loop;
+
+  begin
+    perform public.acquire_public_discovery_lease(
+      'map', repeat('a', 62) || '21', null, repeat('b', 62) || '21'
+    );
+    raise exception 'Map concurrency cap unexpectedly admitted a 33rd lease';
+  exception
+    when sqlstate '55P03' then null;
+  end;
+
+  update private.public_discovery_leases lease
+  set created_at = clock_timestamp() - interval '20 seconds',
+      expires_at = clock_timestamp() - interval '1 second'
+  where lease.lease_hmac = stale_lease;
+
+  response := public.acquire_public_discovery_lease(
+    'map', repeat('a', 62) || '21', null, repeat('b', 62) || '21'
+  );
+  if response->>'lease_hmac' <> repeat('b', 62) || '21'
+    or exists (
+      select 1 from private.public_discovery_leases lease
+      where lease.lease_hmac = stale_lease
+    )
+  then
+    raise exception 'Stale map lease was not recovered during admission';
+  end if;
+
+  update private.public_discovery_leases lease
+  set created_at = clock_timestamp() - interval '20 seconds',
+      expires_at = clock_timestamp() - interval '1 second'
+  where lease.lease_hmac = repeat('b', 62) || '02';
+
+  cleanup_response := public.cleanup_public_discovery_leases();
+  if coalesce((cleanup_response->>'leases_deleted')::integer, 0) < 1
+    or coalesce((cleanup_response->>'buckets_deleted')::integer, -1) < 0
+    or coalesce((cleanup_response->>'more_work')::boolean, true)
+    or jsonb_typeof(cleanup_response->'skipped_operations') <> 'array'
+    or exists (
+      select 1 from private.public_discovery_leases lease
+      where lease.lease_hmac = repeat('b', 62) || '02'
+    )
+  then
+    raise exception 'Discovery cleanup did not reclaim a stale lease';
+  end if;
+
+  if not (public.release_public_discovery_lease(response->>'lease_hmac')->>'released')::boolean
+    or exists (
+      select 1 from private.public_discovery_leases lease
+      where lease.lease_hmac = response->>'lease_hmac'
+    )
+  then
+    raise exception 'Discovery release did not remove the recovered lease';
+  end if;
+end;
+$public_discovery_lease_cap$;
+
 reset role;
 
 rollback;

@@ -176,9 +176,28 @@ Deploy and test:
 - `media-scan`
 - `media-cleanup`
 - `route-plan`
+- `public-discovery`
 
-Migration `20260810000000_media_lifecycle_serialization.sql` and the last four
-functions above are one controlled release unit. Keep both media gates false,
+Configure `SPOTTR_DISCOVERY_RATE_SECRET` as a dedicated 32+-character random
+server secret. Deploy the gateway while no client depends on it, apply
+`20260823000000_public_discovery_guard.sql`, smoke-test the gateway, and only
+then publish the matching clients. Do not revoke the direct RPC grants while a
+supported production client still calls them; use an explicitly reviewed
+compatibility rollout if that condition ever exists. Verify in the target
+project that `cf-connecting-ip` is supplied
+by the trusted Edge platform, that a missing header fails closed, and that raw
+IP addresses never appear in application tables or logs. Run map/nearby/search
+quota, concurrency, timeout, malformed-response, and lease-release drills under
+staging load before accepting the endpoint. Prove that timed-out PostgREST
+requests stop consuming database capacity under the target project's timeout
+and cancellation policy; the Edge HTTP abort alone is not that proof. The
+repository guard does not
+replace an external WAF, capacity evidence, or review of Supabase platform-log
+retention.
+
+Migration `20260810000000_media_lifecycle_serialization.sql` plus `media-stage`,
+`media-scan`, `media-cleanup`, and `route-plan` are one controlled release unit.
+Keep both media gates false,
 pause cleanup and deletion workers, drain legacy signed URLs for their full TTL
 plus scanner grace (or invalidate them), apply the migrations, deploy all
 matching functions, configure the internal deletion worker on a five-minute or

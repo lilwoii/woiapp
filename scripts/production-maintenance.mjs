@@ -118,6 +118,23 @@ export async function runProductionMaintenance({
     `${restRoot}/cleanup_unavailable_meeting_place_requests`,
     { method: 'POST', headers: databaseHeaders, body: '{}' },
   );
+  const discoveryCleanup = await requestJson(
+    fetchImpl,
+    'cleanup_public_discovery_leases',
+    `${restRoot}/cleanup_public_discovery_leases`,
+    { method: 'POST', headers: databaseHeaders, body: '{}' },
+  );
+  if (
+    typeof discoveryCleanup?.leases_deleted !== 'number' ||
+    typeof discoveryCleanup?.buckets_deleted !== 'number' ||
+    discoveryCleanup.leases_deleted < 0 ||
+    discoveryCleanup.buckets_deleted < 0 ||
+    discoveryCleanup.more_work !== false ||
+    !Array.isArray(discoveryCleanup.skipped_operations) ||
+    discoveryCleanup.skipped_operations.length !== 0
+  ) {
+    throw new Error('cleanup_public_discovery_leases did not report bounded completion.');
+  }
 
   const heartbeat = await fetchImpl(config.heartbeatUrl, {
     method: 'GET',

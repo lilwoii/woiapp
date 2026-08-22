@@ -49,16 +49,25 @@ test('populated discovery renders real results and bounds a 1,200-feature map re
   await page.getByRole('button', { name: 'Set area' }).click();
 
   await expect(page.getByRole('link', { name: 'View Maya Taco Truck' }).first()).toBeVisible();
+  await expect.poll(() => fixture?.searchRequests.length ?? 0).toBe(1);
+  expect(fixture?.searchRequests[0]).toEqual({
+    operation: 'search',
+    search_text: 'Los Angeles, CA',
+    result_limit: 100,
+    result_offset: 0,
+  });
   await expect(page.getByText('700 S Santa Fe Ave').first()).toBeVisible();
   await expect(page.getByText(/Food truck · Mexican · Street food/u).first()).toBeVisible();
   await expect(page.getByText('4.9').first()).toBeVisible();
   await expect(page.getByLabel('Interactive map of nearby food')).toBeVisible();
   await expect.poll(() => fixture?.mapRequests.length ?? 0).toBe(1);
   expect(fixture?.mapRequests[0]).toMatchObject({
+    operation: 'map',
     max_features: 1_200,
     requested_kinds: ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery'],
   });
-  await expect(page.locator('.maplibregl-marker[aria-label="1194 food places in this area. Zoom in to explore."]')).toHaveCount(1);
+  expect(fixture?.calls.some((call) => call.startsWith('POST /functions/v1/public-discovery'))).toBe(true);
+  await expect(page.locator('.maplibregl-marker[aria-label="1196 food places in this area. Zoom in to explore."]')).toHaveCount(1);
   expect(await page.locator('.maplibregl-marker').count()).toBeLessThan(80);
   for (const category of ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery']) {
     await expect(page.locator(`button[data-category="${category}"]`).first()).toBeVisible();

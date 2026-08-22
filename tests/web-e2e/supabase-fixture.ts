@@ -135,7 +135,7 @@ function json(route: Route, body: unknown, status = 200) {
     contentType: 'application/json; charset=utf-8',
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'authorization, apikey, content-profile, content-type, prefer, x-client-info',
+      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-profile, content-type, prefer, x-retry-count, traceparent, tracestate, baggage',
       'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
       'Content-Range': Array.isArray(body) ? `0-${Math.max(0, body.length - 1)}/${body.length}` : '0-0/1',
     },
@@ -257,6 +257,10 @@ function postBody(route: Route): Record<string, unknown> {
     : {};
 }
 
+function exactBodyKeys(body: Record<string, unknown>, ...keys: string[]) {
+  return Object.keys(body).sort().join(',') === [...keys].sort().join(',');
+}
+
 function exactFilter(url: URL, key: string, ...expected: string[]) {
   return expected.includes(url.searchParams.get(key) ?? '');
 }
@@ -310,7 +314,10 @@ function protectedTableAllowed(
 export async function installSpottrFixture(page: Page) {
   const unexpected: string[] = [];
   const calls: string[] = [];
+  const discoveryRequests: Record<string, unknown>[] = [];
   const mapRequests: Record<string, unknown>[] = [];
+  const nearbyRequests: Record<string, unknown>[] = [];
+  const searchRequests: Record<string, unknown>[] = [];
   const routeRequests: Record<string, unknown>[] = [];
   const realtimeMessages: string[] = [];
   let realtimeConnections = 0;
@@ -394,7 +401,7 @@ export async function installSpottrFixture(page: Page) {
         status: 204,
         headers: {
           'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'authorization, apikey, content-profile, content-type, prefer, x-client-info',
+          'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-profile, content-type, prefer, x-retry-count, traceparent, tracestate, baggage',
           'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
         },
       });
@@ -484,48 +491,128 @@ export async function installSpottrFixture(page: Page) {
       return;
     }
 
-    if (url.pathname.startsWith('/rest/v1/rpc/')) {
-      const rpc = url.pathname.slice('/rest/v1/rpc/'.length);
-      const role = roleFromRequest(route);
+    if (url.pathname === '/functions/v1/public-discovery' && method === 'POST') {
       const body = postBody(route);
+      const operation = body.operation;
+      const validLimit = body.result_limit === 100;
+      const validOffset = body.result_offset === 0;
+
       if (
-        rpc === 'search_businesses' && method === 'POST' &&
-        body.search_text === 'Los Angeles, CA' && body.result_limit === 100 &&
-        body.result_offset === 0
+        operation === 'search' &&
+        exactBodyKeys(body, 'operation', 'search_text', 'result_limit', 'result_offset') &&
+        body.search_text === 'Los Angeles, CA' && validLimit && validOffset
       ) {
-        await json(route, [{ business_id: ids.business, has_more: false }]);
+        discoveryRequests.push(body);
+        searchRequests.push(body);
+        await json(route, {
+          operation: 'search',
+          rows: [{ business_id: ids.business, has_more: false }],
+        });
         return;
       }
+
       if (
-        rpc === 'map_food_places' && method === 'POST' &&
+        operation === 'nearby' &&
+        exactBodyKeys(
+          body,
+          'operation',
+          'search_lat',
+          'search_lng',
+          'radius_meters',
+          'result_limit',
+          'result_offset',
+        ) &&
+        typeof body.search_lat === 'number' &&
+        typeof body.search_lng === 'number' &&
+        typeof body.radius_meters === 'number' &&
+        body.radius_meters > 0 &&
+        validLimit &&
+        validOffset
+      ) {
+        discoveryRequests.push(body);
+        nearbyRequests.push(body);
+        await json(route, {
+          operation: 'nearby',
+          rows: [{
+            business_id: ids.business,
+            location_id: ids.location,
+            distance_meters: 1_250,
+            is_approximate: false,
+            has_more: false,
+          }],
+        });
+        return;
+      }
+
+      if (
+        operation === 'map' &&
+        exactBodyKeys(
+          body,
+          'operation',
+          'west_longitude',
+          'south_latitude',
+          'east_longitude',
+          'north_latitude',
+          'map_zoom',
+          'requested_kinds',
+          'max_features',
+        ) &&
         body.max_features === 1_200 &&
         Array.isArray(body.requested_kinds) &&
         body.requested_kinds.join(',') === 'food_truck,restaurant,pop_up,cafe_bakery' &&
-        typeof body.west_longitude === 'number' && typeof body.east_longitude === 'number' &&
-        typeof body.south_latitude === 'number' && typeof body.north_latitude === 'number' &&
+        typeof body.west_longitude === 'number' &&
+        typeof body.east_longitude === 'number' &&
+        typeof body.south_latitude === 'number' &&
+        typeof body.north_latitude === 'number' &&
         typeof body.map_zoom === 'number'
       ) {
+        discoveryRequests.push(body);
         mapRequests.push(body);
         const venueKinds = ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery'] as const;
         const features = Array.from({ length: 1_200 }, (_, index) => {
-          const kind = index >= 1_198 ? 'home_kitchen' : venueKinds[index % venueKinds.length];
+          const kind = venueKinds[index % venueKinds.length];
           const showcase = index < venueKinds.length;
+          const suffix = (index + 1).toString(16).padStart(12, '0');
+          const businessId = index === 0
+            ? ids.business
+            : `30000000-0000-4000-8000-${suffix}`;
+          const locationId = index === 0
+            ? ids.location
+            : `40000000-0000-4000-8000-${suffix}`;
           return {
             feature_type: 'place',
-            feature_id: `fixture-place-${index}`,
+            feature_id: `place:${locationId}`,
             place_count: 1,
             latitude: showcase ? 34.0355 : 34.0355 + (index % 20) * 0.00001,
             longitude: showcase ? -118.3524 + index * 0.08 : -118.2324 + Math.floor(index / 20) * 0.00001,
             category_counts: { [kind]: 1 },
             dominant_kind: kind,
-            business_id: index === 0 ? ids.business : null,
-            location_id: index === 0 ? ids.location : null,
+            business_id: businessId,
+            location_id: locationId,
             business_name: index === 0 ? 'Maya Taco Truck' : `Fixture ${kind.replaceAll('_', ' ')} ${index + 1}`,
             logo_path: null,
             source_label: 'Owner verified',
           };
         });
-        await json(route, features);
+        await json(route, { operation: 'map', rows: features });
+        return;
+      }
+
+      unexpected.push(`${label} carried an invalid public-discovery request`);
+      await json(route, { message: 'Invalid fixture public-discovery request' }, 400);
+      return;
+    }
+
+    if (url.pathname.startsWith('/rest/v1/rpc/')) {
+      const rpc = url.pathname.slice('/rest/v1/rpc/'.length);
+      const role = roleFromRequest(route);
+      const body = postBody(route);
+      if (
+        method === 'POST' &&
+        ['map_food_places', 'nearby_businesses', 'search_businesses'].includes(rpc)
+      ) {
+        unexpected.push(`${label} used a direct discovery RPC; expected public-discovery`);
+        await json(route, { message: 'Direct discovery RPCs are not supported by this fixture' }, 501);
         return;
       }
       if (
@@ -583,7 +670,10 @@ export async function installSpottrFixture(page: Page) {
   return {
     calls,
     ids,
+    discoveryRequests,
     mapRequests,
+    nearbyRequests,
+    searchRequests,
     routeRequests,
     realtimeMessages,
     get realtimeConnections() { return realtimeConnections; },

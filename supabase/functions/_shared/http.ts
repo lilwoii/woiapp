@@ -42,7 +42,7 @@ export function corsHeaders(request: Request): Record<string, string> {
   }
   return {
     "Access-Control-Allow-Headers":
-      "authorization, apikey, content-type, idempotency-key, x-spottr-delete-confirmation",
+      "authorization, x-client-info, apikey, content-type, x-retry-count, traceparent, tracestate, baggage, idempotency-key, x-spottr-delete-confirmation",
     "Access-Control-Allow-Methods": "DELETE, GET, OPTIONS, POST",
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Max-Age": "600",
@@ -116,9 +116,37 @@ export async function readJson<T>(request: Request, maxBytes = 8192): Promise<T>
   if (Number.isFinite(declaredSize) && declaredSize > maxBytes) {
     throw new HttpError(413, "REQUEST_TOO_LARGE");
   }
-  const raw = await request.text();
-  if (new TextEncoder().encode(raw).byteLength > maxBytes) {
-    throw new HttpError(413, "REQUEST_TOO_LARGE");
+  if (!request.body) throw new HttpError(400, "INVALID_JSON");
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch {
+        // The response is already fail-closed; cancellation is best effort.
+      }
+      throw new HttpError(413, "REQUEST_TOO_LARGE");
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  let raw: string;
+  try {
+    raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new HttpError(400, "INVALID_JSON");
   }
   try {
     return JSON.parse(raw) as T;
