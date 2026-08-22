@@ -113,7 +113,13 @@ receipt is idempotent and expires; failures return a retryable error rather than
 claiming completion. A per-user advisory lock and live-request unique index reuse
 one deletion receipt across devices. The client keeps its verified session open
 when a concurrent worker reports `processing`, allowing a safe retry instead of
-signing out before deletion is confirmed.
+signing out before Auth deletion is confirmed. If Auth deletion succeeds but the
+final private receipt write is interrupted, the endpoint returns `202` with the
+receipt-finalization phase, signs the now-deleted account out locally, and the
+service-only worker atomically completes that sealed orphan receipt on its next
+run. An ambiguous Auth-provider response also leaves the sealed request
+retryable instead of downgrading it to failed. Neither endpoint reports
+`deleted` until the receipt is durable.
 
 The production privacy policy must disclose this behavior and the actual
 retention periods. The deletion drill in [RELEASE.md](RELEASE.md) must prove the

@@ -70,6 +70,28 @@ test('maintenance drains bounded deletion work and runs every privacy cleanup', 
   assert.equal(calls[3].init.headers.apikey, VALID_ENV.SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY);
 });
 
+test('maintenance accepts a retryable receipt-finalization wait', async () => {
+  const queue = [
+    response({
+      status: 'waiting',
+      phase: 'receipt_finalization',
+      retry_after_seconds: 60,
+    }, 202),
+    response({ status: 'complete' }),
+    response({ requests_expired: 0 }),
+    response({ requests_cancelled: 0 }),
+    response(null),
+  ];
+  const summary = await runProductionMaintenance({
+    config: readMaintenanceConfiguration(VALID_ENV),
+    fetchImpl: async () => queue.shift(),
+    log: () => {},
+  });
+
+  assert.equal(summary.deletionCalls, 1);
+  assert.equal(summary.deletionStatus, 'waiting');
+});
+
 test('maintenance errors never include an upstream response body', async () => {
   await assert.rejects(
     runProductionMaintenance({

@@ -39,12 +39,18 @@ outstanding signed upload capabilities and scan leases, checkpoints owned
 storage objects in durable request-scoped batches, archives a sole-owned
 business, anonymizes retained audit attribution, and only then deletes the Auth
 user. A failed storage or Auth operation leaves the request frozen and retryable
-without claiming completion.
+without claiming completion. If Auth deletion succeeds but final receipt
+persistence is interrupted, the function returns `202` and the account is
+signed out locally; it does not claim the deletion receipt is complete. An
+ambiguous Auth-provider response leaves the sealed request retryable because the
+provider may have committed the deletion before the response was lost.
 
 The service-only `delete-account-worker` continues frozen deletion requests
 without relying on the user's browser session. Invoke it on a recurring schedule
 with `SPOTTR_ACCOUNT_DELETE_WORKER_SECRET`; it claims one request at a time and
-uses the same durable storage seal as the user-facing function. Do not launch
+uses the same durable storage seal as the user-facing function. The worker first
+atomically finalizes one sealed receipt orphaned by a successful Auth deletion,
+then continues ordinary frozen requests. Do not launch
 account deletion until that schedule, secret rotation, alerts, and retry drills
 are operational.
 

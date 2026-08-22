@@ -7,6 +7,7 @@ import {
 } from "../_shared/http.ts";
 
 type QueueClaim = { request_id: string; user_id: string };
+type FinalizedReceipt = { request_id: string };
 type StorageBatch =
   | { ready: false; retryAfterSeconds: number }
   | { ready: true; paths: string[] };
@@ -34,6 +35,20 @@ function parseQueueClaim(value: unknown): QueueClaim | null {
     throw new HttpError(502, "INVALID_ACCOUNT_DELETE_QUEUE_CLAIM");
   }
   return { request_id: claim.request_id, user_id: claim.user_id };
+}
+
+function parseFinalizedReceipt(value: unknown): FinalizedReceipt | null {
+  if (value === null) return null;
+  if (
+    !value || typeof value !== "object" ||
+    typeof (value as Record<string, unknown>).request_id !== "string" ||
+    !UUID.test((value as Record<string, unknown>).request_id as string)
+  ) {
+    throw new HttpError(502, "INVALID_ACCOUNT_DELETE_RECEIPT");
+  }
+  return {
+    request_id: (value as Record<string, unknown>).request_id as string,
+  };
 }
 
 function parseStorageBatch(value: unknown): StorageBatch {
@@ -80,10 +95,23 @@ async function transition(
 Deno.serve(async (request) => {
   let requestId: string | null = null;
   let admin: ReturnType<typeof adminClient> | null = null;
+  let authDeletionConfirmed = false;
   try {
     if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED");
     internalBearer(request, "SPOTTR_ACCOUNT_DELETE_WORKER_SECRET");
     admin = adminClient();
+
+    const { data: rawFinalizedReceipt, error: finalizePendingError } = await admin
+      .rpc("finalize_next_account_deletion_receipt")
+      .maybeSingle();
+    if (finalizePendingError) throw finalizePendingError;
+    const finalizedReceipt = parseFinalizedReceipt(rawFinalizedReceipt);
+    if (finalizedReceipt) {
+      return jsonResponse({
+        status: "deleted",
+        request_id: finalizedReceipt.request_id,
+      });
+    }
 
     const { data: rawClaim, error: claimError } = await admin
       .rpc("claim_next_account_deletion")
@@ -147,19 +175,44 @@ Deno.serve(async (request) => {
       throw prepareError;
     }
 
-    const { error: deleteError } = await admin.auth.admin.deleteUser(
-      claim.user_id,
-      false,
-    );
-    if (deleteError) {
-      await transition(admin, requestId, "failed", "AUTH_DELETE_FAILED");
-      throw new HttpError(503, "ACCOUNT_DELETE_RETRY_REQUIRED");
+    let authDeleteUncertain = false;
+    try {
+      const { error: deleteError } = await admin.auth.admin.deleteUser(
+        claim.user_id,
+        false,
+      );
+      authDeleteUncertain = Boolean(deleteError);
+    } catch {
+      authDeleteUncertain = true;
     }
-    await transition(admin, requestId, "completed");
+    if (authDeleteUncertain) {
+      console.error("ACCOUNT_DELETE_AUTH_RESULT_UNCERTAIN");
+      return jsonResponse({
+        status: "waiting",
+        phase: "auth_deletion",
+        request_id: requestId,
+        retry_after_seconds: 60,
+      }, 202);
+    }
+    authDeletionConfirmed = true;
+    const { data: receiptCompleted, error: completeError } = await admin.rpc(
+      "finalize_account_deletion_receipt",
+      { target_request_id: requestId },
+    );
+    if (completeError || receiptCompleted !== true) {
+      console.error("ACCOUNT_DELETE_RECEIPT_FINALIZATION_PENDING");
+      return jsonResponse({
+        status: "waiting",
+        phase: "receipt_finalization",
+        request_id: requestId,
+        retry_after_seconds: 60,
+      }, 202);
+    }
     return jsonResponse({ status: "deleted", request_id: requestId });
   } catch (error) {
     if (
       admin && requestId &&
+      !authDeletionConfirmed &&
       !(error instanceof HttpError &&
         error.code === "ACCOUNT_DELETE_RETRY_REQUIRED")
     ) {

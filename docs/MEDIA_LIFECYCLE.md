@@ -46,6 +46,10 @@ the production concurrency drills, and only then consider enabling media.
   blocked until the storage seal is complete.
 - Failed requests remain frozen and retryable. Incomplete deletion intents are
   not purged merely because a worker lease or request deadline elapsed.
+- An ambiguous Auth-provider response remains sealed at `storage_deleted` so a
+  later worker can retry or detect the Auth FK deletion. If the final receipt
+  write is interrupted after Auth deletion, the worker atomically finalizes the
+  orphaned receipt before claiming ordinary deletion work.
 - Schedule `delete-account-worker` with the dedicated internal secret at least
   every five minutes. This service-only worker claims frozen requests and
   continues them without a user session; client retries are an acceleration, not

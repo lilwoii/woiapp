@@ -355,7 +355,15 @@ conversation with a clean attachment and expired pickup disclosure.
 5. Inject a storage or Auth failure and prove the response does not claim
    completion, the same idempotency key can safely retry, and duplicate calls do
    not create contradictory outcomes.
-6. Verify the private deletion receipt expires and the public/privacy copy
+6. Inject a final-receipt persistence failure after Auth deletion. Verify the
+   user-facing endpoint returns `202` instead of claiming completion, local Auth
+   state is cleared, and the recurring worker changes the sealed orphan receipt
+   from `storage_deleted` to `completed` exactly once.
+7. Inject an ambiguous Auth-provider response after the deletion request is
+   sealed. Verify neither Edge path changes the receipt to `failed`; the next
+   worker run either retries the still-present Auth user or finalizes the
+   FK-orphaned receipt.
+8. Verify the private deletion receipt expires and the public/privacy copy
    matches the observed retention behavior.
 
 Record database queries with personal data redacted, storage/Auth checks,
