@@ -10,11 +10,14 @@ import {
   validateSbomImplementationContract,
   validateSbomPackageContract,
   validateSecretHistoryGate,
+  validateSitesReleaseArtifactGate,
   validateTextIntegrityGate,
 } from './quality-workflow-verifier.mjs';
 
 const command = (file) => `psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -f ${file}`;
 const validWorkflow = [
+  'on:',
+  '  workflow_dispatch:',
   '  full-supabase-db:',
   '      - uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2',
   '          version: 2.84.2',
@@ -78,6 +81,22 @@ const validWorkflow = [
   '        run: npm run test:production-sbom-tools',
   '      - name: Test secret-history finding policy',
   '        run: npm run test:secret-history-tools',
+  '      - name: Build production web artifact',
+  '        run: npm run build:sites',
+  '      - name: Test rendered accessibility and keyboard behavior',
+  '        run: npm run test:web-e2e',
+  '      - name: Audit production dependencies',
+  '        run: npm run test:audit-tools && npm run audit:production',
+  '      - name: Upload verified Sites release artifact',
+  "        if: github.event_name == 'workflow_dispatch'",
+  '        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1',
+  '        with:',
+  '          name: spottr-sites-dist-${{ github.sha }}',
+  '          path: dist/',
+  '          if-no-files-found: error',
+  '          retention-days: 7',
+  '          overwrite: false',
+  '          include-hidden-files: true',
 ].join('\n');
 
 test('accepts transactional fail-fast SQL commands and a guarded failure probe', () => {
@@ -119,6 +138,28 @@ test('requires privileged production maintenance coverage', () => {
     '  validate:',
     '  unrelated-job:\n      - run: npm run test:maintenance-tools\n  validate:',
   ).replace('      - name: Test production maintenance control plane\n        run: npm run test:maintenance-tools', '')).length > 0);
+});
+
+test('requires a manual, commit-bound Sites artifact after every web release gate', () => {
+  assert.deepEqual(validateSitesReleaseArtifactGate(validWorkflow), []);
+  for (const mutation of [
+    ['  workflow_dispatch:', '  schedule:'],
+    ["if: github.event_name == 'workflow_dispatch'", "if: github.event_name == 'pull_request'"],
+    ['spottr-sites-dist-${{ github.sha }}', 'spottr-sites-dist-latest'],
+    ['path: dist/', 'path: **/*'],
+    ['include-hidden-files: true', 'include-hidden-files: false'],
+    ['retention-days: 7', 'retention-days: 90'],
+  ]) {
+    assert.ok(validateSitesReleaseArtifactGate(validWorkflow.replace(...mutation)).length > 0);
+  }
+  const premature = validWorkflow.replace(
+    "      - name: Upload verified Sites release artifact\n        if: github.event_name == 'workflow_dispatch'",
+    "      - name: Upload verified Sites release artifact early\n        if: github.event_name == 'workflow_dispatch'",
+  ).replace(
+    '      - name: Build production web artifact',
+    "      - name: Upload verified Sites release artifact\n        if: github.event_name == 'workflow_dispatch'\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n      - name: Build production web artifact",
+  );
+  assert.ok(validateSitesReleaseArtifactGate(premature).length > 0);
 });
 
 test('requires source text-integrity verification in direct and aggregate validation', () => {

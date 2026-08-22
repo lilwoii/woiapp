@@ -70,6 +70,38 @@ export function validateMaintenanceGate(workflow) {
     : ['Quality workflow must test the privileged production maintenance control plane.'];
 }
 
+export function validateSitesReleaseArtifactGate(workflow) {
+  const validateJob = jobBody(workflow, 'validate');
+  const errors = [];
+  if (!/^  workflow_dispatch:\s*$/m.test(workflow)) {
+    errors.push('Quality workflow must support a manual, branch-head Sites release run.');
+  }
+  const buildIndex = validateJob.indexOf('run: npm run build:sites');
+  const renderedIndex = validateJob.indexOf('run: npm run test:web-e2e');
+  const auditIndex = validateJob.indexOf('run: npm run test:audit-tools && npm run audit:production');
+  const uploadIndex = validateJob.indexOf('name: Upload verified Sites release artifact');
+  if (buildIndex < 0 || renderedIndex < buildIndex || auditIndex < renderedIndex || uploadIndex < auditIndex) {
+    errors.push('Sites release artifact must be uploaded only after build, rendered acceptance, and production audit succeed.');
+  }
+  const required = [
+    "if: github.event_name == 'workflow_dispatch'",
+    'uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1',
+    'name: spottr-sites-dist-${{ github.sha }}',
+    'path: dist/',
+    'if-no-files-found: error',
+    'retention-days: 7',
+    'overwrite: false',
+    'include-hidden-files: true',
+  ];
+  for (const token of required) {
+    if (!validateJob.includes(token)) errors.push(`Sites release artifact contract is missing: ${token}`);
+  }
+  if (validateJob.includes('continue-on-error')) {
+    errors.push('Sites release artifact path must remain fail closed.');
+  }
+  return errors;
+}
+
 export function validateTextIntegrityGate(workflow, manifest) {
   const validateJob = jobBody(workflow, 'validate');
   const errors = [];
@@ -303,6 +335,7 @@ export async function verifyQualityWorkflow(projectRoot = PROJECT_ROOT) {
     ...validateFullRuntimeGate(workflow),
     ...validatePinnedActions(workflow),
     ...validateMaintenanceGate(workflow),
+    ...validateSitesReleaseArtifactGate(workflow),
     ...validateTextIntegrityGate(workflow, manifest),
     ...validateSecretHistoryGate(workflow, manifest),
     ...validateProductionSbomGate(workflow),
