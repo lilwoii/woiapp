@@ -95,6 +95,37 @@ test('maintenance accepts a retryable receipt-finalization wait', async () => {
   assert.equal(summary.deletionStatus, 'waiting');
 });
 
+for (const terminalStatus of ['more_work', 'deleted']) {
+  test(`maintenance withholds heartbeat after ten consecutive ${terminalStatus} responses`, async () => {
+    const calls = [];
+    const queue = [
+      ...Array.from({ length: 10 }, () => response({ status: terminalStatus })),
+      response({ status: 'complete' }),
+      response({ requests_expired: 0 }),
+      response({ requests_cancelled: 0 }),
+      response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    ];
+
+    await assert.rejects(
+      runProductionMaintenance({
+        config: readMaintenanceConfiguration(VALID_ENV),
+        fetchImpl: async (url, init) => {
+          calls.push({ url: String(url), init });
+          return queue.shift();
+        },
+        log: () => {},
+      }),
+      /exhausted its bounded call cap/,
+    );
+
+    assert.equal(calls.length, 14);
+    assert.equal(
+      calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
+      false,
+    );
+  });
+}
+
 test('maintenance withholds heartbeat while discovery cleanup has a backlog', async () => {
   const calls = [];
   const queue = [

@@ -79,6 +79,7 @@ export async function runProductionMaintenance({
   const restRoot = `${config.supabaseOrigin}/rest/v1/rpc`;
   let deletionCalls = 0;
   let deletionStatus = 'not_started';
+  let deletionQueueSettled = false;
 
   for (; deletionCalls < MAX_DELETE_WORKER_CALLS; deletionCalls += 1) {
     const result = await requestJson(
@@ -92,6 +93,7 @@ export async function runProductionMaintenance({
       throw new Error('delete-account-worker returned an unknown status.');
     }
     if (deletionStatus === 'idle' || deletionStatus === 'waiting') {
+      deletionQueueSettled = true;
       deletionCalls += 1;
       break;
     }
@@ -134,6 +136,13 @@ export async function runProductionMaintenance({
     discoveryCleanup.skipped_operations.length !== 0
   ) {
     throw new Error('cleanup_public_discovery_leases did not report bounded completion.');
+  }
+
+  // A success heartbeat must mean the bounded deletion pass reached a known
+  // resting state. Ten consecutive work responses leave the queue state
+  // uncertain, so fail closed after completing the other privacy cleanups.
+  if (!deletionQueueSettled) {
+    throw new Error('delete-account-worker exhausted its bounded call cap with work still pending.');
   }
 
   const heartbeat = await fetchImpl(config.heartbeatUrl, {
