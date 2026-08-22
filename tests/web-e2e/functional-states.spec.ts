@@ -182,3 +182,64 @@ test('authenticated foreground navigation draws a provider route and remains use
   await expect(page.getByRole('radio', { name: 'Walk' })).toHaveAttribute('aria-checked', 'false');
   await expectNoSeriousAxeViolations(page);
 });
+
+for (const account of [
+  {
+    role: 'customer',
+    displayName: 'Q Customer',
+    username: 'q',
+    email: 'new.customer@spottr.test',
+  },
+  {
+    role: 'business',
+    displayName: 'New Owner',
+    username: 'new.owner',
+    email: 'new.owner@spottr.test',
+  },
+] as const) {
+  test(`${account.role} registration sends the reviewed email-verification contract`, async ({ page }) => {
+    const fixture = fixtureObservations.get(page);
+    expect(fixture).toBeDefined();
+    await page.goto(`${fixtureAppOrigin}/auth`, { waitUntil: 'networkidle' });
+    await page.getByRole('radio', { name: account.role === 'business' ? 'Business' : 'Customer' }).click();
+    await page.getByLabel('Display name').fill(account.displayName);
+    await page.getByLabel('Username').fill(account.username);
+    await expect(page.getByText('Available')).toBeVisible();
+    await page.getByLabel('Email').fill(account.email);
+    await page.getByRole('textbox', { name: 'Password' }).fill('Fixture-password-123!');
+    await page.getByRole('checkbox').click();
+    await page.getByRole('button', { name: 'Create secure account' }).click();
+
+    await expect(page.getByText('Check your email to verify your account.')).toBeVisible();
+    await expect.poll(() => fixture?.signupRequests.length ?? 0).toBe(1);
+    expect(fixture?.signupRequests[0]).toMatchObject({
+      email: account.email,
+      data: {
+        display_name: account.displayName,
+        requested_role: account.role,
+        terms_accepted: true,
+        username: account.username,
+      },
+    });
+    await expect(page).toHaveURL(`${fixtureAppOrigin}/auth`);
+    await expectNoSeriousAxeViolations(page);
+  });
+}
+
+test('server-rejected duplicate username never reaches account creation', async ({ page }) => {
+  const fixture = fixtureObservations.get(page);
+  expect(fixture).toBeDefined();
+  await page.goto(`${fixtureAppOrigin}/auth`, { waitUntil: 'networkidle' });
+  await page.getByLabel('Username').fill('taken.member');
+  await expect(page.getByText('Already taken')).toBeVisible();
+  await page.getByLabel('Display name').fill('Taken Member');
+  await page.getByLabel('Email').fill('new.customer@spottr.test');
+  await page.getByRole('textbox', { name: 'Password' }).fill('Fixture-password-123!');
+  await page.getByRole('checkbox').click();
+  await page.getByRole('button', { name: 'Create secure account' }).click();
+
+  await expect(page.getByText('That username is already taken.')).toBeVisible();
+  expect(fixture?.signupRequests).toHaveLength(0);
+  expect(fixture?.usernameAvailabilityRequests.some((request) => request.candidate === 'taken.member')).toBe(true);
+  await expectNoSeriousAxeViolations(page);
+});

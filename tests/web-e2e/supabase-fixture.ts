@@ -15,6 +15,7 @@ const ids = {
   review: '88888888-8888-4888-8888-888888888888',
   section: '99999999-9999-4999-8999-999999999999',
   item: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  signup: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
 };
 
 const now = '2026-08-09T12:00:00.000Z';
@@ -319,6 +320,8 @@ export async function installSpottrFixture(page: Page) {
   const nearbyRequests: Record<string, unknown>[] = [];
   const searchRequests: Record<string, unknown>[] = [];
   const routeRequests: Record<string, unknown>[] = [];
+  const signupRequests: Record<string, unknown>[] = [];
+  const usernameAvailabilityRequests: Record<string, unknown>[] = [];
   const realtimeMessages: string[] = [];
   let realtimeConnections = 0;
 
@@ -491,6 +494,41 @@ export async function installSpottrFixture(page: Page) {
       return;
     }
 
+    if (url.pathname === '/auth/v1/signup' && method === 'POST') {
+      const body = postBody(route);
+      const metadata = body.data as Record<string, unknown> | undefined;
+      const security = body.gotrue_meta_security as Record<string, unknown> | undefined;
+      const redirect = url.searchParams.get('redirect_to');
+      if (
+        !exactBodyKeys(body, 'data', 'email', 'gotrue_meta_security', 'password') ||
+        typeof security !== 'object' || security === null || Object.keys(security).length !== 0 ||
+        body.password !== 'Fixture-password-123!' ||
+        (body.email !== 'new.customer@spottr.test' && body.email !== 'new.owner@spottr.test') ||
+        !metadata || metadata.display_name !== (body.email === 'new.owner@spottr.test' ? 'New Owner' : 'Q Customer') ||
+        metadata.username !== (body.email === 'new.owner@spottr.test' ? 'new.owner' : 'q') ||
+        metadata.requested_role !== (body.email === 'new.owner@spottr.test' ? 'business' : 'customer') ||
+        metadata.terms_accepted !== true ||
+        redirect !== `${fixtureAppOrigin}/auth?verified=1&next=${body.email === 'new.owner@spottr.test' ? 'business-onboarding' : 'home'}`
+      ) {
+        unexpected.push(`${label} carried an invalid account-creation contract`);
+        await json(route, { message: 'Invalid fixture signup request' }, 400);
+        return;
+      }
+      signupRequests.push(body);
+      await json(route, {
+        user: {
+          ...fixtureUser('customer'),
+          id: ids.signup,
+          email: body.email,
+          email_confirmed_at: null,
+          confirmed_at: null,
+          user_metadata: metadata,
+        },
+        session: null,
+      });
+      return;
+    }
+
     if (url.pathname === '/functions/v1/public-discovery' && method === 'POST') {
       const body = postBody(route);
       const operation = body.operation;
@@ -608,6 +646,14 @@ export async function installSpottrFixture(page: Page) {
       const role = roleFromRequest(route);
       const body = postBody(route);
       if (
+        rpc === 'is_username_available' && method === 'POST' && role === 'anonymous' &&
+        exactBodyKeys(body, 'candidate') && typeof body.candidate === 'string'
+      ) {
+        usernameAvailabilityRequests.push(body);
+        await json(route, body.candidate !== 'taken.member');
+        return;
+      }
+      if (
         method === 'POST' &&
         ['map_food_places', 'nearby_businesses', 'search_businesses'].includes(rpc)
       ) {
@@ -675,6 +721,8 @@ export async function installSpottrFixture(page: Page) {
     nearbyRequests,
     searchRequests,
     routeRequests,
+    signupRequests,
+    usernameAvailabilityRequests,
     realtimeMessages,
     get realtimeConnections() { return realtimeConnections; },
     unexpected,
