@@ -119,3 +119,12 @@ Sites workflow; do not create a duplicate project. See [RELEASE.md](docs/RELEASE
 for the exact evidence and deployment checklist, [PRODUCT.md](docs/PRODUCT.md)
 for scope, [GLOBAL_DIRECTORY.md](docs/GLOBAL_DIRECTORY.md) for worldwide food
 inventory and map clustering, and [SECURITY.md](docs/SECURITY.md) for security boundaries.
+
+The ordinary Quality workflow exports only the fail-closed release-candidate
+shell. A public-launch web artifact must come from the manual **Production web
+release artifact** workflow at the exact approved commit. Configure its
+`production-web` GitHub Environment with required reviewers, the publishable
+variables named in `.env.example`, and only the two restricted client keys used
+by that workflow. Server-role, provider-service, scanner, and worker secrets
+must never enter the client build. High-risk feature flags remain disabled in
+that workflow until their separate release evidence is approved.

@@ -213,6 +213,9 @@ jobs:
       - name: Verify quality workflow invariants
         run: npm run test:workflow-tools
 
+      - name: Verify production web release invariants
+        run: npm run test:production-web-release-tools
+
       - name: Test secret-history finding policy
         run: npm run test:secret-history-tools
 

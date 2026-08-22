@@ -419,6 +419,34 @@ Run and record:
 Each drill needs a date, participants, environment, scenario, commands/actions,
 observed outcome, RTO/RPO or response target, gaps, owners, and due dates.
 
+### Production web artifact boundary
+
+The ordinary Quality workflow validates and exports the fail-closed
+release-candidate shell. It is not evidence of a live backend configuration.
+The exact public-launch web artifact must be created manually by
+`.github/workflows/production-web-release.yml` from the approved commit.
+
+Before running it, create a protected `production-web` GitHub Environment with
+required reviewers. Configure the public values named by the workflow as
+environment variables, and configure only the restricted Supabase publishable
+key and Android Maps client key as environment secrets. The build fails when
+required origins, app links, legal policies, attribution, or identifiers are
+missing or placeholders. It emits a commit-bound `dist/` artifact only after
+the configured build and production dependency audit succeed.
+
+Home kitchens, media uploads, push notifications, pickup ordering, and in-app
+navigation remain hard-disabled in this production workflow. Enabling any one
+requires its own exact-environment acceptance evidence, reviewed workflow
+change, and a new artifact. Never add a service-role key, routing/provider
+service credential, scanner secret, maintenance secret, or other server-only
+credential to this client workflow.
+
+After downloading the artifact, configure the Sites Worker runtime values
+separately, save one version at the same commit, deploy with the existing
+access policy, and verify the deployed URL. A configured artifact plus a green
+workflow still does not replace the production backend, legal, operations,
+mobile-store, or independent-review evidence below.
+
 ## 9. External launch blockers
 
 The repository cannot supply or invent:

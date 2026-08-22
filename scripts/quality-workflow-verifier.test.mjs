@@ -81,6 +81,8 @@ const validWorkflow = [
   '        run: npm run test:production-sbom-tools',
   '      - name: Test secret-history finding policy',
   '        run: npm run test:secret-history-tools',
+  '      - name: Verify production web release invariants',
+  '        run: npm run test:production-web-release-tools',
   '      - name: Build production web artifact',
   '        run: npm run build:sites',
   '      - name: Test rendered accessibility and keyboard behavior',

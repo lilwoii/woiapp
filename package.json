@@ -24,7 +24,7 @@
     "build:web-e2e-fixture": "node scripts/build-web-e2e-fixture.mjs",
     "build:sites": "npm run export:web && node scripts/prepare-sites-build.mjs && npm run verify:web-quality",
     "build": "npm run build:sites",
-    "validate": "npm run verify:build-assets && npm run verify:text-integrity && npm run typecheck && npm run typecheck:edge && npm run lint && npm run test:ci && npm run test:edge && npm run test:build-asset-tools && npm run test:text-integrity-tools && npm run test:web-quality-tools && npm run test:workflow-tools && npm run test:secret-history-tools && npm run test:codeql-tools && npm run test:db-runtime-tools && npm run test:native-release-tools && npm run test:maintenance-tools && npm run test:production-sbom-tools && npm run verify:production-config && npx expo-doctor && npx expo install --check && npm run verify:native-release && npm run build:sites && npm run test:web-e2e",
+    "validate": "npm run verify:build-assets && npm run verify:text-integrity && npm run typecheck && npm run typecheck:edge && npm run lint && npm run test:ci && npm run test:edge && npm run test:build-asset-tools && npm run test:text-integrity-tools && npm run test:web-quality-tools && npm run test:workflow-tools && npm run test:production-web-release-tools && npm run test:secret-history-tools && npm run test:codeql-tools && npm run test:db-runtime-tools && npm run test:native-release-tools && npm run test:maintenance-tools && npm run test:production-sbom-tools && npm run verify:production-config && npx expo-doctor && npx expo install --check && npm run verify:native-release && npm run build:sites && npm run test:web-e2e",
     "test:secret-history-tools": "node --test scripts/verify-trufflehog-output.test.mjs",
     "test:native-release-tools": "node --test scripts/native-release-verifier.test.mjs",
     "verify:native-config": "node scripts/native-release-verifier.mjs --config",
@@ -46,6 +46,7 @@
     "verify:web-quality": "node scripts/web-quality-verifier.mjs",
     "test:web-e2e": "npm run build:web-e2e-fixture && playwright test",
     "test:workflow-tools": "node --test scripts/quality-workflow-verifier.test.mjs && node scripts/quality-workflow-verifier.mjs",
+    "test:production-web-release-tools": "node --test scripts/production-web-release-workflow-verifier.test.mjs && node scripts/production-web-release-workflow-verifier.mjs",
     "test:codeql-tools": "node --test scripts/codeql-workflow-verifier.test.mjs && node scripts/codeql-workflow-verifier.mjs",
     "test:db-runtime-tools": "node --test scripts/database-runtime-gate.test.mjs",
     "test:db-runtime": "node scripts/database-runtime-gate.mjs"

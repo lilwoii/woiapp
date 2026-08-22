@@ -92,6 +92,7 @@ export function validateSitesReleaseArtifactGate(workflow) {
     'retention-days: 7',
     'overwrite: false',
     'include-hidden-files: true',
+    'run: npm run test:production-web-release-tools',
   ];
   for (const token of required) {
     if (!validateJob.includes(token)) errors.push(`Sites release artifact contract is missing: ${token}`);
