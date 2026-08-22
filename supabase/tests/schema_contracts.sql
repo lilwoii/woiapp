@@ -388,6 +388,13 @@ begin
   then
     raise exception 'Professional-content enforcement is bypassable or over-broad';
   end if;
+
+  if pg_catalog.pg_get_functiondef(
+    'public.submit_business_claim(uuid,text,text)'::regprocedure
+  ) not like '%CLAIM_VERIFICATION_SERVICE_REQUIRED%'
+  then
+    raise exception 'Business ownership claims do not fail closed without verification proof';
+  end if;
 end;
 $contract$;
 

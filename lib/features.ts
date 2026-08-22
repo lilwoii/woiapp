@@ -8,4 +8,5 @@ export const featureFlags = Object.freeze({
   pushNotifications: enabled(process.env.EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED),
   pickupOrdering: enabled(process.env.EXPO_PUBLIC_PICKUP_ORDERING_ENABLED),
   inAppNavigation: enabled(process.env.EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED),
+  businessClaims: enabled(process.env.EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED),
 });

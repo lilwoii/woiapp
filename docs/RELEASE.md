@@ -299,6 +299,19 @@ caching, refresh, correction, user deletion, termination, and geographic scope.
 Imported listings and menus remain drafts until reviewed. Never scrape or clone
 third-party directories, marketplaces, reviews, photos, or menus.
 
+### Business ownership claims
+
+Keep `EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED=false` until the production claim
+service issues single-use, expiring challenge receipts for a contact already
+bound to the imported listing, or accepts private document evidence through the
+clean-media pipeline. Before enabling it, prove receipt signature, audience,
+listing, claimant, method, expiry, replay prevention, rate limits, recovery,
+withdrawal, evidence deletion, audit history, and ownership-conflict handling
+against the target environment. A checked authorization statement, matching
+email domain, listed phone selection, uploaded path, or administrator click is
+not ownership proof by itself. The public claim RPC deliberately rejects every
+method until this contract and its operational review path are deployed.
+
 ### Home kitchens
 
 Keep `EXPO_PUBLIC_HOME_KITCHENS_ENABLED=false` until each enabled jurisdiction
@@ -434,8 +447,8 @@ required origins, app links, legal policies, attribution, or identifiers are
 missing or placeholders. It emits a commit-bound `dist/` artifact only after
 the configured build and production dependency audit succeed.
 
-Home kitchens, media uploads, push notifications, pickup ordering, and in-app
-navigation remain hard-disabled in this production workflow. Enabling any one
+Home kitchens, media uploads, push notifications, pickup ordering, in-app
+navigation, and business ownership claims remain hard-disabled in this production workflow. Enabling any one
 requires its own exact-environment acceptance evidence, reviewed workflow
 change, and a new artifact. Never add a service-role key, routing/provider
 service credential, scanner secret, maintenance secret, or other server-only

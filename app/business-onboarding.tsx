@@ -119,7 +119,9 @@ export default function BusinessOnboardingScreen() {
   const [createdBusinessId, setCreatedBusinessId] = useState<string | null>(null);
   const [logoMeta, setLogoMeta] = useState('');
   const [description, setDescription] = useState('');
-  const [claimExisting, setClaimExisting] = useState(claimParams.claim === '1');
+  const [claimExisting, setClaimExisting] = useState(
+    featureFlags.businessClaims && claimParams.claim === '1'
+  );
   const [selectedClaimId, setSelectedClaimId] = useState<string | null>(claimParams.claimId ?? null);
   const [claimMethod, setClaimMethod] = useState<'listed_phone' | 'domain_email'>('listed_phone');
   const [claimSearchResults, setClaimSearchResults] = useState<Place[]>([]);
@@ -140,7 +142,10 @@ export default function BusinessOnboardingScreen() {
   useEffect(() => {
     let active = true;
     const unavailable =
-      !auth.isConfigured || !claimExisting || businessName.trim().length < 2;
+      !auth.isConfigured ||
+      !featureFlags.businessClaims ||
+      !claimExisting ||
+      businessName.trim().length < 2;
     const timer = setTimeout(() => {
       if (unavailable) {
         setClaimSearchResults([]);
@@ -432,6 +437,15 @@ export default function BusinessOnboardingScreen() {
 
   const submitClaim = async () => {
     setFormMessage(null);
+    if (!featureFlags.businessClaims) {
+      setClaimExisting(false);
+      setSelectedClaimId(null);
+      setFormMessage({
+        type: 'error',
+        text: 'Ownership claims stay closed until secure verification is connected. Add a new business instead.',
+      });
+      return;
+    }
     if (auth.isConfigured && auth.status !== 'authenticated') {
       setFormMessage({ type: 'error', text: 'Sign in before claiming a business.' });
       router.push('/auth');
@@ -523,15 +537,34 @@ export default function BusinessOnboardingScreen() {
                   <Pressable
                     accessibilityRole="radio"
                     aria-checked={claimExisting}
-                    accessibilityState={{ checked: claimExisting }}
+                    accessibilityState={{ checked: claimExisting, disabled: !featureFlags.businessClaims }}
+                    disabled={!featureFlags.businessClaims}
                     onPress={() => {
                       setClaimExisting(true);
                       setSelectedClaimId(null);
                     }}
-                    style={[styles.modeOption, claimExisting && styles.modeOptionActive]}>
-                    <Text style={[styles.modeText, claimExisting && styles.modeTextActive]}>Claim existing</Text>
+                    style={[
+                      styles.modeOption,
+                      claimExisting && styles.modeOptionActive,
+                      !featureFlags.businessClaims && styles.modeOptionDisabled,
+                    ]}>
+                    <Text style={[styles.modeText, claimExisting && styles.modeTextActive]}>
+                      {featureFlags.businessClaims ? 'Claim existing' : 'Claim verification closed'}
+                    </Text>
                   </Pressable>
                 </View>
+
+                {!featureFlags.businessClaims ? (
+                  <View style={styles.claimUnavailable}>
+                    <FontAwesome6 color={palette.accentDeep} name="shield-halved" size={15} />
+                    <View style={styles.claimUnavailableCopy}>
+                      <Text style={styles.claimUnavailableTitle}>Ownership stays protected</Text>
+                      <Text style={styles.claimUnavailableText}>
+                        Existing listings cannot transfer control without verified proof. You can still add a new business.
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
 
                 <View style={styles.field}>
                   <Text style={styles.label}>Business category *</Text>
@@ -1108,6 +1141,9 @@ const styles = StyleSheet.create({
   modeOptionActive: {
     backgroundColor: palette.card,
   },
+  modeOptionDisabled: {
+    opacity: 0.56,
+  },
   modeText: {
     color: palette.muted,
     fontSize: 11,
@@ -1115,6 +1151,28 @@ const styles = StyleSheet.create({
   },
   modeTextActive: {
     color: palette.ink,
+  },
+  claimUnavailable: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  claimUnavailableCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  claimUnavailableTitle: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  claimUnavailableText: {
+    color: palette.muted,
+    fontSize: 10,
+    lineHeight: 16,
   },
   field: {
     gap: 8,

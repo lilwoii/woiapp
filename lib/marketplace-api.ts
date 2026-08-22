@@ -1,4 +1,5 @@
 import { toActionError } from '@/lib/errors';
+import { featureFlags } from '@/lib/features';
 import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
 import { supabase } from '@/lib/supabase';
 import {
@@ -1563,6 +1564,13 @@ export async function submitBusinessClaim(
   businessId: string,
   method: 'listed_phone' | 'domain_email' | 'document' | 'permit'
 ): Promise<ActionResult> {
+  if (!featureFlags.businessClaims) {
+    return {
+      ok: false,
+      reason:
+        'Ownership claims are unavailable until secure phone, email, or document verification is connected.',
+    };
+  }
   const client = supabase;
   if (!client) return configurationRequired();
   const user = await authenticatedUserId();

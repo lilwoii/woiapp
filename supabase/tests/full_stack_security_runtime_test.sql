@@ -854,4 +854,24 @@ begin
 end;
 $professional_content$;
 
+do $business_claim_verification_guard$
+begin
+  if pg_catalog.pg_get_functiondef(
+    'public.submit_business_claim(uuid,text,text)'::regprocedure
+  ) not like '%CLAIM_VERIFICATION_SERVICE_REQUIRED%'
+    or pg_catalog.pg_get_functiondef(
+      'public.submit_business_claim(uuid,text,text)'::regprocedure
+    ) like '%submit_business_claim_core%'
+    or pg_catalog.has_function_privilege(
+      'anon', 'public.submit_business_claim(uuid,text,text)', 'execute'
+    )
+    or not pg_catalog.has_function_privilege(
+      'authenticated', 'public.submit_business_claim(uuid,text,text)', 'execute'
+    )
+  then
+    raise exception 'Business claim authority guard was weakened after migrations';
+  end if;
+end;
+$business_claim_verification_guard$;
+
 rollback;

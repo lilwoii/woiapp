@@ -980,7 +980,8 @@ export default function PlaceDetailScreen() {
                 <FontAwesome6 color={palette.muted} name="flag" size={11} />
                 <Text style={styles.sourceReportText}>Report listing</Text>
               </Pressable>
-              {place.sourceLabel === 'Licensed provider' || place.sourceLabel === 'Community added' ? (
+              {featureFlags.businessClaims &&
+              (place.sourceLabel === 'Licensed provider' || place.sourceLabel === 'Community added') ? (
                 <Pressable
                   accessibilityLabel={`Are you the owner of ${place.name}? Claim this place`}
                   accessibilityRole="button"

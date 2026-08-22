@@ -6531,86 +6531,14 @@ volatile
 security definer
 set search_path = ''
 as $$
-declare
-  actor uuid := auth.uid();
-  claim_id uuid;
-  normalized_evidence text := nullif(btrim(evidence_private_path), '');
 begin
   perform private.require_aal2();
-  if not private.is_active_user(actor) then
+  if not private.is_active_user(auth.uid()) then
     raise exception using errcode = '42501', message = 'Active verified account required';
   end if;
-  if claim_method not in ('listed_phone', 'domain_email', 'document', 'permit') then
-    raise exception using errcode = '22023', message = 'Invalid claim method';
-  end if;
-  if not exists (
-    select 1
-    from public.businesses b
-    where b.id = target_business_id
-      and b.state in ('pending', 'published')
-  ) then
-    raise exception using errcode = '22023', message = 'Business is not claimable';
-  end if;
-  if private.is_business_member(
-    target_business_id,
-    actor,
-    array['owner']::public.member_role[]
-  ) then
-    raise exception using errcode = '22023', message = 'Current owners cannot claim their own business';
-  end if;
-  if claim_method in ('document', 'permit') and normalized_evidence is null then
-    raise exception using errcode = '22023', message = 'Private evidence is required';
-  end if;
-  if normalized_evidence is not null then
-    if normalized_evidence !~ ('^quarantine/' || actor::text || '/[^/].+')
-      or not exists (
-        select 1
-        from storage.objects so
-        where so.bucket_id = 'spottr-media'
-          and so.name = normalized_evidence
-      )
-    then
-      raise exception using errcode = '22023', message = 'Invalid private evidence path';
-    end if;
-  end if;
-
-  select bc.id
-  into claim_id
-  from public.business_claims bc
-  where bc.business_id = target_business_id
-    and bc.claimant_id = actor
-    and bc.state = 'pending';
-
-  if claim_id is not null then
-    return claim_id;
-  end if;
-
-  insert into public.business_claims (
-    business_id,
-    claimant_id,
-    method,
-    evidence_private_path,
-    state
-  )
-  values (
-    target_business_id,
-    actor,
-    claim_method,
-    normalized_evidence,
-    'pending'
-  )
-  returning id into claim_id;
-
-  perform private.write_audit_event(
-    actor,
-    target_business_id,
-    'business.claim_submitted',
-    'business_claim',
-    claim_id::text,
-    jsonb_build_object('method', claim_method)
-  );
-
-  return claim_id;
+  raise exception using
+    errcode = '55000',
+    message = 'CLAIM_VERIFICATION_SERVICE_REQUIRED';
 end;
 $$;
 

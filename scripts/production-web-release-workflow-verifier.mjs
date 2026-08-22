@@ -67,6 +67,7 @@ export function validateProductionWebReleaseWorkflow(workflow) {
     'EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED',
     'EXPO_PUBLIC_PICKUP_ORDERING_ENABLED',
     'EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED',
+    'EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED',
   ]) {
     if (!build.includes(`${flag}: "false"`)) {
       errors.push(`High-risk production feature must remain fail closed: ${flag}`);
