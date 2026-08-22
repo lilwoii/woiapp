@@ -32,6 +32,10 @@ the production concurrency drills, and only then consider enabling media.
   persists each path before deleting Storage and only finalizes database rows
   after receiving the complete batch receipt. A crash between those operations
   therefore retries instead of stranding a media row.
+- Database cleanup and deletion share an explicit 512-character path validator
+  without oversized regular-expression repetition bounds, which PostgreSQL
+  rejects at evaluation time. Runtime CI inserts valid and adversarial paths
+  through the actual constraints.
 - Chat attachment cleanup keeps its stricter asset/message locking and runs
   before the generic durable sweep.
 

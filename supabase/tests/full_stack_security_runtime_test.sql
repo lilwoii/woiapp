@@ -211,6 +211,33 @@ select public.advance_account_deletion(
   'processing',
   null
 );
+
+insert into private.account_deletion_storage_items (
+  request_id,
+  storage_path,
+  state
+)
+values (
+  '30000000-0000-4000-8000-000000000003',
+  'published/runtime/deleted.jpg',
+  'pending'
+);
+
+do $storage_checkpoint$
+declare
+  checkpoint jsonb;
+begin
+  checkpoint := public.checkpoint_account_deletion_storage_batch(
+    '30000000-0000-4000-8000-000000000003',
+    '20000000-0000-4000-8000-000000000002',
+    array['published/runtime/deleted.jpg']::text[]
+  );
+  if checkpoint->>'storage_complete' <> 'true' then
+    raise exception 'Valid account deletion storage receipt did not checkpoint';
+  end if;
+end;
+$storage_checkpoint$;
+
 select public.advance_account_deletion(
   '30000000-0000-4000-8000-000000000003',
   'storage_deleted',
@@ -353,6 +380,54 @@ values (
   'published/runtime/pending.jpg',
   'pending'
 );
+
+do $storage_path_contract$
+begin
+  if not private.is_valid_media_storage_path('published/runtime/pending.jpg')
+    or private.is_valid_media_storage_path('published/runtime/../escape.jpg')
+    or private.is_valid_media_storage_path('quarantine/' || repeat('a', 502))
+  then
+    raise exception 'Media storage path validation does not enforce the bounded safe contract';
+  end if;
+
+  begin
+    insert into private.account_deletion_storage_items (
+      request_id,
+      storage_path,
+      state
+    )
+    values (
+      '50000000-0000-4000-8000-000000000005',
+      'published/runtime/../escape.jpg',
+      'pending'
+    );
+    raise exception 'Account deletion storage accepted an unsafe path';
+  exception
+    when check_violation then null;
+  end;
+end;
+$storage_path_contract$;
+
+do $effective_storage_functions$
+declare
+  definitions text;
+begin
+  definitions := pg_catalog.pg_get_functiondef(
+      'public.prepare_media_cleanup_batch()'::regprocedure
+    ) || pg_catalog.pg_get_functiondef(
+      'public.finalize_media_cleanup_batch(uuid,text[])'::regprocedure
+    ) || pg_catalog.pg_get_functiondef(
+      'public.checkpoint_account_deletion_storage_batch(uuid,uuid,text[])'::regprocedure
+    );
+
+  if position('{0,499}' in definitions) > 0
+    or position('{0,510}' in definitions) > 0
+    or position('private.is_valid_media_storage_path' in definitions) = 0
+  then
+    raise exception 'Effective media functions retain an unsupported regex bound';
+  end if;
+end;
+$effective_storage_functions$;
 
 delete from auth.users
 where id = '60000000-0000-4000-8000-000000000006';
