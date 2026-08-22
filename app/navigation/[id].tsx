@@ -50,13 +50,15 @@ export default function NavigationScreen() {
   const [location, setLocation] = useState<NavigationCoordinate | null>(null);
   const [automaticRerouting, setAutomaticRerouting] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pendingMode, setPendingMode] = useState<TravelMode | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const watcher = useRef<Location.LocationSubscription | null>(null);
   const trackingWanted = useRef(false);
   const modeRef = useRef<TravelMode | null>(null);
   const routeRequestOrigin = useRef<NavigationCoordinate | null>(null);
   const lastRouteRequestAt = useRef(0);
-  const rerouteInFlight = useRef(false);
+  const routeRequestSequence = useRef(0);
+  const activeRouteRequest = useRef<number | null>(null);
   const automaticReroutingRef = useRef(false);
   const appStateRef = useRef(AppState.currentState);
   const watcherGeneration = useRef(0);
@@ -78,11 +80,23 @@ export default function NavigationScreen() {
   } : null, [place]);
 
   const refreshRoute = useCallback(async (origin: NavigationCoordinate, selectedMode: TravelMode) => {
-    if (!destination || rerouteInFlight.current) return false;
-    rerouteInFlight.current = true;
+    if (!destination || activeRouteRequest.current !== null) return false;
+    const requestId = routeRequestSequence.current + 1;
+    routeRequestSequence.current = requestId;
+    activeRouteRequest.current = requestId;
     lastRouteRequestAt.current = Date.now();
-    const result = await requestRoutePlan({ origin, destination, mode: selectedMode });
-    rerouteInFlight.current = false;
+    let result: Awaited<ReturnType<typeof requestRoutePlan>>;
+    try {
+      result = await requestRoutePlan({ origin, destination, mode: selectedMode });
+    } catch {
+      if (activeRouteRequest.current === requestId) activeRouteRequest.current = null;
+      if (routeRequestSequence.current === requestId) {
+        setMessage('Your route could not be updated. Check your connection and try again.');
+      }
+      return false;
+    }
+    if (activeRouteRequest.current !== requestId || routeRequestSequence.current !== requestId) return false;
+    activeRouteRequest.current = null;
     if (!result.ok || !result.data) {
       setMessage(result.ok ? 'A route could not be created.' : result.reason);
       return false;
@@ -149,6 +163,8 @@ export default function NavigationScreen() {
     return () => {
       trackingWanted.current = false;
       watcherGeneration.current += 1;
+      routeRequestSequence.current += 1;
+      activeRouteRequest.current = null;
       watcher.current?.remove();
       watcher.current = null;
       subscription.remove();
@@ -162,6 +178,7 @@ export default function NavigationScreen() {
     }
     if (!place || !destination || place.category === 'home_kitchen') return;
     setBusy(true);
+    setPendingMode(selectedMode);
     setMessage(null);
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
@@ -188,12 +205,37 @@ export default function NavigationScreen() {
       setMessage('Your current location could not be read. Check location services and try again.');
     } finally {
       setBusy(false);
+      setPendingMode(null);
+    }
+  };
+
+  const changeTravelMode = async (selectedMode: TravelMode) => {
+    if (!mode || selectedMode === mode || busy) return;
+    if (!location) {
+      setMessage('Your current location is not available yet. Try changing travel mode again.');
+      return;
+    }
+    setBusy(true);
+    setPendingMode(selectedMode);
+    setMessage(null);
+    try {
+      const routed = await refreshRoute(location, selectedMode);
+      if (!routed) return;
+      modeRef.current = selectedMode;
+      setMode(selectedMode);
+    } catch {
+      setMessage('Your route could not be updated. Check your connection and try again.');
+    } finally {
+      setBusy(false);
+      setPendingMode(null);
     }
   };
 
   const stopTracking = () => {
     trackingWanted.current = false;
     watcherGeneration.current += 1;
+    routeRequestSequence.current += 1;
+    activeRouteRequest.current = null;
     watcher.current?.remove();
     watcher.current = null;
     modeRef.current = null;
@@ -268,6 +310,9 @@ export default function NavigationScreen() {
   }
 
   const nextStep = route && location ? nearestRouteStep(route, location) : route?.steps[0] ?? null;
+  const travelModePrivacyNotice = mode
+    ? 'Changing travel mode sends your current precise location, this public destination, and the new travel mode to Mapbox to calculate a replacement route.'
+    : 'Starting navigation sends your precise current starting location, this public destination, and travel mode to Mapbox to calculate one route. Spottr does not send later movement to Mapbox for rerouting unless you separately turn on Automatic rerouting. Spottr does not save your route to your profile.';
   return (
     <View role="main" style={styles.screen}>
       <View style={styles.topBar}>
@@ -305,27 +350,31 @@ export default function NavigationScreen() {
         </View>
 
         <View style={styles.controlsArea}>
-          {!mode ? (
-            <>
-              <Text style={styles.controlHeading}>Choose how you’re traveling</Text>
-              <Text style={styles.providerNotice}>Starting navigation sends your precise current starting location, this public destination, and travel mode to Mapbox to calculate one route. Spottr does not send later movement to Mapbox for rerouting unless you separately turn on Automatic rerouting. Spottr does not save your route to your profile.</Text>
-              <View accessibilityRole="radiogroup" style={styles.modeRow}>
-                {travelModes.map((item) => (
-                  <Pressable
-                    aria-checked={false}
-                    accessibilityRole="radio"
-                    accessibilityState={{ disabled: busy }}
-                    disabled={busy}
-                    key={item.id}
-                    onPress={() => void startNavigation(item.id)}
-                    style={styles.modeButton}>
-                    {busy ? <ActivityIndicator color={palette.ink} size="small" /> : <FontAwesome6 color={palette.ink} name={item.icon} size={16} />}
-                    <Text style={styles.modeText}>{item.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </>
-          ) : (
+          <Text style={styles.controlHeading}>{mode ? 'Travel mode' : 'Choose how you’re traveling'}</Text>
+          <Text nativeID="travel-mode-privacy-description" style={styles.providerNotice}>{travelModePrivacyNotice}</Text>
+          <View accessibilityLabel="Travel mode" accessibilityRole="radiogroup" style={styles.modeRow}>
+            {travelModes.map((item) => {
+              const selected = item.id === mode;
+              return (
+                <Pressable
+                  aria-checked={selected}
+                  aria-describedby="travel-mode-privacy-description"
+                  accessibilityHint={travelModePrivacyNotice}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: selected, disabled: busy }}
+                  disabled={busy}
+                  key={item.id}
+                  onPress={() => void (mode ? changeTravelMode(item.id) : startNavigation(item.id))}
+                  style={[styles.modeButton, selected && styles.modeButtonSelected]}>
+                  {busy && pendingMode === item.id
+                    ? <ActivityIndicator color={palette.ink} size="small" />
+                    : <FontAwesome6 color={palette.ink} name={item.icon} size={16} />}
+                  <Text style={styles.modeText}>{item.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {mode ? (
             <>
               <View style={styles.rerouteControl}>
                 <View style={styles.rerouteCopy}>
@@ -358,7 +407,7 @@ export default function NavigationScreen() {
                 </Pressable>
               </View>
             </>
-          )}
+          ) : null}
           {message ? <Text accessibilityLiveRegion="assertive" style={styles.message}>{message}</Text> : null}
           <Text style={styles.disclaimer}>Foreground only. Route guidance is informational—follow posted signs, closures, and real-world conditions.</Text>
           {route ? <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(route.attributionUrl)}><Text style={styles.attribution}>{route.attribution}</Text></Pressable> : null}
@@ -386,6 +435,7 @@ const styles = StyleSheet.create({
   providerNotice: { color: palette.muted, fontSize: 11, lineHeight: 17, maxWidth: 760 },
   modeRow: { flexDirection: 'row', gap: 10 },
   modeButton: { alignItems: 'center', backgroundColor: palette.bg, borderColor: palette.line, borderRadius: radii.md, borderWidth: 1, flex: 1, gap: 7, justifyContent: 'center', minHeight: 64 },
+  modeButtonSelected: { backgroundColor: palette.accentSoft, borderColor: palette.accentDeep, borderWidth: 2 },
   modeText: { color: palette.ink, fontSize: 11, fontWeight: '900' },
   activeControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   rerouteControl: { alignItems: 'center', backgroundColor: palette.bg, borderColor: palette.line, borderRadius: radii.md, borderWidth: 1, flexDirection: 'row', gap: 16, minHeight: 72, paddingHorizontal: 16, paddingVertical: 12 },

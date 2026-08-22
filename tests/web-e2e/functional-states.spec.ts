@@ -121,7 +121,9 @@ test('authenticated foreground navigation draws a provider route and remains use
 
   await context.grantPermissions(['geolocation'], { origin: fixtureAppOrigin });
   await context.setGeolocation({ latitude: 34.0522, longitude: -118.2437 });
-  await page.getByRole('radio', { name: 'Walk' }).click();
+  const walkMode = page.getByRole('radio', { name: 'Walk' });
+  await expect(walkMode).toHaveAccessibleDescription(/Starting navigation sends your precise current starting location.*to Mapbox/i);
+  await walkMode.click();
   await expect.poll(() => fixture?.routeRequests.length ?? 0).toBe(1);
   expect(fixture?.routeRequests[0]).toEqual({
     origin: { latitude: 34.0522, longitude: -118.2437 },
@@ -134,10 +136,15 @@ test('authenticated foreground navigation draws a provider route and remains use
   await expect(walkMarker).toHaveCount(1);
   await expect(walkMarker).not.toHaveText('');
   await expect(walkMarker).toHaveCSS('font-family', /FontAwesome6Free-Solid/u);
+  await expect(walkMode).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByText(/Changing travel mode sends your current precise location.*to Mapbox/i)).toBeVisible();
 
-  await page.getByRole('radio', { name: 'Drive' }).click();
+  const driveMode = page.getByRole('radio', { name: 'Drive' });
+  await expect(driveMode).toHaveAccessibleDescription(/Changing travel mode sends your current precise location.*to Mapbox/i);
+  await driveMode.click();
   await expect.poll(() => fixture?.routeRequests.length ?? 0).toBe(2);
   expect(fixture?.routeRequests[1]).toMatchObject({ mode: 'drive' });
+  await expect(driveMode).toHaveAttribute('aria-checked', 'true');
   const driveMarker = page.locator('.maplibregl-marker[aria-label="Your live drive position"]');
   await expect(driveMarker).toHaveCount(1);
   await expect(driveMarker).not.toHaveText('');
@@ -163,6 +170,6 @@ test('authenticated foreground navigation draws a provider route and remains use
   await expect(page.getByRole('button', { name: 'Show route' })).toBeVisible();
   await page.getByRole('button', { name: 'Stop tracking' }).click();
   await expect(page.getByText('Live tracking stopped.')).toBeVisible();
-  await expect(page.getByRole('radio', { name: 'Walk' })).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Walk' })).toHaveAttribute('aria-checked', 'false');
   await expectNoSeriousAxeViolations(page);
 });
