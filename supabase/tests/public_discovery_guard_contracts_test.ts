@@ -93,7 +93,9 @@ Deno.test("all discovery query and lifecycle RPC grants are fail-closed", () => 
 
 Deno.test("global map viewport uses geography-compatible index-aware filtering", () => {
   assertMatch(mapGeographyRepair, /public\.st_intersects\(/);
+  assertMatch(mapGeographyRepair, /public\.st_equals\(ct\.grid_point, b\.grid_point\)/);
   assert(!/bl\.point\s+&&\s+public\.st_makeenvelope/.test(mapGeographyRepair));
+  assert(!/ct\.grid_point\s+=\s+b\.grid_point\) as category_counts/.test(mapGeographyRepair));
   assertMatch(
     mapGeographyRepair,
     /revoke all on function public\.map_food_places[\s\S]+from public, anon, authenticated/,

@@ -159,7 +159,11 @@ begin
       count(*)::bigint as place_count,
       avg(public.st_y(b.safe_point))::double precision as latitude,
       avg(public.st_x(b.safe_point))::double precision as longitude,
-      (select jsonb_object_agg(ct.kind, ct.category_count order by ct.kind) from category_totals ct where ct.grid_point = b.grid_point) as category_counts,
+      (
+        select jsonb_object_agg(ct.kind, ct.category_count order by ct.kind)
+        from category_totals ct
+        where public.st_equals(ct.grid_point, b.grid_point)
+      ) as category_counts,
       (array_agg(b.kind order by case when b.kind = 'food_truck' then 0 else 1 end, b.kind))[1] as dominant_kind,
       null::uuid as business_id,
       null::uuid as location_id,
@@ -231,7 +235,9 @@ begin
   ) into function_definition;
 
   if position('st_intersects' in function_definition) = 0
+    or position('st_equals' in function_definition) = 0
     or position('bl.point &&' in function_definition) > 0
+    or position('ct.grid_point = b.grid_point' in function_definition) > 0
   then
     raise exception 'map_food_places must use geography-compatible viewport filtering';
   end if;
