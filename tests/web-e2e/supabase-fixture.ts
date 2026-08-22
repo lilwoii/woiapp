@@ -498,9 +498,20 @@ export async function installSpottrFixture(page: Page) {
       const body = postBody(route);
       const metadata = body.data as Record<string, unknown> | undefined;
       const security = body.gotrue_meta_security as Record<string, unknown> | undefined;
+      const codeChallenge = body.code_challenge;
       const redirect = url.searchParams.get('redirect_to');
       if (
-        !exactBodyKeys(body, 'data', 'email', 'gotrue_meta_security', 'password') ||
+        !exactBodyKeys(
+          body,
+          'code_challenge',
+          'code_challenge_method',
+          'data',
+          'email',
+          'gotrue_meta_security',
+          'password',
+        ) ||
+        typeof codeChallenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(codeChallenge) ||
+        body.code_challenge_method !== 's256' ||
         typeof security !== 'object' || security === null || Object.keys(security).length !== 0 ||
         body.password !== 'Fixture-password-123!' ||
         (body.email !== 'new.customer@spottr.test' && body.email !== 'new.owner@spottr.test') ||
