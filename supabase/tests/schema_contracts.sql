@@ -379,6 +379,15 @@ begin
   ) then
     raise exception 'Account export omits owned business data or leaks staff attribution';
   end if;
+
+  if private.content_is_professional('f.u.c.k')
+    or private.content_is_professional('f!u!c!k')
+    or private.content_is_professional('sh1t')
+    or private.content_is_professional('m0therfuuucker')
+    or not private.content_is_professional('Bastille pastries and classical bass')
+  then
+    raise exception 'Professional-content enforcement is bypassable or over-broad';
+  end if;
 end;
 $contract$;
 

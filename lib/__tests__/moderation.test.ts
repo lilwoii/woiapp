@@ -19,6 +19,21 @@ describe('professional content validation', () => {
     expect(checkProfessionalText('This is bullshit', 120).ok).toBe(false);
     expect(checkProfessionalText('https://a.example https://b.example', 120).ok).toBe(false);
   });
+
+  it('rejects separator, repetition, and common number-substitution bypasses', () => {
+    expect(checkProfessionalText('f.u.c.k', 120).ok).toBe(false);
+    expect(checkProfessionalText('f!u!c!k', 120).ok).toBe(false);
+    expect(checkProfessionalText('sh1t', 120).ok).toBe(false);
+    expect(checkProfessionalText('m0therfuuucker', 120).ok).toBe(false);
+    expect(checkProfessionalText('This is b-u-l-l-s-h-i-t', 120).ok).toBe(false);
+  });
+
+  it('keeps blocked terms boundary-safe', () => {
+    expect(checkProfessionalText('Bastille pastries and classical bass', 120)).toEqual({
+      ok: true,
+      clean: 'Bastille pastries and classical bass',
+    });
+  });
 });
 
 describe('username validation', () => {

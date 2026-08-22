@@ -841,4 +841,17 @@ $public_discovery_lease_cap$;
 
 reset role;
 
+do $professional_content$
+begin
+  if private.content_is_professional('f.u.c.k')
+    or private.content_is_professional('f!u!c!k')
+    or private.content_is_professional('sh1t')
+    or private.content_is_professional('m0therfuuucker')
+    or not private.content_is_professional('Bastille pastries and classical bass')
+  then
+    raise exception 'Professional-content enforcement is bypassable or over-broad after migrations';
+  end if;
+end;
+$professional_content$;
+
 rollback;
