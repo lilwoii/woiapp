@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -21,7 +21,6 @@ import {
   getMfaOverview,
   MfaOverview,
   removeTotp,
-  signOutAllSessions,
   TotpEnrollment,
   verifyTotp,
 } from '@/lib/account-security';
@@ -36,18 +35,26 @@ export default function SecurityScreen() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
+  const currentAccountId = useRef(auth.account?.id);
+  currentAccountId.current = auth.account?.id;
 
   const load = useCallback(async () => {
-    if (auth.status !== 'authenticated') return;
+    const expectedUserId = auth.account?.id;
+    if (auth.status !== 'authenticated' || !expectedUserId) {
+      setOverview(null);
+      setBusy(false);
+      return;
+    }
     setBusy(true);
-    const result = await getMfaOverview();
+    const result = await getMfaOverview(expectedUserId);
+    if (currentAccountId.current !== expectedUserId) return;
     setBusy(false);
     if (!result.ok) {
       setFeedback({ type: 'error', text: result.reason });
       return;
     }
     setOverview(result.data ?? null);
-  }, [auth.status]);
+  }, [auth.account?.id, auth.status]);
 
   useEffect(() => {
     const timer = setTimeout(() => void load(), 0);
@@ -134,13 +141,20 @@ export default function SecurityScreen() {
     });
     if (!confirmed) return;
     setBusy(true);
-    const result = await signOutAllSessions();
+    const result = await auth.signOutAllSessions();
     setBusy(false);
     if (!result.ok) {
       setFeedback({ type: 'error', text: result.reason });
       return;
     }
-    router.replace('/auth');
+    if (result.data?.signedOutCurrentSession) {
+      router.replace('/auth');
+      return;
+    }
+    setFeedback({
+      type: 'success',
+      text: result.message ?? 'The prior account sessions were revoked.',
+    });
   };
 
   const openAuthenticator = async () => {

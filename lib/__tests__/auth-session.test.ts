@@ -1,0 +1,158 @@
+import {
+  createAuthMutationGate,
+  createSessionHydrationGuard,
+  reconcilePasswordRecoveryIntent,
+} from '../auth-session';
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+describe('session hydration guard', () => {
+  it('ignores delayed prior-user hydration after sign-out', async () => {
+    const guard = createSessionHydrationGuard();
+    const prior = guard.begin('user-a');
+    const delay = deferred();
+    const commits: string[] = [];
+    const delayedHydration = (async () => {
+      await delay.promise;
+      if (guard.isCurrent(prior)) commits.push('user-a');
+    })();
+
+    guard.begin(null);
+    delay.resolve();
+    await delayedHydration;
+
+    expect(commits).toEqual([]);
+    expect(guard.current()).toEqual({ epoch: 2, userId: null });
+  });
+
+  it('commits only the newest user during a rapid account switch', async () => {
+    const guard = createSessionHydrationGuard();
+    const userA = guard.begin('user-a');
+    const userADelay = deferred();
+    const commits: string[] = [];
+    const delayedA = (async () => {
+      await userADelay.promise;
+      if (guard.isCurrent(userA)) commits.push('user-a');
+    })();
+
+    const userB = guard.begin('user-b');
+    const userBDelay = deferred();
+    const delayedB = (async () => {
+      await userBDelay.promise;
+      if (guard.isCurrent(userB)) commits.push('user-b');
+    })();
+
+    userADelay.resolve();
+    userBDelay.resolve();
+    await Promise.all([delayedA, delayedB]);
+
+    expect(commits).toEqual(['user-b']);
+    expect(guard.isCurrent({ epoch: userB.epoch, userId: 'user-a' })).toBe(false);
+  });
+
+  it('ignores an initial restore that resolves after a newer auth event', async () => {
+    const guard = createSessionHydrationGuard();
+    const restore = guard.advance();
+    const delay = deferred();
+    let restored = false;
+    const delayedRestore = (async () => {
+      await delay.promise;
+      if (guard.isCurrent(restore)) restored = true;
+    })();
+
+    guard.begin('user-b');
+    delay.resolve();
+    await delayedRestore;
+
+    expect(restored).toBe(false);
+    expect(guard.current().userId).toBe('user-b');
+  });
+
+  it('rejects a delayed account operation after switching users', async () => {
+    const guard = createSessionHydrationGuard();
+    guard.begin('user-a');
+    const requestKey = 'delete-user-a';
+    let currentRequestKey: string | null = requestKey;
+    const delay = deferred();
+    const delayedCompletion = (async () => {
+      await delay.promise;
+      return guard.isCurrentUser('user-a') && currentRequestKey === requestKey;
+    })();
+
+    guard.begin('user-b');
+    currentRequestKey = null;
+    delay.resolve();
+
+    await expect(delayedCompletion).resolves.toBe(false);
+    expect(guard.isCurrentUser('user-b')).toBe(true);
+  });
+});
+
+describe('auth mutation gate', () => {
+  it('keeps account deletion exclusive through a deferred local-session clear', async () => {
+    const gate = createAuthMutationGate();
+    const deletion = gate.begin('account-delete', 'user-a')!;
+    const delay = deferred();
+    const completion = (async () => {
+      await delay.promise;
+      gate.finish(deletion);
+    })();
+
+    expect(gate.begin('sign-in')).toBeNull();
+    expect(gate.current()).toBe(deletion);
+
+    delay.resolve();
+    await completion;
+    expect(gate.begin('sign-in')).not.toBeNull();
+  });
+
+  it('keeps a deletion valid across a same-user token refresh', () => {
+    const gate = createAuthMutationGate();
+    const hydration = createSessionHydrationGuard();
+    hydration.begin('user-a');
+    const deletion = gate.begin('account-delete', 'user-a')!;
+
+    hydration.begin('user-a');
+
+    expect(hydration.isCurrentUser('user-a')).toBe(true);
+    expect(gate.isActive(deletion)).toBe(true);
+  });
+
+  it('does not let a stale completion release a newer auth operation', () => {
+    const gate = createAuthMutationGate();
+    const first = gate.begin('sign-out', 'user-a')!;
+    gate.finish(first);
+    const second = gate.begin('sign-in')!;
+
+    gate.finish(first);
+
+    expect(gate.isActive(second)).toBe(true);
+    expect(gate.current()).toBe(second);
+  });
+});
+
+describe('password recovery intent', () => {
+  it('survives a superseding same-user auth event', () => {
+    const guard = createSessionHydrationGuard();
+    const intendedUsers = new Set(['user-a']);
+
+    guard.begin('user-a');
+    guard.advance();
+
+    expect(reconcilePasswordRecoveryIntent(intendedUsers, guard.current().userId)).toBe(true);
+    expect([...intendedUsers]).toEqual(['user-a']);
+  });
+
+  it('is discarded when the authoritative user differs from the recovery hint', () => {
+    const intendedUsers = new Set(['user-b']);
+
+    expect(reconcilePasswordRecoveryIntent(intendedUsers, 'user-a')).toBe(false);
+    expect(intendedUsers.size).toBe(0);
+  });
+});

@@ -27,6 +27,15 @@ const deletion = await Deno.readTextFile(
 const authContext = await Deno.readTextFile(
   new URL("../../context/auth-context.tsx", import.meta.url),
 );
+const webSupabase = await Deno.readTextFile(
+  new URL("../../lib/supabase.ts", import.meta.url),
+);
+const nativeSupabase = await Deno.readTextFile(
+  new URL("../../lib/supabase.native.ts", import.meta.url),
+);
+const authStorage = await Deno.readTextFile(
+  new URL("../../lib/auth-storage.ts", import.meta.url),
+);
 const config = await Deno.readTextFile(
   new URL("../config.toml", import.meta.url),
 );
@@ -116,7 +125,108 @@ Deno.test("receipt persistence failure never claims deletion is complete", () =>
   assertMatch(worker, /ACCOUNT_DELETE_RECEIPT_FINALIZATION_PENDING/);
   assertMatch(authContext, /response\?\.phase === 'receipt_finalization'/);
   assertMatch(authContext, /response\?\.account_removed === true/);
-  assertMatch(authContext, /client\.auth\.signOut\(\{ scope: 'local' \}\)/);
+  assertMatch(
+    authContext,
+    /Authorization: `Bearer \$\{authenticatedDeletionSession\.access_token\}`/,
+  );
+  assertMatch(authContext, /clearLocalAuthSessionForUser\(deletingUserId\)/);
+});
+
+Deno.test("global session revocation stays bound to the captured account", () => {
+  const globalStart = authContext.indexOf("const signOutAllSessions =");
+  const capture = authContext.indexOf(
+    "const revokingSession = sessionResult.data.session",
+    globalStart,
+  );
+  const verify = authContext.indexOf(
+    "client.auth.getUser(revokingSession.access_token)",
+    capture,
+  );
+  const revoke = authContext.indexOf("client.auth.admin.signOut(", verify);
+  const globalScope = authContext.indexOf("'global'", revoke);
+  const conditionalClear = authContext.indexOf(
+    "clearLocalAuthSessionForUser(expectedUserId)",
+    globalScope,
+  );
+  const reconcile = authContext.indexOf(
+    "reconcileSessionAfterRevocation(expectedUserId)",
+    conditionalClear,
+  );
+  assert(
+    globalStart >= 0 && capture > globalStart && verify > capture &&
+      revoke > verify &&
+      globalScope > revoke && conditionalClear > globalScope &&
+      reconcile > conditionalClear,
+  );
+  assert(!authContext.includes("auth.signOut({ scope: 'global' }"));
+  assertMatch(authContext, /resetRealtimeAuthToAnonymous\(\)/);
+  assertMatch(authContext, /isAuthSessionMissingError\(error\)/);
+
+  const reconcileStart = authContext.indexOf(
+    "const reconcileSessionAfterRevocation =",
+  );
+  const neutralizePriorToken = authContext.indexOf(
+    "resetRealtimeAuthToAnonymous()",
+    reconcileStart,
+  );
+  const removePriorChannels = authContext.indexOf(
+    "client.removeAllChannels()",
+    neutralizePriorToken,
+  );
+  const installReplacementToken = authContext.indexOf(
+    "await client.realtime.setAuth(activeSession.access_token)",
+    removePriorChannels,
+  );
+  assert(
+    reconcileStart >= 0 && neutralizePriorToken > reconcileStart &&
+      removePriorChannels > neutralizePriorToken &&
+      installReplacementToken > removePriorChannels,
+  );
+});
+
+Deno.test("conditional session clearing is locked and fails closed", () => {
+  for (const source of [webSupabase, nativeSupabase]) {
+    assertMatch(source, /processLock\(`lock:\$\{authStorageKey\}`, -1/);
+    assertMatch(source, /lock: processLock/);
+    assertMatch(source, /resetRealtimeAuthToAnonymous/);
+  }
+  assertMatch(authStorage, /identity\.status === 'invalid'\) return 'unknown'/);
+  assertMatch(authContext, /clearResult === 'unknown'/);
+});
+
+Deno.test("anonymous and replacement session commits are epoch-bound", () => {
+  const finalRead = authContext.indexOf(
+    "const finalResult = await readAuthoritativeSession()",
+  );
+  const finalGuard = authContext.indexOf(
+    "sessionHydration.isCurrent(finalResult.token)",
+    finalRead,
+  );
+  const expectedUserGuard = authContext.indexOf(
+    "finalResult.token.userId !== expectedUserId",
+    finalGuard,
+  );
+  const anonymousReservation = authContext.indexOf(
+    "token: sessionHydration.begin(null)",
+    expectedUserGuard,
+  );
+  assert(
+    finalRead >= 0 && finalGuard > finalRead &&
+      expectedUserGuard > finalGuard && anonymousReservation > expectedUserGuard,
+  );
+  assertMatch(
+    authContext,
+    /remainingSession\?\.user\.id === expectedUserId[\s\S]*readToken\.userId !== expectedUserId/,
+  );
+  assertMatch(
+    authContext,
+    /expectedToken && !sessionHydration\.isCurrent\(expectedToken\)/,
+  );
+  assertMatch(authContext, /let realtimePreparation: Promise<void> \| null/);
+  assertMatch(
+    authContext,
+    /realtimePreparation = \(async \(\) => \{[\s\S]*Promise\.all\(\[[\s\S]*resetRealtimeAuthToAnonymous\(\)[\s\S]*client\.removeAllChannels\(\)/,
+  );
 });
 
 Deno.test("an ambiguous Auth deletion result preserves the sealed retry state", () => {

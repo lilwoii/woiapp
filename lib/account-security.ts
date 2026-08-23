@@ -1,4 +1,5 @@
 import { toActionError } from '@/lib/errors';
+import { authMutationGate } from '@/lib/auth-session';
 import { supabase } from '@/lib/supabase';
 import type { ActionResult } from '@/types/marketplace';
 
@@ -41,12 +42,39 @@ async function requireAuthenticatedClient() {
       },
     };
   }
-  return { ok: true as const, client };
+  return { ok: true as const, client, userId: data.user.id };
 }
 
-export async function getMfaOverview(): Promise<ActionResult<MfaOverview>> {
+function authMutationConflict(): Extract<ActionResult, { ok: false }> {
+  return {
+    ok: false,
+    code: 'CONFLICT',
+    reason: 'Another account security action is still finishing. Wait a moment and try again.',
+  };
+}
+
+async function sessionStillBelongsTo(
+  client: NonNullable<typeof supabase>,
+  expectedUserId: string
+): Promise<boolean> {
+  const { data, error } = await client.auth.getSession();
+  return !error && data.session?.user?.id === expectedUserId;
+}
+
+function sessionChanged(): Extract<ActionResult, { ok: false }> {
+  return {
+    ok: false,
+    code: 'AUTH_REQUIRED',
+    reason: 'Your session changed. Sign in again before managing account security.',
+  };
+}
+
+export async function getMfaOverview(
+  expectedUserId?: string
+): Promise<ActionResult<MfaOverview>> {
   const authenticated = await requireAuthenticatedClient();
   if (!authenticated.ok) return authenticated.result;
+  if (expectedUserId && authenticated.userId !== expectedUserId) return sessionChanged();
 
   try {
     const [factorsResult, assuranceResult] = await Promise.all([
@@ -55,6 +83,9 @@ export async function getMfaOverview(): Promise<ActionResult<MfaOverview>> {
     ]);
     if (factorsResult.error) throw factorsResult.error;
     if (assuranceResult.error) throw assuranceResult.error;
+    if (!(await sessionStillBelongsTo(authenticated.client, authenticated.userId))) {
+      return sessionChanged();
+    }
     const factor = factorsResult.data.totp[0];
     return {
       ok: true,
@@ -70,12 +101,17 @@ export async function getMfaOverview(): Promise<ActionResult<MfaOverview>> {
 }
 
 export async function beginTotpEnrollment(): Promise<ActionResult<TotpEnrollment>> {
-  const authenticated = await requireAuthenticatedClient();
-  if (!authenticated.ok) return authenticated.result;
+  const authOperation = authMutationGate.begin('mfa-change');
+  if (!authOperation) return authMutationConflict();
 
   try {
+    const authenticated = await requireAuthenticatedClient();
+    if (!authenticated.ok) return authenticated.result;
     const factorsResult = await authenticated.client.auth.mfa.listFactors();
     if (factorsResult.error) throw factorsResult.error;
+    if (!(await sessionStillBelongsTo(authenticated.client, authenticated.userId))) {
+      return sessionChanged();
+    }
     if (factorsResult.data.totp.length) {
       return {
         ok: false,
@@ -89,16 +125,25 @@ export async function beginTotpEnrollment(): Promise<ActionResult<TotpEnrollment
       (factor) => factor.factor_type === 'totp' && factor.status === 'unverified'
     );
     for (const factor of abandonedFactors) {
+      if (!(await sessionStillBelongsTo(authenticated.client, authenticated.userId))) {
+        return sessionChanged();
+      }
       const { error } = await authenticated.client.auth.mfa.unenroll({ factorId: factor.id });
       if (error) throw error;
     }
 
+    if (!(await sessionStillBelongsTo(authenticated.client, authenticated.userId))) {
+      return sessionChanged();
+    }
     const { data, error } = await authenticated.client.auth.mfa.enroll({
       factorType: 'totp',
       friendlyName: 'Spottr authenticator',
       issuer: 'Spottr',
     });
     if (error) throw error;
+    if (!(await sessionStillBelongsTo(authenticated.client, authenticated.userId))) {
+      return sessionChanged();
+    }
     return {
       ok: true,
       data: {
@@ -110,6 +155,8 @@ export async function beginTotpEnrollment(): Promise<ActionResult<TotpEnrollment
     };
   } catch (error) {
     return toActionError(error, 'An authenticator could not be connected.');
+  } finally {
+    authMutationGate.finish(authOperation);
   }
 }
 
@@ -117,19 +164,28 @@ export async function verifyTotp(
   factorId: string,
   code: string
 ): Promise<ActionResult<MfaOverview>> {
-  const authenticated = await requireAuthenticatedClient();
-  if (!authenticated.ok) return authenticated.result;
   if (!/^\d{6}$/.test(code.trim())) {
     return { ok: false, code: 'INVALID', reason: 'Enter the six-digit authenticator code.' };
   }
 
+  const authOperation = authMutationGate.begin('mfa-change');
+  if (!authOperation) return authMutationConflict();
+
   try {
+    const authenticated = await requireAuthenticatedClient();
+    if (!authenticated.ok) return authenticated.result;
+    if (!(await sessionStillBelongsTo(authenticated.client, authenticated.userId))) {
+      return sessionChanged();
+    }
     const { error } = await authenticated.client.auth.mfa.challengeAndVerify({
       factorId,
       code: code.trim(),
     });
     if (error) throw error;
-    const overview = await getMfaOverview();
+    if (!(await sessionStillBelongsTo(authenticated.client, authenticated.userId))) {
+      return sessionChanged();
+    }
+    const overview = await getMfaOverview(authenticated.userId);
     if (!overview.ok) return overview;
     return {
       ok: true,
@@ -138,17 +194,27 @@ export async function verifyTotp(
     };
   } catch (error) {
     return toActionError(error, 'That authenticator code could not be verified.');
+  } finally {
+    authMutationGate.finish(authOperation);
   }
 }
 
 export async function removeTotp(factorId: string): Promise<ActionResult<MfaOverview>> {
-  const authenticated = await requireAuthenticatedClient();
-  if (!authenticated.ok) return authenticated.result;
+  const authOperation = authMutationGate.begin('mfa-change');
+  if (!authOperation) return authMutationConflict();
 
   try {
+    const authenticated = await requireAuthenticatedClient();
+    if (!authenticated.ok) return authenticated.result;
+    if (!(await sessionStillBelongsTo(authenticated.client, authenticated.userId))) {
+      return sessionChanged();
+    }
     const { error } = await authenticated.client.auth.mfa.unenroll({ factorId });
     if (error) throw error;
-    const overview = await getMfaOverview();
+    if (!(await sessionStillBelongsTo(authenticated.client, authenticated.userId))) {
+      return sessionChanged();
+    }
+    const overview = await getMfaOverview(authenticated.userId);
     if (!overview.ok) return overview;
     return {
       ok: true,
@@ -160,18 +226,9 @@ export async function removeTotp(factorId: string): Promise<ActionResult<MfaOver
       error,
       'Authenticator protection could not be removed. Verify a current code first.'
     );
+  } finally {
+    authMutationGate.finish(authOperation);
   }
 }
 
-export async function signOutAllSessions(): Promise<ActionResult> {
-  const authenticated = await requireAuthenticatedClient();
-  if (!authenticated.ok) return authenticated.result;
-
-  try {
-    const { error } = await authenticated.client.auth.signOut({ scope: 'global' });
-    if (error) throw error;
-    return { ok: true, message: 'All Spottr sessions were signed out.' };
-  } catch (error) {
-    return toActionError(error, 'Your other sessions could not be signed out.');
-  }
-}
+// Session-wide revocation lives in AuthContext so auth and Realtime state reconcile together.
