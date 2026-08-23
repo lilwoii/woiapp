@@ -55,6 +55,7 @@ export type MarketplacePage = {
   nextOffset: number;
 };
 type MarketplaceFetchOptions = {
+  expectedUserId?: string;
   includeDetails?: boolean;
   includeBusinessIds?: string[];
   managedBusinessIds?: string[];
@@ -592,6 +593,10 @@ export async function fetchMarketplacePlaces(
       reason: 'Live marketplace services are not configured.',
     };
   }
+  if (options.expectedUserId) {
+    const user = await activeUserIdentity(options.expectedUserId);
+    if (!user.ok) return user;
+  }
 
   try {
     const includeDetails = options.includeDetails === true;
@@ -1066,13 +1071,15 @@ export async function fetchMarketplacePlaces(
 }
 
 export async function fetchMarketplacePlaceById(
-  businessId: string
+  businessId: string,
+  expectedUserId?: string
 ): Promise<ActionResult<Place>> {
   if (!uuidPattern.test(businessId)) {
     return { ok: false, code: 'INVALID', reason: 'This listing link is invalid.' };
   }
 
   const result = await fetchMarketplacePlaces({
+    expectedUserId,
     includeDetails: true,
     includeBusinessIds: [businessId],
     onlyIncludedBusinesses: true,
@@ -1129,7 +1136,8 @@ export async function recordSponsoredInteraction(
 
 export async function fetchBusinessReviewsPage(
   businessId: string,
-  resultOffset: number
+  resultOffset: number,
+  expectedUserId?: string
 ): Promise<
   ActionResult<{ reviews: Review[]; hasMore: boolean; nextOffset: number }>
 > {
@@ -1148,6 +1156,10 @@ export async function fetchBusinessReviewsPage(
     resultOffset > 10_000
   ) {
     return { ok: false, code: 'INVALID', reason: 'This review page is invalid.' };
+  }
+  if (expectedUserId) {
+    const user = await activeUserIdentity(expectedUserId);
+    if (!user.ok) return user;
   }
 
   const pageSize = 20;
@@ -1205,7 +1217,11 @@ export async function searchMarketplacePlaces(
   searchText: string,
   options: Pick<
     MarketplaceFetchOptions,
-    'includeBusinessIds' | 'managedBusinessIds' | 'resultLimit' | 'resultOffset'
+    | 'expectedUserId'
+    | 'includeBusinessIds'
+    | 'managedBusinessIds'
+    | 'resultLimit'
+    | 'resultOffset'
   > = {}
 ): Promise<ActionResult<MarketplacePage>> {
   const client = supabase;
@@ -1244,6 +1260,7 @@ export async function searchMarketplacePlaces(
       ...new Set([...rankedIds, ...(options.includeBusinessIds ?? [])]),
     ];
     const result = await fetchMarketplacePlaces({
+      expectedUserId: options.expectedUserId,
       includeBusinessIds: includedIds,
       managedBusinessIds: options.managedBusinessIds,
       onlyIncludedBusinesses: true,
@@ -1270,7 +1287,9 @@ export async function searchMarketplacePlaces(
   }
 }
 
-async function authenticatedUserId(): Promise<ActionResult<string>> {
+async function activeUserIdentity(expectedUserId?: string): Promise<
+  ActionResult<{ emailConfirmed: boolean; id: string }>
+> {
   const client = supabase;
   if (!client) {
     return {
@@ -1279,20 +1298,48 @@ async function authenticatedUserId(): Promise<ActionResult<string>> {
       reason: 'Live marketplace services are not configured.',
     };
   }
-  const { data, error } = await client.auth.getUser();
-  if (error || !data.user) {
-    return { ok: false, code: 'AUTH_REQUIRED', reason: 'Sign in to continue.' };
+  try {
+    const { data, error } = await client.auth.getUser();
+    if (error || !data.user) {
+      return { ok: false, code: 'AUTH_REQUIRED', reason: 'Sign in to continue.' };
+    }
+    if (expectedUserId && data.user.id !== expectedUserId) {
+      return {
+        ok: false,
+        code: 'AUTH_REQUIRED',
+        reason: 'The active account changed. Try again from the current account.',
+      };
+    }
+    return {
+      ok: true,
+      data: {
+        emailConfirmed: Boolean(data.user.email_confirmed_at),
+        id: data.user.id,
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      code: 'AUTH_REQUIRED',
+      reason: 'The active account could not be verified. Sign in again to continue.',
+    };
   }
-  if (!data.user.email_confirmed_at) {
-    return { ok: false, code: 'AUTH_REQUIRED', reason: 'Verify your email before posting.' };
-  }
-  return { ok: true, data: data.user.id };
 }
 
-export async function fetchFollowedIds(): Promise<ActionResult<string[]>> {
+async function authenticatedUserId(expectedUserId?: string): Promise<ActionResult<string>> {
+  const identity = await activeUserIdentity(expectedUserId);
+  if (!identity.ok) return identity;
+  const user = identity.data;
+  if (!user?.emailConfirmed) {
+    return { ok: false, code: 'AUTH_REQUIRED', reason: 'Verify your email before posting.' };
+  }
+  return { ok: true, data: user.id };
+}
+
+export async function fetchFollowedIds(expectedUserId?: string): Promise<ActionResult<string[]>> {
   const client = supabase;
   if (!client) return configurationRequired();
-  const user = await authenticatedUserId();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
 
   try {
@@ -1310,10 +1357,12 @@ export async function fetchFollowedIds(): Promise<ActionResult<string[]>> {
   }
 }
 
-export async function fetchManagedBusinessIds(): Promise<ActionResult<string[]>> {
+export async function fetchManagedBusinessIds(
+  expectedUserId?: string
+): Promise<ActionResult<string[]>> {
   const client = supabase;
   if (!client) return configurationRequired();
-  const user = await authenticatedUserId();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
 
   try {
@@ -1332,7 +1381,11 @@ export async function fetchManagedBusinessIds(): Promise<ActionResult<string[]>>
   }
 }
 
-export async function setFollow(placeId: string, following: boolean): Promise<ActionResult> {
+export async function setFollow(
+  placeId: string,
+  following: boolean,
+  expectedUserId?: string
+): Promise<ActionResult> {
   const client = supabase;
   if (!client) {
     return {
@@ -1341,7 +1394,7 @@ export async function setFollow(placeId: string, following: boolean): Promise<Ac
       reason: 'Live follows are not configured.',
     };
   }
-  const user = await authenticatedUserId();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
 
   try {
@@ -1359,7 +1412,11 @@ export async function setFollow(placeId: string, following: boolean): Promise<Ac
   }
 }
 
-export async function submitReview(placeId: string, input: ReviewInput): Promise<ActionResult> {
+export async function submitReview(
+  placeId: string,
+  input: ReviewInput,
+  expectedUserId?: string
+): Promise<ActionResult> {
   const client = supabase;
   if (!client) {
     return {
@@ -1368,7 +1425,7 @@ export async function submitReview(placeId: string, input: ReviewInput): Promise
       reason: 'Live reviews are not configured.',
     };
   }
-  const user = await authenticatedUserId();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
   if (!uuidPattern.test(placeId)) {
     return { ok: false, code: 'INVALID', reason: 'This business link is invalid.' };
@@ -1410,7 +1467,10 @@ export async function submitReview(placeId: string, input: ReviewInput): Promise
   }
 }
 
-export async function submitOwnerUpdate(input: OwnerUpdateInput): Promise<ActionResult> {
+export async function submitOwnerUpdate(
+  input: OwnerUpdateInput,
+  expectedUserId?: string
+): Promise<ActionResult> {
   const client = supabase;
   if (!client) {
     return {
@@ -1419,7 +1479,7 @@ export async function submitOwnerUpdate(input: OwnerUpdateInput): Promise<Action
       reason: 'Live business updates are not configured.',
     };
   }
-  const user = await authenticatedUserId();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
   if (!uuidPattern.test(input.placeId)) {
     return { ok: false, code: 'INVALID', reason: 'This business link is invalid.' };
@@ -1490,7 +1550,8 @@ export async function uploadBusinessLogo(
 
 export async function updateVenueStatus(
   placeId: string,
-  status: VenueStatus
+  status: VenueStatus,
+  expectedUserId?: string
 ): Promise<ActionResult> {
   const client = supabase;
   if (!client) {
@@ -1500,7 +1561,7 @@ export async function updateVenueStatus(
       reason: 'Live business status is not configured.',
     };
   }
-  const user = await authenticatedUserId();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
 
   try {
@@ -1564,10 +1625,13 @@ export async function submitContentReport(input: {
   }
 }
 
-export async function blockUser(blockedPublicProfileId: string): Promise<ActionResult> {
+export async function blockUser(
+  blockedPublicProfileId: string,
+  expectedUserId?: string
+): Promise<ActionResult> {
   const client = supabase;
   if (!client) return configurationRequired();
-  const user = await authenticatedUserId();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
   if (!uuidPattern.test(blockedPublicProfileId)) {
     return { ok: false, code: 'INVALID', reason: 'This member cannot be blocked.' };

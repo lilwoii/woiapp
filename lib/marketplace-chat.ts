@@ -103,13 +103,25 @@ async function signedUrls(paths: string[]) {
 
 export async function startMarketplaceConversation(
   businessId: string,
+  expectedUserId?: string,
 ): Promise<ActionResult<string>> {
   const client = supabase;
   if (!client) return unavailable();
   if (!uuidPattern.test(businessId)) {
     return { ok: false, code: "INVALID", reason: "Choose a valid business." };
   }
+  if (!expectedUserId) {
+    return { ok: false, code: "AUTH_REQUIRED", reason: "Sign in to start a conversation." };
+  }
   try {
+    const { data: userData, error: userError } = await client.auth.getUser();
+    if (userError || userData.user?.id !== expectedUserId) {
+      return {
+        ok: false,
+        code: "AUTH_REQUIRED",
+        reason: "The active account changed. Try again from the current account.",
+      };
+    }
     const { data, error } = await client.rpc("start_marketplace_conversation", {
       target_business_id: businessId,
       idempotency_key: chatIdempotencyKey("start"),

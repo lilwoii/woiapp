@@ -48,6 +48,11 @@ const currency = new Intl.NumberFormat('en-US', {
 
 export default function PlaceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { scopeKey } = useMarketplaceStore();
+  return <ScopedPlaceDetailScreen id={id} key={`${scopeKey}:place:${id ?? ''}`} />;
+}
+
+function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   const auth = useAuth();
   const {
     addReview,
@@ -71,6 +76,7 @@ export default function PlaceDetailScreen() {
   const [moreReviewsLoading, setMoreReviewsLoading] = useState(false);
   const [chatAvailable, setChatAvailable] = useState(false);
   const [chatStarting, setChatStarting] = useState(false);
+  const mounted = useRef(true);
   const reviewIntent = useRef<{ fingerprint: string; key: string } | null>(null);
   const [listingLoading, setListingLoading] = useState(
     !place || (auth.isConfigured && !place.detailsLoaded)
@@ -79,6 +85,13 @@ export default function PlaceDetailScreen() {
   const [reviewMessage, setReviewMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
     null
   );
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -194,12 +207,14 @@ export default function PlaceDetailScreen() {
   };
 
   const openChat = async () => {
-    if (auth.status !== 'authenticated') {
+    const expectedUserId = auth.status === 'authenticated' ? auth.account?.id : null;
+    if (!expectedUserId) {
       router.push('/auth');
       return;
     }
     setChatStarting(true);
-    const result = await startMarketplaceConversation(place.id);
+    const result = await startMarketplaceConversation(place.id, expectedUserId);
+    if (!mounted.current) return;
     setChatStarting(false);
     if (!result.ok || !result.data) {
       showMessage('Chat unavailable', result.ok ? 'This conversation could not be opened.' : result.reason);
@@ -215,6 +230,7 @@ export default function PlaceDetailScreen() {
         message: 'Blocking is tied to your account so it applies across devices.',
         confirmLabel: 'Sign in',
       });
+      if (!mounted.current) return;
       if (continueToAuth) router.push('/auth');
       return;
     }
@@ -225,9 +241,10 @@ export default function PlaceDetailScreen() {
       confirmLabel: 'Block member',
       destructive: true,
     });
-    if (!confirmed) return;
+    if (!mounted.current || !confirmed) return;
 
-    const result = await blockUser(authorId);
+    const result = await blockUser(authorId, auth.account?.id);
+    if (!mounted.current) return;
     if (!result.ok) {
       showMessage('Could not block member', result.reason);
       return;
@@ -238,6 +255,7 @@ export default function PlaceDetailScreen() {
 
   const handleFollow = async () => {
     const result = await toggleFollow(place.id);
+    if (!mounted.current) return;
     if (!result.ok) {
       if (result.code === 'AUTH_REQUIRED') {
         const confirmed = await confirmAction({
@@ -245,6 +263,7 @@ export default function PlaceDetailScreen() {
           message: result.reason,
           confirmLabel: 'Sign in',
         });
+        if (!mounted.current) return;
         if (confirmed) router.push('/auth');
       } else {
         showMessage('Could not update this follow', result.reason);
@@ -267,6 +286,7 @@ export default function PlaceDetailScreen() {
     }
 
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!mounted.current) return;
     if (!permission.granted) {
       showMessage('Photo access needed', 'Allow photo access to attach images to your review.');
       return;
@@ -278,7 +298,7 @@ export default function PlaceDetailScreen() {
       quality: 0.8,
     });
 
-    if (result.canceled || !result.assets[0]?.uri) return;
+    if (!mounted.current || result.canceled || !result.assets[0]?.uri) return;
     const asset = result.assets[0];
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (asset.mimeType && !allowedTypes.includes(asset.mimeType)) {
@@ -330,6 +350,7 @@ export default function PlaceDetailScreen() {
       photoUploads: reviewPhotos,
       idempotencyKey: reviewIntent.current.key,
     });
+    if (!mounted.current) return;
     setReviewSubmitting(false);
     if (!result.ok) {
       setReviewMessage({ type: 'error', text: result.reason });
@@ -339,6 +360,7 @@ export default function PlaceDetailScreen() {
           message: result.reason,
           confirmLabel: 'Sign in',
         });
+        if (!mounted.current) return;
         if (confirmed) router.push('/auth');
       }
       return;
@@ -358,6 +380,7 @@ export default function PlaceDetailScreen() {
     if (moreReviewsLoading) return;
     setMoreReviewsLoading(true);
     const result = await loadMoreReviews(place.id);
+    if (!mounted.current) return;
     setMoreReviewsLoading(false);
     if (!result.ok) showMessage('Reviews could not load', result.reason);
   };

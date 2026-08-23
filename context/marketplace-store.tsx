@@ -23,6 +23,11 @@ import {
   submitReview,
   updateVenueStatus,
 } from '@/lib/marketplace-api';
+import {
+  createMarketplaceScopeGuard,
+  MarketplaceRequestToken,
+  resolveMarketplaceScope,
+} from '@/lib/marketplace-scope';
 import { checkProfessionalText } from '@/lib/moderation';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 import {
@@ -39,6 +44,7 @@ type MarketplaceStoreValue = {
   places: Place[];
   followedIds: string[];
   account: AccountSummary;
+  scopeKey: string;
   syncStatus: SyncStatus;
   syncMessage: string;
   hasMoreResults: boolean;
@@ -61,6 +67,23 @@ type MarketplaceStoreValue = {
   }) => Promise<ActionResult>;
 };
 
+type MarketplaceStoreState = {
+  scopeKey: string;
+  places: Place[];
+  followedIds: string[];
+  syncStatus: SyncStatus;
+  syncMessage: string;
+  hasMoreResults: boolean;
+  loadingMoreResults: boolean;
+  pendingPlaceIds: string[];
+  managedPlaceIds: string[];
+};
+
+type ActiveRefresh = {
+  request: Promise<ActionResult<MarketplacePage>>;
+  token: MarketplaceRequestToken;
+};
+
 const MarketplaceStoreContext = createContext<MarketplaceStoreValue | null>(null);
 
 const guestAccount: AccountSummary = {
@@ -77,26 +100,60 @@ const liveServicesRequired: Extract<ActionResult, { ok: false }> = {
   reason: 'Live Spottr services are not configured for this build.',
 };
 
+const marketplaceSessionChanged: Extract<ActionResult, { ok: false }> = {
+  ok: false,
+  code: 'AUTH_REQUIRED',
+  reason: 'The active account changed. Try again from the current account.',
+};
+
+function createMarketplaceStoreState(scopeKey: string): MarketplaceStoreState {
+  return {
+    scopeKey,
+    places: [],
+    followedIds: [],
+    syncStatus: isSupabaseConfigured ? 'idle' : 'error',
+    syncMessage: isSupabaseConfigured
+      ? 'Choose your location, city, or ZIP to load nearby listings.'
+      : 'Live Spottr services are not configured. Listings and account changes are unavailable.',
+    hasMoreResults: false,
+    loadingMoreResults: false,
+    pendingPlaceIds: [],
+    managedPlaceIds: [],
+  };
+}
+
+function sameRequest(left: MarketplaceRequestToken | null, right: MarketplaceRequestToken) {
+  return left?.epoch === right.epoch &&
+    left.lane === right.lane &&
+    left.scopeKey === right.scopeKey &&
+    left.sequence === right.sequence;
+}
+
 export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   const auth = useAuth();
-  const [places, setPlaces] = useState<Place[]>([]);
-  const [followedIds, setFollowedIds] = useState<string[]>([]);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>(
-    isSupabaseConfigured ? 'idle' : 'error'
-  );
-  const [syncMessage, setSyncMessage] = useState(
-    isSupabaseConfigured
-      ? 'Choose your location, city, or ZIP to load nearby listings.'
-      : 'Live Spottr services are not configured. Listings and account changes are unavailable.'
-  );
-  const [pendingPlaceIds, setPendingPlaceIds] = useState<string[]>([]);
-  const [managedPlaceIds, setManagedPlaceIds] = useState<string[]>([]);
-  const [hasMoreResults, setHasMoreResults] = useState(false);
-  const [loadingMoreResults, setLoadingMoreResults] = useState(false);
-  const activeRefresh = useRef<Promise<ActionResult<MarketplacePage>> | null>(null);
+  const marketplaceScope = resolveMarketplaceScope(auth.status, auth.account?.id);
+  const scopeKey = marketplaceScope.key;
+  const expectedUserId = marketplaceScope.authenticatedUserId;
+  const [requestGuard] = useState(() => createMarketplaceScopeGuard(scopeKey));
+  const [storeState, setStoreState] = useState(() => createMarketplaceStoreState(scopeKey));
+  const fallbackState = useMemo(() => createMarketplaceStoreState(scopeKey), [scopeKey]);
+  const visibleState = storeState.scopeKey === scopeKey ? storeState : fallbackState;
+  const {
+    places,
+    followedIds,
+    syncStatus,
+    syncMessage,
+    hasMoreResults,
+    loadingMoreResults,
+    pendingPlaceIds,
+    managedPlaceIds,
+  } = visibleState;
+  const activeRefresh = useRef<ActiveRefresh | null>(null);
+  const activePagination = useRef<MarketplaceRequestToken | null>(null);
   const nextResultOffset = useRef(0);
   const managedPlaceIdsRef = useRef<string[]>([]);
   const followedIdsRef = useRef<string[]>([]);
+  const pendingPlaceIdsRef = useRef(new Set<string>());
   const lastOrigin = useRef<{
     latitude: number;
     longitude: number;
@@ -104,189 +161,310 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   } | undefined>(undefined);
   const lastArea = useRef<string | undefined>(undefined);
 
-  const refresh = useCallback(async (origin?: {
-    latitude: number;
-    longitude: number;
-    radiusMeters?: number;
-  }): Promise<ActionResult> => {
-    if (!isSupabaseConfigured) {
-      setPlaces([]);
-      setSyncStatus('error');
-      setSyncMessage(liveServicesRequired.reason);
-      setHasMoreResults(false);
-      nextResultOffset.current = 0;
-      return liveServicesRequired;
-    }
-    if (origin) {
-      lastOrigin.current = origin;
-      lastArea.current = undefined;
-    }
-    if (activeRefresh.current) await activeRefresh.current;
-
-    const includeBusinessIds = [
-      ...new Set([...managedPlaceIdsRef.current, ...followedIdsRef.current]),
-    ];
-    const activeOrigin = origin ?? lastOrigin.current;
-    if (!lastArea.current && !activeOrigin && !includeBusinessIds.length) {
-      setPlaces([]);
-      setHasMoreResults(false);
-      nextResultOffset.current = 0;
-      setSyncStatus('idle');
-      setSyncMessage('Choose your location, city, or ZIP to load nearby listings.');
-      return { ok: true };
-    }
-
-    setSyncStatus('syncing');
-    setSyncMessage('Refreshing live listings…');
-    const request = lastArea.current && !origin
-      ? searchMarketplacePlaces(lastArea.current, {
-          includeBusinessIds,
-          managedBusinessIds: managedPlaceIdsRef.current,
-        })
-      : fetchMarketplacePlaces({
-          includeBusinessIds,
-          managedBusinessIds: managedPlaceIdsRef.current,
-        onlyIncludedBusinesses: !activeOrigin,
-        origin: activeOrigin,
-        resultLimit: 100,
-        resultOffset: 0,
+  const commitStore = useCallback(
+    (
+      token: MarketplaceRequestToken,
+      update: (current: MarketplaceStoreState) => MarketplaceStoreState
+    ) => {
+      if (!requestGuard.isCurrent(token)) return false;
+      setStoreState((current) => {
+        if (current.scopeKey !== token.scopeKey || !requestGuard.isCurrent(token)) {
+          return current;
+        }
+        return update(current);
       });
-    activeRefresh.current = request;
-    const result = await request;
-    if (activeRefresh.current === request) activeRefresh.current = null;
-    if (!result.ok) {
-      setSyncStatus('error');
-      setSyncMessage(result.reason);
-      return result;
-    }
+      return true;
+    },
+    [requestGuard]
+  );
 
-    setPlaces(result.data?.places ?? []);
-    setHasMoreResults(result.data?.hasMore ?? false);
-    nextResultOffset.current = result.data?.nextOffset ?? 0;
-    setSyncStatus('live');
-    setSyncMessage('Live owner and community data is connected.');
-    return { ok: true };
-  }, []);
-
-  const searchArea = useCallback(async (searchText: string): Promise<ActionResult> => {
-    if (!isSupabaseConfigured) {
-      setPlaces([]);
-      setSyncStatus('error');
-      setSyncMessage(liveServicesRequired.reason);
-      return liveServicesRequired;
-    }
-
-    const clean = searchText.replace(/\s+/g, ' ').trim();
-    lastArea.current = clean;
+  useEffect(() => {
+    requestGuard.activate(scopeKey);
+    activeRefresh.current = null;
+    activePagination.current = null;
+    nextResultOffset.current = 0;
+    managedPlaceIdsRef.current = [];
+    followedIdsRef.current = [];
+    pendingPlaceIdsRef.current.clear();
     lastOrigin.current = undefined;
-    return refresh();
-  }, [refresh]);
+    lastArea.current = undefined;
+
+    const timer = setTimeout(() => {
+      setStoreState(createMarketplaceStoreState(scopeKey));
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [requestGuard, scopeKey]);
+
+  const refresh = useCallback(
+    async (origin?: {
+      latitude: number;
+      longitude: number;
+      radiusMeters?: number;
+    }): Promise<ActionResult> => {
+      const priorRefresh = activeRefresh.current;
+      const token = requestGuard.begin(scopeKey, 'directory');
+      if (!token) return marketplaceSessionChanged;
+
+      if (!isSupabaseConfigured) {
+        commitStore(token, (current) => ({
+          ...current,
+          places: [],
+          syncStatus: 'error',
+          syncMessage: liveServicesRequired.reason,
+          hasMoreResults: false,
+        }));
+        nextResultOffset.current = 0;
+        return liveServicesRequired;
+      }
+      if (origin) {
+        lastOrigin.current = origin;
+        lastArea.current = undefined;
+      }
+      if (priorRefresh?.token.scopeKey === token.scopeKey) {
+        await priorRefresh.request;
+      }
+      if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
+
+      const includeBusinessIds = [
+        ...new Set([...managedPlaceIdsRef.current, ...followedIdsRef.current]),
+      ];
+      const activeOrigin = origin ?? lastOrigin.current;
+      if (!lastArea.current && !activeOrigin && !includeBusinessIds.length) {
+        nextResultOffset.current = 0;
+        commitStore(token, (current) => ({
+          ...current,
+          places: [],
+          hasMoreResults: false,
+          syncStatus: 'idle',
+          syncMessage: 'Choose your location, city, or ZIP to load nearby listings.',
+        }));
+        return { ok: true };
+      }
+
+      commitStore(token, (current) => ({
+        ...current,
+        syncStatus: 'syncing',
+        syncMessage: 'Refreshing live listings…',
+      }));
+      const request = lastArea.current && !origin
+        ? searchMarketplacePlaces(lastArea.current, {
+            expectedUserId: expectedUserId ?? undefined,
+            includeBusinessIds,
+            managedBusinessIds: managedPlaceIdsRef.current,
+          })
+        : fetchMarketplacePlaces({
+            expectedUserId: expectedUserId ?? undefined,
+            includeBusinessIds,
+            managedBusinessIds: managedPlaceIdsRef.current,
+            onlyIncludedBusinesses: !activeOrigin,
+            origin: activeOrigin,
+            resultLimit: 100,
+            resultOffset: 0,
+          });
+      activeRefresh.current = { request, token };
+      const result = await request;
+      if (sameRequest(activeRefresh.current?.token ?? null, token)) {
+        activeRefresh.current = null;
+      }
+      if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
+      if (!result.ok) {
+        commitStore(token, (current) => ({
+          ...current,
+          syncStatus: 'error',
+          syncMessage: result.reason,
+        }));
+        return result;
+      }
+
+      nextResultOffset.current = result.data?.nextOffset ?? 0;
+      commitStore(token, (current) => ({
+        ...current,
+        places: result.data?.places ?? [],
+        hasMoreResults: result.data?.hasMore ?? false,
+        syncStatus: 'live',
+        syncMessage: 'Live owner and community data is connected.',
+      }));
+      return { ok: true };
+    },
+    [commitStore, expectedUserId, requestGuard, scopeKey]
+  );
+
+  const searchArea = useCallback(
+    async (searchText: string): Promise<ActionResult> => {
+      const token = requestGuard.begin(scopeKey, 'search-intent');
+      if (!token) return marketplaceSessionChanged;
+      if (!isSupabaseConfigured) {
+        commitStore(token, (current) => ({
+          ...current,
+          places: [],
+          syncStatus: 'error',
+          syncMessage: liveServicesRequired.reason,
+          hasMoreResults: false,
+        }));
+        return liveServicesRequired;
+      }
+
+      const clean = searchText.replace(/\s+/g, ' ').trim();
+      lastArea.current = clean;
+      lastOrigin.current = undefined;
+      return refresh();
+    },
+    [commitStore, refresh, requestGuard, scopeKey]
+  );
 
   const loadMoreResults = useCallback(async (): Promise<ActionResult> => {
-    if (!isSupabaseConfigured || loadingMoreResults || !hasMoreResults) {
+    if (
+      !isSupabaseConfigured ||
+      loadingMoreResults ||
+      syncStatus === 'syncing' ||
+      !hasMoreResults
+    ) {
       return { ok: true };
     }
+    const currentPagination = activePagination.current;
+    if (currentPagination && requestGuard.isCurrent(currentPagination)) {
+      return { ok: true };
+    }
+
+    const token = requestGuard.begin(scopeKey, 'directory');
+    if (!token) return marketplaceSessionChanged;
     const activeOrigin = lastOrigin.current;
     const activeArea = lastArea.current;
     if (!activeOrigin && !activeArea) return { ok: true };
 
-    setLoadingMoreResults(true);
+    activePagination.current = token;
+    commitStore(token, (current) => ({ ...current, loadingMoreResults: true }));
     const includeBusinessIds = [
       ...new Set([...managedPlaceIdsRef.current, ...followedIdsRef.current]),
     ];
     const result = activeArea
       ? await searchMarketplacePlaces(activeArea, {
+          expectedUserId: expectedUserId ?? undefined,
           includeBusinessIds,
           managedBusinessIds: managedPlaceIdsRef.current,
           resultLimit: 100,
           resultOffset: nextResultOffset.current,
         })
       : await fetchMarketplacePlaces({
+          expectedUserId: expectedUserId ?? undefined,
           includeBusinessIds,
           managedBusinessIds: managedPlaceIdsRef.current,
           origin: activeOrigin,
           resultLimit: 100,
           resultOffset: nextResultOffset.current,
         });
-    setLoadingMoreResults(false);
+    if (sameRequest(activePagination.current, token)) activePagination.current = null;
+    if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
     if (!result.ok) {
-      setSyncStatus('error');
-      setSyncMessage(result.reason);
+      commitStore(token, (current) => ({
+        ...current,
+        loadingMoreResults: false,
+        syncStatus: 'error',
+        syncMessage: result.reason,
+      }));
       return result;
     }
 
-    setPlaces((current) => {
-      const byId = new Map(current.map((place) => [place.id, place]));
-      for (const place of result.data?.places ?? []) byId.set(place.id, place);
-      return [...byId.values()];
-    });
-    setHasMoreResults(result.data?.hasMore ?? false);
     nextResultOffset.current = result.data?.nextOffset ?? nextResultOffset.current;
+    commitStore(token, (current) => {
+      const byId = new Map(current.places.map((place) => [place.id, place]));
+      for (const place of result.data?.places ?? []) byId.set(place.id, place);
+      return {
+        ...current,
+        places: [...byId.values()],
+        hasMoreResults: result.data?.hasMore ?? false,
+        loadingMoreResults: false,
+      };
+    });
     return { ok: true };
-  }, [hasMoreResults, loadingMoreResults]);
+  }, [
+    commitStore,
+    expectedUserId,
+    hasMoreResults,
+    loadingMoreResults,
+    requestGuard,
+    scopeKey,
+    syncStatus,
+  ]);
 
   const refreshAccess = useCallback(async (): Promise<ActionResult> => {
+    const token = requestGuard.begin(scopeKey, 'access');
+    if (!token) return marketplaceSessionChanged;
     if (!isSupabaseConfigured) return liveServicesRequired;
-    if (auth.status !== 'authenticated') {
+    if (!expectedUserId) {
       managedPlaceIdsRef.current = [];
       followedIdsRef.current = [];
-      setManagedPlaceIds([]);
-      setFollowedIds([]);
+      commitStore(token, (current) => ({
+        ...current,
+        managedPlaceIds: [],
+        followedIds: [],
+      }));
       return { ok: false, code: 'AUTH_REQUIRED', reason: 'Sign in to continue.' };
     }
 
     const [followsResult, membershipsResult] = await Promise.all([
-      fetchFollowedIds(),
-      fetchManagedBusinessIds(),
+      fetchFollowedIds(expectedUserId),
+      fetchManagedBusinessIds(expectedUserId),
     ]);
+    if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
     if (!followsResult.ok) return followsResult;
     if (!membershipsResult.ok) return membershipsResult;
 
     const followed = followsResult.data ?? [];
-    followedIdsRef.current = followed;
-    setFollowedIds(followed);
     const ids = membershipsResult.data ?? [];
+    followedIdsRef.current = followed;
     managedPlaceIdsRef.current = ids;
-    setManagedPlaceIds(ids);
+    commitStore(token, (current) => ({
+      ...current,
+      followedIds: followed,
+      managedPlaceIds: ids,
+    }));
     return refresh();
-  }, [auth.status, refresh]);
+  }, [commitStore, expectedUserId, refresh, requestGuard, scopeKey]);
 
   const ensurePlace = useCallback(
     async (placeId: string): Promise<ActionResult> => {
       const existingPlace = places.find((place) => place.id === placeId);
-      if (existingPlace?.detailsLoaded) {
-        return { ok: true };
-      }
-      if (!isSupabaseConfigured) {
-        return liveServicesRequired;
-      }
+      if (existingPlace?.detailsLoaded) return { ok: true };
+      if (!isSupabaseConfigured) return liveServicesRequired;
 
-      const result = await fetchMarketplacePlaceById(placeId);
+      const token = requestGuard.begin(scopeKey, `place:${placeId}`);
+      if (!token) return marketplaceSessionChanged;
+      const result = await fetchMarketplacePlaceById(placeId, expectedUserId ?? undefined);
+      if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
       if (!result.ok) {
         return { ok: false, code: result.code, reason: result.reason };
       }
       if (!result.data) {
         return { ok: false, code: 'NOT_FOUND', reason: 'This listing is unavailable.' };
       }
-      setPlaces((current) => [
-        result.data as Place,
-        ...current.filter((place) => place.id !== placeId),
-      ]);
+      const loadedPlace = result.data;
+      commitStore(token, (current) => ({
+        ...current,
+        places: [loadedPlace, ...current.places.filter((place) => place.id !== placeId)],
+      }));
       return { ok: true };
     },
-    [places]
+    [commitStore, expectedUserId, places, requestGuard, scopeKey]
   );
 
   const loadMoreReviews = useCallback(
     async (placeId: string): Promise<ActionResult> => {
       const place = places.find((entry) => entry.id === placeId);
-      if (!place || !isSupabaseConfigured || !place.hasMoreReviews) {
-        return { ok: true };
-      }
-      const result = await fetchBusinessReviewsPage(placeId, place.reviews.length);
+      if (!place || !isSupabaseConfigured || !place.hasMoreReviews) return { ok: true };
+
+      const token = requestGuard.begin(scopeKey, `reviews:${placeId}`);
+      if (!token) return marketplaceSessionChanged;
+      const result = await fetchBusinessReviewsPage(
+        placeId,
+        place.reviews.length,
+        expectedUserId ?? undefined
+      );
+      if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
       if (!result.ok) return result;
-      setPlaces((current) =>
-        current.map((entry) => {
+      commitStore(token, (current) => ({
+        ...current,
+        places: current.places.map((entry) => {
           if (entry.id !== placeId) return entry;
           const byId = new Map(entry.reviews.map((review) => [review.id, review]));
           for (const review of result.data?.reviews ?? []) byId.set(review.id, review);
@@ -295,27 +473,20 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
             reviews: [...byId.values()],
             hasMoreReviews: result.data?.hasMore ?? false,
           };
-        })
-      );
+        }),
+      }));
       return { ok: true };
     },
-    [places]
+    [commitStore, expectedUserId, places, requestGuard, scopeKey]
   );
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (!isSupabaseConfigured || auth.status !== 'authenticated') {
-        if (!isSupabaseConfigured) return;
-        setFollowedIds([]);
-        managedPlaceIdsRef.current = [];
-        setManagedPlaceIds([]);
-        return;
-      }
-
+      if (!isSupabaseConfigured || !expectedUserId) return;
       void refreshAccess();
     }, 0);
     return () => clearTimeout(timer);
-  }, [auth.account?.id, auth.status, refreshAccess]);
+  }, [expectedUserId, refreshAccess, scopeKey]);
 
   useEffect(() => {
     const client = supabase;
@@ -343,61 +514,122 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   const toggleFollow = useCallback(
     async (placeId: string): Promise<ActionResult> => {
       if (!isSupabaseConfigured) return liveServicesRequired;
-      if (pendingPlaceIds.includes(placeId)) {
+      if (!expectedUserId) {
+        return { ok: false, code: 'AUTH_REQUIRED', reason: 'Sign in to save places.' };
+      }
+      if (pendingPlaceIdsRef.current.has(placeId)) {
         return { ok: false, code: 'UNKNOWN', reason: 'This change is already in progress.' };
       }
-      const wasFollowing = followedIds.includes(placeId);
+      const token = requestGuard.begin(scopeKey, `follow:${placeId}`);
+      if (!token) return marketplaceSessionChanged;
+
+      const originalIds = followedIdsRef.current;
+      const wasFollowing = originalIds.includes(placeId);
       const nextFollowing = !wasFollowing;
       const nextIds = nextFollowing
-        ? [...new Set([...followedIds, placeId])]
-        : followedIds.filter((id) => id !== placeId);
-      setPendingPlaceIds((current) => [...current, placeId]);
+        ? [...new Set([...originalIds, placeId])]
+        : originalIds.filter((id) => id !== placeId);
+      pendingPlaceIdsRef.current.add(placeId);
       followedIdsRef.current = nextIds;
-      setFollowedIds(nextIds);
+      commitStore(token, (current) => ({
+        ...current,
+        pendingPlaceIds: [...new Set([...current.pendingPlaceIds, placeId])],
+        followedIds: nextIds,
+      }));
 
-      const result = await setFollow(placeId, nextFollowing);
-      if (!result.ok) {
-        const rollbackIds = wasFollowing
-          ? [...new Set([...followedIds, placeId])]
-          : followedIds.filter((id) => id !== placeId);
-        followedIdsRef.current = rollbackIds;
-        setFollowedIds(rollbackIds);
+      let result: ActionResult;
+      try {
+        result = await setFollow(placeId, nextFollowing, expectedUserId);
+      } catch {
+        result = {
+          ok: false,
+          code: 'UNKNOWN',
+          reason: nextFollowing
+            ? 'This place could not be followed.'
+            : 'This place could not be unfollowed.',
+        };
       }
-      setPendingPlaceIds((current) => current.filter((id) => id !== placeId));
+      if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
+      if (!result.ok) followedIdsRef.current = originalIds;
+      pendingPlaceIdsRef.current.delete(placeId);
+      commitStore(token, (current) => ({
+        ...current,
+        followedIds: result.ok ? nextIds : originalIds,
+        pendingPlaceIds: current.pendingPlaceIds.filter((id) => id !== placeId),
+      }));
       return result;
     },
-    [followedIds, pendingPlaceIds]
+    [commitStore, expectedUserId, requestGuard, scopeKey]
   );
 
-  const addReview = useCallback(async (placeId: string, input: ReviewInput): Promise<ActionResult> => {
-    const moderation = checkProfessionalText(input.comment, 500);
-    if (!moderation.ok) return moderation;
+  const addReview = useCallback(
+    async (placeId: string, input: ReviewInput): Promise<ActionResult> => {
+      const moderation = checkProfessionalText(input.comment, 500);
+      if (!moderation.ok) return moderation;
+      if (!places.some((entry) => entry.id === placeId)) {
+        return { ok: false, reason: 'This place is no longer available.' };
+      }
+      if (!isSupabaseConfigured) return liveServicesRequired;
+      if (!expectedUserId) {
+        return { ok: false, code: 'AUTH_REQUIRED', reason: 'Sign in to review places.' };
+      }
 
-    const place = places.find((entry) => entry.id === placeId);
-    if (!place) return { ok: false, reason: 'This place is no longer available.' };
+      const token = requestGuard.begin(scopeKey, `review-submit:${placeId}`);
+      if (!token) return marketplaceSessionChanged;
+      const result = await submitReview(
+        placeId,
+        { ...input, comment: moderation.clean },
+        expectedUserId
+      );
+      return requestGuard.isCurrent(token) ? result : marketplaceSessionChanged;
+    },
+    [expectedUserId, places, requestGuard, scopeKey]
+  );
 
-    if (!isSupabaseConfigured) return liveServicesRequired;
-    return submitReview(placeId, { ...input, comment: moderation.clean });
-  }, [places]);
+  const publishUpdate = useCallback(
+    async (input: OwnerUpdateInput): Promise<ActionResult> => {
+      const moderation = checkProfessionalText(input.message, 120);
+      if (!moderation.ok) return moderation;
+      if (!isSupabaseConfigured) return liveServicesRequired;
+      if (!expectedUserId) {
+        return { ok: false, code: 'AUTH_REQUIRED', reason: 'Sign in to publish updates.' };
+      }
 
-  const publishUpdate = useCallback(async (input: OwnerUpdateInput): Promise<ActionResult> => {
-    const moderation = checkProfessionalText(input.message, 120);
-    if (!moderation.ok) return moderation;
+      const token = requestGuard.begin(scopeKey, `owner-update:${input.placeId}`);
+      if (!token) return marketplaceSessionChanged;
+      const result = await submitOwnerUpdate(
+        { ...input, message: moderation.clean },
+        expectedUserId
+      );
+      return requestGuard.isCurrent(token) ? result : marketplaceSessionChanged;
+    },
+    [expectedUserId, requestGuard, scopeKey]
+  );
 
-    if (!isSupabaseConfigured) return liveServicesRequired;
-    return submitOwnerUpdate({ ...input, message: moderation.clean });
-  }, []);
+  const setVenueStatus = useCallback(
+    async (placeId: string, status: VenueStatus): Promise<ActionResult> => {
+      if (!isSupabaseConfigured) return liveServicesRequired;
+      if (!expectedUserId) {
+        return { ok: false, code: 'AUTH_REQUIRED', reason: 'Sign in to change live status.' };
+      }
 
-  const setVenueStatus = useCallback(async (placeId: string, status: VenueStatus): Promise<ActionResult> => {
-    if (!isSupabaseConfigured) return liveServicesRequired;
-    return updateVenueStatus(placeId, status);
-  }, []);
+      const token = requestGuard.begin(scopeKey, `venue-status:${placeId}`);
+      if (!token) return marketplaceSessionChanged;
+      const result = await updateVenueStatus(placeId, status, expectedUserId);
+      return requestGuard.isCurrent(token) ? result : marketplaceSessionChanged;
+    },
+    [expectedUserId, requestGuard, scopeKey]
+  );
 
   const value = useMemo(
     () => ({
       places,
       followedIds,
-      account: auth.account ?? guestAccount,
+      account:
+        expectedUserId && auth.account?.id === expectedUserId
+          ? (auth.account ?? guestAccount)
+          : guestAccount,
+      scopeKey,
       syncStatus,
       syncMessage,
       hasMoreResults,
@@ -418,6 +650,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
     [
       addReview,
       auth.account,
+      expectedUserId,
       followedIds,
       hasMoreResults,
       ensurePlace,
@@ -430,6 +663,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       loadMoreResults,
       loadMoreReviews,
       loadingMoreResults,
+      scopeKey,
       searchArea,
       setVenueStatus,
       syncMessage,

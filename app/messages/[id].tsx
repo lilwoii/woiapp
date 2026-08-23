@@ -459,6 +459,8 @@ export default function ConversationScreen() {
   const blockCounterpart = async () => {
     const counterpart = conversation?.counterpart;
     if (!counterpart?.profileId) return;
+    const expectedUserId = auth.status === "authenticated" ? auth.account?.id : null;
+    if (!expectedUserId) return;
     const confirmed = await confirmAction({
       title: `Block ${counterpart.name}?`,
       message:
@@ -467,7 +469,7 @@ export default function ConversationScreen() {
       destructive: true,
     });
     if (!confirmed) return;
-    const result = await blockUser(counterpart.profileId);
+    const result = await blockUser(counterpart.profileId, expectedUserId);
     if (result.ok) router.replace("/messages" as never);
     else showMessage("Could not block member", result.reason);
   };

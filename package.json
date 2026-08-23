@@ -113,6 +113,7 @@
       "lib/chat-safety.ts",
       "lib/errors.ts",
       "lib/discovery-filters.ts",
+      "lib/marketplace-scope.ts",
       "lib/ordering-domain.ts"
     ],
     "coverageThreshold": {
