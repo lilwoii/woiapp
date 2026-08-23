@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -93,6 +93,10 @@ function deadlineTime(value: string) {
   }
 }
 
+function currentTimeMs() {
+  return Date.now();
+}
+
 function optionIdsForItem(selections: SelectionState, item: ShadowOrderMenuItem) {
   return item.optionGroups.flatMap(
     (group) => selections[item.itemVersionId]?.[group.optionGroupId] ?? []
@@ -149,11 +153,35 @@ function GateScreen({
   );
 }
 
+type PickupOrderSessionProps = {
+  auth: ReturnType<typeof useAuth>;
+  placeId?: string;
+  secureSession: boolean;
+};
+
 export default function PickupOrderScreen() {
   const params = useLocalSearchParams<{ id?: string | string[] }>();
-  const insets = useSafeAreaInsets();
   const placeId = Array.isArray(params.id) ? params.id[0] : params.id;
   const auth = useAuth();
+
+  const secureSession =
+    auth.status === 'authenticated' &&
+    auth.securityStatus === 'ready' &&
+    auth.assuranceLevel === 'aal2';
+  const sessionKey = `${auth.account?.id ?? 'anonymous'}:${placeId ?? 'missing'}:${secureSession ? 'secure' : 'unverified'}`;
+
+  return (
+    <PickupOrderSession
+      key={sessionKey}
+      auth={auth}
+      placeId={placeId}
+      secureSession={secureSession}
+    />
+  );
+}
+
+function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSessionProps) {
+  const insets = useSafeAreaInsets();
   const { ensurePlace, places } = useMarketplaceStore();
   const place = places.find((candidate) => candidate.id === placeId);
   const [menu, setMenu] = useState<ShadowOrderableMenu | null>(null);
@@ -166,43 +194,24 @@ export default function PickupOrderScreen() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatus>('checking');
   const [recoveryNonce, setRecoveryNonce] = useState(0);
-  const [nowMs, setNowMs] = useState(Date.now());
+  const [nowMs, setNowMs] = useState(() => currentTimeMs());
   const quoteAttempt = useRef<ShadowQuoteAttempt | null>(null);
   const placementAttempt = useRef<ShadowPlacementAttempt | null>(null);
   const cancellationAttempt = useRef<ShadowCancellationAttempt | null>(null);
   const recoveryAttempted = useRef<string | null>(null);
   const requestGeneration = useRef(0);
-  const menuEntrance = useRef(new Animated.Value(0)).current;
-  const quoteEntrance = useRef(new Animated.Value(0)).current;
-  const receiptEntrance = useRef(new Animated.Value(0)).current;
+  const [menuEntrance] = useState(() => new Animated.Value(0));
+  const [quoteEntrance] = useState(() => new Animated.Value(0));
+  const [receiptEntrance] = useState(() => new Animated.Value(0));
   const [reduceMotion, setReduceMotion] = useState(false);
 
-  const secureSession =
-    auth.status === 'authenticated' &&
-    auth.securityStatus === 'ready' &&
-    auth.assuranceLevel === 'aal2';
-
-  useLayoutEffect(() => {
+  useEffect(() => {
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
-    setMenu(null);
-    setQuantities({});
-    setSelections({});
-    setSelectedWindowId('');
-    setQuote(null);
-    setReceipt(null);
-    setBusy(null);
-    setNotice(null);
-    setRecoveryStatus('checking');
-    setNowMs(Date.now());
-    quoteAttempt.current = null;
-    placementAttempt.current = null;
-    cancellationAttempt.current = null;
-    recoveryAttempted.current = null;
     return () => {
       if (requestGeneration.current === generation) requestGeneration.current += 1;
     };
-  }, [auth.account?.id, placeId, secureSession]);
+  }, []);
 
   useEffect(() => {
     if (!placeId || place) return;
@@ -263,8 +272,6 @@ export default function PickupOrderScreen() {
     recoveryAttempted.current = attemptScope;
     const generation = requestGeneration.current;
     let active = true;
-    setRecoveryStatus('checking');
-
     void (async () => {
       try {
         const recovery = await loadShadowOrderingRecovery(accountId, placeId);
@@ -336,7 +343,7 @@ export default function PickupOrderScreen() {
 
   useEffect(() => {
     if (!quote || receipt) return;
-    const timer = setInterval(() => setNowMs(Date.now()), 15_000);
+    const timer = setInterval(() => setNowMs(currentTimeMs()), 15_000);
     return () => clearInterval(timer);
   }, [quote, receipt]);
 
@@ -512,7 +519,7 @@ export default function PickupOrderScreen() {
         return;
       }
       setQuote(result.data);
-      setNowMs(Date.now());
+      setNowMs(currentTimeMs());
       setNotice({
         tone: 'success',
         text: 'Server quote locked. Review it before placing the staff test.',
