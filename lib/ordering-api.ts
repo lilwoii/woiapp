@@ -19,6 +19,7 @@ import type {
 
 type UnknownRow = Record<string, unknown>;
 type ErrorLike = { code?: string; message?: string; status?: number };
+type OrderingFailureResult = Extract<ActionResult<never>, { ok: false }>;
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -425,7 +426,7 @@ export function mapCancelledShadowOrderReceipt(
 
 function newIdempotencyKey(scope: 'cancel' | 'place' | 'quote') {
   const cryptoApi = globalThis.crypto;
-  let nonce = cryptoApi?.randomUUID?.();
+  let nonce: string | undefined = cryptoApi?.randomUUID?.();
   if (!nonce && cryptoApi?.getRandomValues) {
     const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
     nonce = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -554,7 +555,7 @@ function isNetworkError(error: unknown) {
   return message.includes('network') || message.includes('fetch') || message.includes('offline');
 }
 
-export function orderingFailure(error: unknown, fallback: string): ActionResult<never> {
+export function orderingFailure(error: unknown, fallback: string): OrderingFailureResult {
   if (error instanceof OrderingInputError) {
     return { ok: false, code: 'INVALID', reason: error.message };
   }

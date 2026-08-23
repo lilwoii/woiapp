@@ -3,6 +3,7 @@
 create extension if not exists pgcrypto;
 do $$ begin create role anon nologin; exception when duplicate_object then null; end $$;
 do $$ begin create role authenticated nologin; exception when duplicate_object then null; end $$;
+do $$ begin create role service_role nologin bypassrls; exception when duplicate_object then null; end $$;
 create schema if not exists auth;
 create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
@@ -19,6 +20,10 @@ $$;
 create or replace function auth.jwt()
 returns jsonb language sql stable as $$
   select jsonb_build_object('aal', coalesce(nullif(current_setting('request.jwt.claim.aal', true), ''), 'aal1'));
+$$;
+create or replace function auth.role()
+returns text language sql stable as $$
+  select nullif(current_setting('request.jwt.claim.role', true), '');
 $$;
 
 create table public.profiles (
