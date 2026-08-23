@@ -499,6 +499,7 @@ declare
   bucket_start timestamptz;
   accepted_count integer;
   config private.ad_runtime_config%rowtype;
+  selected_campaign_id uuid;
   selected_campaign public.ad_campaigns%rowtype;
   selected_business_id uuid;
   selected_reason text;
@@ -539,12 +540,12 @@ begin
     raise exception using errcode = 'P0001', message = 'SPONSORED_RATE_LIMITED';
   end if;
 
-  select campaign, business.id,
+  select campaign.id, business.id,
     case
       when business.kind = 'food_truck' then 'matches_category'
       else 'near_you'
     end
-  into selected_campaign, selected_business_id, selected_reason
+  into selected_campaign_id, selected_business_id, selected_reason
   from public.ad_campaigns campaign
   join public.pricing_versions pricing on pricing.id = campaign.pricing_version_id
   join public.ad_targets target on target.campaign_id = campaign.id
@@ -647,9 +648,13 @@ begin
   limit 1
   for update of campaign skip locked;
 
-  if selected_campaign.id is null then
+  if selected_campaign_id is null then
     return null;
   end if;
+
+  select * into selected_campaign
+  from public.ad_campaigns
+  where id = selected_campaign_id;
 
   -- Recompute the financial snapshot while the campaign row lock is held.
   select
