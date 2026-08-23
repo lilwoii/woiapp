@@ -52,6 +52,7 @@ jobs:
           EXPO_PUBLIC_PICKUP_ORDERING_ENABLED: "false"
           EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED: "false"
           EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED: "false"
+          EXPO_PUBLIC_SPONSORED_PLACEMENTS_ENABLED: "false"
         run: npm run build:sites
 
       - name: Audit production dependencies

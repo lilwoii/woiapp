@@ -46,6 +46,7 @@ type PublicDiscoveryRequest =
 type PublicDiscoveryResponse<TOperation extends PublicDiscoveryRequest['operation']> = {
   operation: TOperation;
   rows: Row[];
+  sponsored: Row | null;
 };
 export type MarketplacePage = {
   places: Place[];
@@ -95,7 +96,15 @@ async function invokePublicDiscovery<TRequest extends PublicDiscoveryRequest>(
   ) {
     throw new Error('INVALID_PUBLIC_DISCOVERY_RESPONSE');
   }
-  return { operation: data.operation, rows: rows(data.rows) };
+  const sponsored = data.sponsored ?? null;
+  if (sponsored !== null && (typeof sponsored !== 'object' || Array.isArray(sponsored))) {
+    throw new Error('INVALID_PUBLIC_DISCOVERY_RESPONSE');
+  }
+  return {
+    operation: data.operation,
+    rows: rows(data.rows),
+    sponsored: sponsored as Row | null,
+  };
 }
 
 function toDiscoveryActionError<T>(error: unknown, fallback: string): ActionResult<T> {
@@ -111,7 +120,7 @@ function toDiscoveryActionError<T>(error: unknown, fallback: string): ActionResu
 }
 
 export function createMarketplaceIdempotencyKey(
-  scope: 'review' | 'update' | 'response'
+  scope: 'review' | 'update' | 'response' | 'sponsor'
 ) {
   const cryptoApi = globalThis.crypto;
   let nonce: string | undefined = cryptoApi?.randomUUID?.();
@@ -129,7 +138,7 @@ export function createMarketplaceIdempotencyKey(
 
 function actionIdempotencyKey(
   supplied: string | undefined,
-  scope: 'review' | 'update' | 'response'
+  scope: 'review' | 'update' | 'response' | 'sponsor'
 ) {
   const key = supplied ?? createMarketplaceIdempotencyKey(scope);
   if (!idempotencyPattern.test(key)) {
@@ -596,6 +605,7 @@ export async function fetchMarketplacePlaces(
     const includedIds = (options.includeBusinessIds ?? []).filter((id) => uuidPattern.test(id));
     const managedIds = (options.managedBusinessIds ?? []).filter((id) => uuidPattern.test(id));
     let nearbyRows: Row[] = [];
+    let sponsoredRow: Row | null = null;
 
     if (options.origin) {
       const { latitude, longitude, radiusMeters = 16093 } = options.origin;
@@ -610,7 +620,7 @@ export async function fetchMarketplacePlaces(
       ) {
         return { ok: false, code: 'INVALID', reason: 'The search location is invalid.' };
       }
-      const { rows: nearbyResultRows } = await invokePublicDiscovery({
+      const { rows: nearbyResultRows, sponsored } = await invokePublicDiscovery({
         operation: 'nearby',
         search_lat: latitude,
         search_lng: longitude,
@@ -619,18 +629,26 @@ export async function fetchMarketplacePlaces(
         result_offset: resultOffset,
       });
       nearbyRows = nearbyResultRows;
+      sponsoredRow = featureFlags.sponsoredPlacements ? sponsored : null;
     }
 
     const nearbyIds = nearbyRows
       .map((entry) => stringValue(entry.business_id))
       .filter((id) => uuidPattern.test(id));
+    const sponsoredBusinessId = stringValue(sponsoredRow?.business_id);
+    const directoryIds = [
+      ...new Set([
+        ...nearbyIds,
+        ...(uuidPattern.test(sponsoredBusinessId) ? [sponsoredBusinessId] : []),
+      ]),
+    ];
     const managedBusinessSelection =
       'id, slug, name, kind, description, cuisine_labels, price_level, state, verification, timezone, provenance, provider_freshness_at, updated_at';
     const publishedResult = options.onlyIncludedBusinesses
       ? { data: [], error: null }
       : options.origin
-      ? nearbyIds.length
-        ? await client.from('public_business_directory').select('*').in('business_id', nearbyIds)
+      ? directoryIds.length
+        ? await client.from('public_business_directory').select('*').in('business_id', directoryIds)
         : { data: [], error: null }
       : await client
           .from('public_business_directory')
@@ -950,6 +968,27 @@ export async function fetchMarketplacePlaces(
         business.state,
         'published'
       ) as Place['publicationState'];
+      const sponsoredPlacementId = stringValue(sponsoredRow?.placement_id);
+      const sponsoredToken = stringValue(sponsoredRow?.placement_token);
+      const sponsoredExpiry = stringValue(sponsoredRow?.expires_at);
+      const sponsoredDisclosure = stringValue(sponsoredRow?.disclosure);
+      const sponsoredReason = stringValue(sponsoredRow?.reason);
+      const sponsoredPlacement =
+        sponsoredBusinessId === id &&
+        uuidPattern.test(sponsoredPlacementId) &&
+        sponsoredDisclosure === 'Sponsored ad' &&
+        sponsoredReason.length > 0 &&
+        sponsoredReason.length <= 120 &&
+        sponsoredToken.length >= 110 &&
+        Number.isFinite(Date.parse(sponsoredExpiry))
+          ? {
+              id: sponsoredPlacementId,
+              disclosure: 'Sponsored ad' as const,
+              reason: sponsoredReason,
+              token: sponsoredToken,
+              expiresAt: sponsoredExpiry,
+            }
+          : undefined;
 
       return {
         id,
@@ -1008,6 +1047,7 @@ export async function fetchMarketplacePlaces(
         sourceLabel: sourceLabel(business.provenance, business.verification === 'verified'),
         publicationState,
         detailsLoaded: hasDetails,
+        sponsoredPlacement,
       };
     });
 
@@ -1041,6 +1081,49 @@ export async function fetchMarketplacePlaceById(
   return place
     ? { ok: true, data: place }
     : { ok: false, code: 'NOT_FOUND', reason: 'This listing is unavailable or no longer public.' };
+}
+
+export async function recordSponsoredInteraction(
+  placementToken: string,
+  interactionType: 'open' | 'menu_view' | 'directions' | 'hide' | 'report',
+): Promise<ActionResult<{ receiptId: string; accepted: boolean; duplicate: boolean; billed: boolean }>> {
+  const client = supabase;
+  if (!client || !featureFlags.sponsoredPlacements) return configurationRequired();
+  if (
+    !/^[0-9a-f-]{36}\.[0-9]{10}\.[0-9a-f]{64}$/.test(placementToken) ||
+    !['open', 'menu_view', 'directions', 'hide', 'report'].includes(interactionType)
+  ) {
+    return { ok: false, code: 'INVALID', reason: 'This sponsored placement is invalid.' };
+  }
+  try {
+    const { data, error } = await client.rpc('record_sponsored_interaction', {
+      placement_token: placementToken,
+      interaction_type: interactionType,
+      idempotency_key: createMarketplaceIdempotencyKey('sponsor'),
+    });
+    if (error) throw error;
+    const result = data && typeof data === 'object' && !Array.isArray(data) ? data as Row : null;
+    const receiptId = stringValue(result?.receipt_id);
+    if (
+      !result || !uuidPattern.test(receiptId) ||
+      typeof result.accepted !== 'boolean' ||
+      typeof result.duplicate !== 'boolean' ||
+      typeof result.billed !== 'boolean'
+    ) {
+      throw new Error('INVALID_SPONSORED_RECEIPT');
+    }
+    return {
+      ok: true,
+      data: {
+        receiptId,
+        accepted: result.accepted,
+        duplicate: result.duplicate,
+        billed: result.billed,
+      },
+    };
+  } catch (error) {
+    return toActionError(error, 'The sponsored interaction could not be recorded.');
+  }
 }
 
 export async function fetchBusinessReviewsPage(

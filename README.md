@@ -105,6 +105,9 @@ that a production project has received or safely exercised it.
   retention, appeals, and deletion are operational.
 - Push remains disabled until APNs/FCM credentials, consent, preference
   enforcement, and delivery/opt-out evidence exist.
+- Sponsored placements remain disabled and shadow-only until advertiser terms,
+  payment/store-policy review, fraud operations, and finance reconciliation are
+  approved for the exact production deployment.
 - Production legal, privacy, safety, and support contacts must be supplied and
   reviewed; the repository does not invent them.
 - Signed iOS/Android builds, store metadata, privacy declarations, reviewer

@@ -33,6 +33,14 @@ the endpoint unavailable and put an owned WAF/gateway in front of it. Configure
 and review Supabase platform-log retention separately because provider-level
 request metadata is outside the application tables.
 
+When both `SPOTTR_SPONSORED_PLACEMENTS_ENABLED=true` and the private sponsored
+runtime switch are approved, nearby discovery may include one separately
+labelled sponsored projection. Selection is a service-role RPC behind the same
+trusted-IP/Auth boundary; malformed or unavailable ad selection is discarded
+without changing or failing organic results. The production web and native
+client flags remain false until the monetization gates in `docs/MONETIZATION.md`
+are complete.
+
 ## Text moderation
 
 Reviews, owner updates, and business responses are always created in `pending`.

@@ -220,6 +220,17 @@ and sponsored analytics remain labelled separately.
 
 ## Proposed data model
 
+Implementation status: migration
+`20260830000000_sponsored_placement_foundation.sql` now supplies the fail-closed
+contextual sponsored-placement core: immutable approved pricing, service-only
+selection, verified-listing and geography eligibility, concurrent budget
+reservations, signed short-lived tokens, idempotent interaction receipts, an
+append-only debit/credit ledger, merchant-readable RLS projections, and bounded
+reservation cleanup. Both the client and Edge serving gates default to off, and
+the runtime is shadow-only by default. Merchant campaign authoring, payment
+onboarding, real-money enablement, rollup/reconciliation jobs, and finance
+approval UI remain blocked by the external requirements below.
+
 This is a new migration program, not a patch to append blindly to
 `supabase/schema.sql`. Use integer minor units, ISO 4217 currency, UTC
 timestamps, explicit check constraints, RLS, stable public IDs, and append-only

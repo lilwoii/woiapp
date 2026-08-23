@@ -21,6 +21,9 @@ export const discoveryKinds = [
 ] as const;
 export type DiscoveryKind = typeof discoveryKinds[number];
 
+const SPONSORED_TOKEN_PATTERN =
+  /^[0-9a-f-]{36}\.[0-9]{10}\.[0-9a-f]{64}$/;
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_TEXT_PATTERN = /^[^\u0000-\u001f\u007f]*$/u;
@@ -251,6 +254,41 @@ export function isSafeText(value: unknown, maximum: number): value is string {
 
 export function isDiscoveryKind(value: unknown): value is DiscoveryKind {
   return discoveryKinds.includes(value as DiscoveryKind);
+}
+
+/** Whitelists the complete sponsored lane projection. Billing and targeting
+ * details are intentionally impossible to forward across the Edge boundary. */
+export function normalizeSponsoredPlacement(value: unknown) {
+  if (value === null) return null;
+  const row = asObject(value);
+  exactKeys(row, [
+    "business_id",
+    "placement_id",
+    "disclosure",
+    "reason",
+    "placement_token",
+    "expires_at",
+  ]);
+  if (
+    !isUuid(row.business_id) ||
+    !isUuid(row.placement_id) ||
+    row.disclosure !== "Sponsored ad" ||
+    !isSafeText(row.reason, 120) ||
+    typeof row.placement_token !== "string" ||
+    !SPONSORED_TOKEN_PATTERN.test(row.placement_token) ||
+    typeof row.expires_at !== "string" ||
+    !Number.isFinite(Date.parse(row.expires_at))
+  ) {
+    fail("INVALID_SPONSORED_RESPONSE");
+  }
+  return {
+    business_id: row.business_id,
+    placement_id: row.placement_id,
+    disclosure: "Sponsored ad" as const,
+    reason: row.reason,
+    placement_token: row.placement_token,
+    expires_at: row.expires_at,
+  };
 }
 
 function nullableSafeText(value: unknown, maximum: number): string | null {

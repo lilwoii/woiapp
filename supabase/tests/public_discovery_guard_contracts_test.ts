@@ -6,6 +6,7 @@ import {
 } from "jsr:@std/assert@1";
 import {
   normalizePublicDiscoveryRows,
+  normalizeSponsoredPlacement,
   validatePublicDiscoveryRequest,
 } from "../functions/public-discovery/contract.ts";
 
@@ -149,7 +150,7 @@ Deno.test("public discovery Edge boundary is anonymous-capable but fail-closed",
   assertMatch(edge, /retainLeaseUntilExpiry = true/);
   assert(
     edge.indexOf('const acquisition = await databaseRpc("acquire_public_discovery_lease"') <
-      edge.indexOf("const accountId = await authenticatedAccountId(request)"),
+      edge.indexOf("accountId = await authenticatedAccountId(request)"),
   );
 });
 
@@ -262,4 +263,32 @@ Deno.test("public discovery response is whitelisted and rejects malformed rows",
     is_approximate: false,
     has_more: false,
   }]);
+});
+
+Deno.test("sponsored response exposes only a signed short-lived safe projection", () => {
+  const token = `11111111-1111-4111-8111-111111111111.1790000000.${"a".repeat(64)}`;
+  assertEquals(normalizeSponsoredPlacement({
+    business_id: "11111111-1111-4111-8111-111111111111",
+    placement_id: "22222222-2222-4222-8222-222222222222",
+    disclosure: "Sponsored ad",
+    reason: "Near your selected area",
+    placement_token: token,
+    expires_at: "2026-09-22T00:00:00.000Z",
+  }), {
+    business_id: "11111111-1111-4111-8111-111111111111",
+    placement_id: "22222222-2222-4222-8222-222222222222",
+    disclosure: "Sponsored ad",
+    reason: "Near your selected area",
+    placement_token: token,
+    expires_at: "2026-09-22T00:00:00.000Z",
+  });
+  assertThrows(() => normalizeSponsoredPlacement({
+    business_id: "11111111-1111-4111-8111-111111111111",
+    placement_id: "22222222-2222-4222-8222-222222222222",
+    disclosure: "Sponsored ad",
+    reason: "Near your selected area",
+    placement_token: token,
+    expires_at: "2026-09-22T00:00:00.000Z",
+    bid_cap_minor: 500,
+  }), DiscoveryContractError);
 });

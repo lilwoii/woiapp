@@ -46,6 +46,7 @@ jobs:
           EXPO_PUBLIC_PICKUP_ORDERING_ENABLED: "false"
           EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED: "false"
           EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED: "false"
+          EXPO_PUBLIC_SPONSORED_PLACEMENTS_ENABLED: "false"
         run: npm run build:sites
       - name: Audit production dependencies
         run: npm run test:audit-tools && npm run audit:production
@@ -72,6 +73,7 @@ test('rejects broadened triggers, leaked credentials, mutable actions, unsafe fl
     ['EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}', 'EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}'],
     ['EXPO_PUBLIC_HOME_KITCHENS_ENABLED: "false"', 'EXPO_PUBLIC_HOME_KITCHENS_ENABLED: "true"'],
     ['EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED: "false"', 'EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED: "true"'],
+    ['EXPO_PUBLIC_SPONSORED_PLACEMENTS_ENABLED: "false"', 'EXPO_PUBLIC_SPONSORED_PLACEMENTS_ENABLED: "true"'],
     ['spottr-production-sites-dist-${{ github.sha }}', 'spottr-production-sites-dist-latest'],
     ['path: dist/', 'path: **/*'],
     ['include-hidden-files: true', 'include-hidden-files: false'],

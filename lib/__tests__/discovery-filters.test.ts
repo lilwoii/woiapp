@@ -58,6 +58,26 @@ describe('discovery filters', () => {
     ).toEqual([truck.id, restaurant.id]);
   });
 
+  it('never feeds sponsored metadata into organic ranking', () => {
+    const organicFirst = { ...seedPlaces[0], distanceMiles: 1 };
+    const sponsoredSecond = {
+      ...seedPlaces[1],
+      distanceMiles: 2,
+      sponsoredPlacement: {
+        id: '31000000-0000-4000-8000-000000000003',
+        disclosure: 'Sponsored ad' as const,
+        reason: 'Near your selected area',
+        token: `${'32000000-0000-4000-8000-000000000003'}.${'1790000000'}.${'a'.repeat(64)}`,
+        expiresAt: '2026-09-22T00:00:00.000Z',
+      },
+    };
+    expect(
+      rankDiscoveryPlaces([sponsoredSecond, organicFirst], base, null).map(
+        (place) => place.id
+      )
+    ).toEqual([organicFirst.id, sponsoredSecond.id]);
+  });
+
   it('builds deterministic cuisine facets and an accurate active-filter count', () => {
     expect(cuisineFacets(seedPlaces).some((facet) => facet.label === 'Tacos')).toBe(true);
     expect(

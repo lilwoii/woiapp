@@ -155,6 +155,21 @@ export async function runProductionMaintenance({
     throw new Error('reconcile_licensed_provider_lifecycle did not report bounded completion.');
   }
 
+  const sponsoredReservations = await requestJson(
+    fetchImpl,
+    'reconcile_sponsored_reservations',
+    `${restRoot}/reconcile_sponsored_reservations`,
+    { method: 'POST', headers: databaseHeaders, body: '{}' },
+  );
+  if (
+    typeof sponsoredReservations?.released !== 'number' ||
+    sponsoredReservations.released < 0 ||
+    sponsoredReservations.more_work !== false ||
+    sponsoredReservations.skipped !== false
+  ) {
+    throw new Error('reconcile_sponsored_reservations did not report bounded completion.');
+  }
+
   // A success heartbeat must mean the bounded deletion pass reached a known
   // resting state. Ten consecutive work responses leave the queue state
   // uncertain, so fail closed after completing the other privacy cleanups.
@@ -175,6 +190,7 @@ export async function runProductionMaintenance({
     mediaCleanup: 'complete',
     databaseCleanup: 'complete',
     providerLifecycle: 'complete',
+    sponsoredReservations: 'complete',
     heartbeat: 'complete',
   };
   log(JSON.stringify(summary));

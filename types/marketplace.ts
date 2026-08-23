@@ -117,6 +117,8 @@ export type Place = {
     id: string;
     disclosure: 'Sponsored ad';
     reason: string;
+    token?: string;
+    expiresAt?: string;
   };
   sourceLabel: 'Owner verified' | 'Owner provided' | 'Community added' | 'Licensed provider';
   publicationState?: 'draft' | 'pending' | 'published' | 'suspended' | 'archived';

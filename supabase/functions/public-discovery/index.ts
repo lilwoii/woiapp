@@ -9,8 +9,10 @@ import {
 } from "../_shared/http.ts";
 import {
   DiscoveryContractError,
+  discoveryKinds,
   isUuid,
   normalizePublicDiscoveryRows,
+  normalizeSponsoredPlacement,
   PUBLIC_DISCOVERY_MAX_BYTES,
   type PublicDiscoveryRequest,
   validatePublicDiscoveryRequest,
@@ -107,6 +109,16 @@ async function identityHmac(kind: "ip" | "account", value: string): Promise<stri
     new TextEncoder().encode(`${kind}\u0000${value}`),
   );
   return [...new Uint8Array(signature)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
@@ -319,6 +331,7 @@ export async function handlePublicDiscovery(request: Request): Promise<Response>
 
     const trustedIp = normalizeTrustedIp(request.headers.get("cf-connecting-ip"));
     const ipHmac = await identityHmac("ip", trustedIp);
+    let accountId: string | null = null;
 
     const acquisition = await databaseRpc("acquire_public_discovery_lease", {
       target_operation: discoveryRequest.operation,
@@ -341,7 +354,7 @@ export async function handlePublicDiscovery(request: Request): Promise<Response>
 
     // Remote Auth validation occurs only after the cheap per-IP/concurrency
     // admission, so random bearer tokens cannot bypass discovery quotas.
-    const accountId = await authenticatedAccountId(request);
+    accountId = await authenticatedAccountId(request);
     if (accountId !== null) {
       const accountHmac = await identityHmac("account", accountId);
       const attachment = await databaseRpc("attach_public_discovery_account", {
@@ -381,8 +394,36 @@ export async function handlePublicDiscovery(request: Request): Promise<Response>
       }
       throw error;
     }
+
+    let sponsored = null;
+    if (
+      discoveryRequest.operation === "nearby" &&
+      Deno.env.get("SPOTTR_SPONSORED_PLACEMENTS_ENABLED")?.trim() === "true"
+    ) {
+      try {
+        const filterHash = await sha256Hex(JSON.stringify(discoveryRequest));
+        const selection = await databaseRpc("select_sponsored_placement", {
+          target_surface: "discover",
+          search_lat: discoveryRequest.search_lat,
+          search_lng: discoveryRequest.search_lng,
+          search_radius_meters: discoveryRequest.radius_meters,
+          requested_kinds: discoveryKinds,
+          organic_filter_hash: filterHash,
+          subject_hmac: ipHmac,
+          target_account_id: accountId,
+        }, request.signal);
+        if (!selection.error) {
+          sponsored = normalizeSponsoredPlacement(selection.data);
+        } else {
+          console.error("Sponsored selection unavailable");
+        }
+      } catch {
+        // Ads must fail closed without taking organic discovery down with them.
+        console.error("Sponsored selection unavailable");
+      }
+    }
     return jsonResponse(
-      { operation: discoveryRequest.operation, rows },
+      { operation: discoveryRequest.operation, rows, sponsored },
       200,
       cors,
     );

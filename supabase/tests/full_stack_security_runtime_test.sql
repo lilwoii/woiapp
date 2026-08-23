@@ -65,6 +65,16 @@ begin
       'public.reconcile_licensed_provider_lifecycle(integer)',
       'execute'
     )
+    or has_function_privilege(
+      'authenticated',
+      'public.select_sponsored_placement(text,double precision,double precision,integer,public.business_kind[],text,text,uuid)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.reconcile_sponsored_reservations(integer)',
+      'execute'
+    )
   then
     raise exception 'Authenticated users can execute a service-only maintenance RPC';
   end if;
@@ -401,6 +411,223 @@ begin
   end if;
 end;
 $provider_lifecycle$;
+
+-- Build one fully eligible licensed listing to exercise the sponsored-serving
+-- path without weakening the publication authority trigger.
+update private.provider_business_sources
+set source_status = 'active',
+    last_seen_at = now(),
+    missing_since = null,
+    inactive_at = null,
+    inactive_reason = null
+where provider_slug = 'runtime_provider'
+  and provider_external_id = 'runtime-missing-listing';
+
+insert into public.media_assets (
+  id, owner_id, business_id, storage_path, mime_type, width, height,
+  byte_size, sha256, source, license_note, quarantine_state,
+  processed_storage_path, scan_completed_at, moderation
+) values (
+  '72000000-0000-4000-8000-000000000007',
+  '10000000-0000-4000-8000-000000000001',
+  '70000000-0000-4000-8000-000000000007',
+  'published/runtime/provider-logo.jpg', 'image/jpeg', 512, 512,
+  4096, repeat('d', 64), 'licensed_provider', 'Runtime licensed fixture',
+  'clean', 'published/runtime/provider-logo-processed.jpg', now(), 'approved'
+);
+
+update public.businesses
+set description = 'A complete licensed runtime listing.',
+    logo_asset_id = '72000000-0000-4000-8000-000000000007'
+where id = '70000000-0000-4000-8000-000000000007';
+
+insert into public.business_private_details (
+  business_id, business_email, business_phone
+) values (
+  '70000000-0000-4000-8000-000000000007',
+  'runtime-business@spottr.invalid', '+12135550100'
+);
+
+insert into public.business_locations (
+  id, business_id, label, address_line, city, region, postal_code,
+  point, is_primary, is_approximate, public_address, publication_state
+) values (
+  '73000000-0000-4000-8000-000000000007',
+  '70000000-0000-4000-8000-000000000007',
+  'Runtime location', '100 Runtime Way', 'Los Angeles', 'CA', '90001',
+  public.st_setsrid(public.st_makepoint(-118.24, 34.05), 4326)::public.geography,
+  true, false, true, 'published'
+);
+
+insert into public.weekly_hours (business_id, weekday, opens_at, closes_at, is_closed)
+select
+  '70000000-0000-4000-8000-000000000007',
+  weekday::smallint, '00:00'::time, '23:59'::time, false
+from generate_series(0, 6) weekday;
+
+insert into public.business_payments (business_id, payment)
+values ('70000000-0000-4000-8000-000000000007', 'cash');
+
+insert into public.menu_sections (id, business_id, name, is_published)
+values (
+  '74000000-0000-4000-8000-000000000007',
+  '70000000-0000-4000-8000-000000000007', 'Runtime menu', true
+);
+insert into public.menu_items (
+  id, section_id, name, price_minor, currency, availability, is_published
+) values (
+  '75000000-0000-4000-8000-000000000007',
+  '74000000-0000-4000-8000-000000000007', 'Runtime meal',
+  1200, 'USD', 'available', true
+);
+
+update public.businesses
+set state = 'published', verification = 'verified'
+where id = '70000000-0000-4000-8000-000000000007';
+
+insert into public.pricing_versions (
+  id, version, region_code, currency, click_floor_minor, click_ceiling_minor,
+  state, effective_at, approval_reference, approved_at
+) values (
+  '76000000-0000-4000-8000-000000000007', 'runtime-v1', 'US-CA', 'USD',
+  25, 500, 'approved', now() - interval '1 day',
+  'runtime pricing approval', now() - interval '1 day'
+);
+
+insert into public.ad_campaigns (
+  id, business_id, billing_model, state, currency, bid_cap_minor,
+  daily_budget_minor, lifetime_budget_minor, pricing_version_id,
+  starts_at, ends_at, approved_at, approval_reference
+) values (
+  '77000000-0000-4000-8000-000000000007',
+  '70000000-0000-4000-8000-000000000007', 'shadow', 'active', 'USD',
+  100, 1000, 10000, '76000000-0000-4000-8000-000000000007',
+  now() - interval '1 hour', now() + interval '1 day', now() - interval '1 hour',
+  'runtime campaign approval'
+);
+
+insert into public.ad_targets (
+  campaign_id, business_kinds, center, radius_meters
+) values (
+  '77000000-0000-4000-8000-000000000007',
+  array['restaurant']::public.business_kind[],
+  public.st_setsrid(public.st_makepoint(-118.24, 34.05), 4326)::public.geography,
+  10000
+);
+
+insert into public.ad_creatives (
+  id, campaign_id, business_id, moderation, moderation_version
+) values (
+  '78000000-0000-4000-8000-000000000007',
+  '77000000-0000-4000-8000-000000000007',
+  '70000000-0000-4000-8000-000000000007', 'approved', 'runtime-v1'
+);
+
+update private.ad_runtime_config
+set enabled = true,
+    shadow_only = true,
+    approval_reference = 'runtime shadow-only approval',
+    updated_at = now()
+where singleton;
+
+create temporary table runtime_sponsored_result (payload jsonb not null);
+grant select, insert on runtime_sponsored_result to service_role, anon;
+
+set local role service_role;
+insert into runtime_sponsored_result (payload)
+select public.select_sponsored_placement(
+  'discover', 34.05, -118.24, 16093,
+  array['food_truck', 'restaurant', 'pop_up', 'cafe_bakery']::public.business_kind[],
+  repeat('a', 64), repeat('b', 64), null
+);
+reset role;
+
+do $sponsored_selection$
+declare result jsonb;
+begin
+  select payload into result from runtime_sponsored_result;
+  if result->>'business_id' <> '70000000-0000-4000-8000-000000000007'
+    or result->>'disclosure' <> 'Sponsored ad'
+    or result->>'placement_token' !~ '^[0-9a-f-]{36}\.[0-9]{10}\.[0-9a-f]{64}$'
+  then
+    raise exception 'Sponsored selector returned an invalid public projection';
+  end if;
+end;
+$sponsored_selection$;
+
+set local role anon;
+do $sponsored_public_boundary$
+declare
+  token text;
+  first_receipt jsonb;
+  duplicate_receipt jsonb;
+begin
+  select payload->>'placement_token' into token from runtime_sponsored_result;
+  first_receipt := public.record_sponsored_interaction(
+    token, 'open', 'runtime:sponsor:open:0001'
+  );
+  duplicate_receipt := public.record_sponsored_interaction(
+    token, 'open', 'runtime:sponsor:open:0002'
+  );
+  if first_receipt->>'accepted' <> 'true'
+    or first_receipt->>'billed' <> 'false'
+    or first_receipt->>'duplicate' <> 'false'
+    or duplicate_receipt->>'duplicate' <> 'true'
+    or duplicate_receipt->>'billed' <> 'false'
+  then
+    raise exception 'Shadow sponsored interaction was not safely idempotent';
+  end if;
+
+  begin
+    perform public.select_sponsored_placement(
+      'discover', 34.05, -118.24, 16093,
+      array['restaurant']::public.business_kind[],
+      repeat('a', 64), repeat('b', 64), null
+    );
+    raise exception 'Anonymous role unexpectedly selected a sponsored placement';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform 1 from private.billing_ledger limit 1;
+    raise exception 'Anonymous role unexpectedly read the billing ledger';
+  exception
+    when insufficient_privilege then null;
+  end;
+end;
+$sponsored_public_boundary$;
+reset role;
+
+do $sponsored_financial_state$
+begin
+  if exists (select 1 from private.billing_ledger) then
+    raise exception 'Shadow-only sponsored interaction created a financial debit';
+  end if;
+  if not exists (
+    select 1 from private.ad_budget_reservations
+    where campaign_id = '77000000-0000-4000-8000-000000000007'
+      and state = 'released'
+  ) then
+    raise exception 'Shadow sponsored interaction did not release its reservation';
+  end if;
+end;
+$sponsored_financial_state$;
+
+set local role service_role;
+do $sponsored_reconcile$
+declare result jsonb;
+begin
+  result := public.reconcile_sponsored_reservations(100);
+  if result->>'released' <> '0'
+    or result->>'more_work' <> 'false'
+    or result->>'skipped' <> 'false'
+  then
+    raise exception 'Sponsored reservation reconciliation returned an unsafe result';
+  end if;
+end;
+$sponsored_reconcile$;
+reset role;
 
 insert into private.account_deletion_requests (
   id,

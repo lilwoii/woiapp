@@ -452,7 +452,8 @@ missing or placeholders. It emits a commit-bound `dist/` artifact only after
 the configured build and production dependency audit succeed.
 
 Home kitchens, media uploads, push notifications, pickup ordering, in-app
-navigation, and business ownership claims remain hard-disabled in this production workflow. Enabling any one
+navigation, business ownership claims, and sponsored placements remain
+hard-disabled in this production workflow. Enabling any one
 requires its own exact-environment acceptance evidence, reviewed workflow
 change, and a new artifact. Never add a service-role key, routing/provider
 service credential, scanner secret, maintenance secret, or other server-only

@@ -36,7 +36,7 @@ import { featureFlags } from '@/lib/features';
 import { normalizeLongitude, zoomFromLongitudeDelta } from '@/lib/map-clustering';
 import { filterMapInventoryCategories, filterPlacesForEnabledCategories } from '@/lib/map-inventory';
 import { mapCategoryOrder, mapCategoryPresentation } from '@/lib/map-presentation';
-import { fetchMapFoodFeatures } from '@/lib/marketplace-api';
+import { fetchMapFoodFeatures, recordSponsoredInteraction } from '@/lib/marketplace-api';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import type { DietaryTag, PaymentMethod, Place } from '@/types/marketplace';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
@@ -378,11 +378,13 @@ export default function DiscoverScreen() {
     () => rankDiscoveryPlaces(enabledPlaces, discoveryFilters, userCoordinates),
     [discoveryFilters, enabledPlaces, userCoordinates]
   );
-  const sponsoredPlace = ranked.find(
-    (place) =>
-      place.sponsoredPlacement &&
-      !hiddenSponsoredIds.includes(place.sponsoredPlacement.id)
-  );
+  const sponsoredPlace = featureFlags.sponsoredPlacements
+    ? ranked.find(
+        (place) =>
+          place.sponsoredPlacement &&
+          !hiddenSponsoredIds.includes(place.sponsoredPlacement.id)
+      )
+    : undefined;
 
   const resultsKey = JSON.stringify(discoveryFilters);
   const visibleCount = pagination.key === resultsKey ? pagination.count : 24;
@@ -745,11 +747,17 @@ export default function DiscoverScreen() {
           <SponsoredLane
             onHide={() => {
               const placementId = sponsoredPlace.sponsoredPlacement?.id;
+              const placementToken = sponsoredPlace.sponsoredPlacement?.token;
               if (placementId) {
                 setHiddenSponsoredIds((current) => [...new Set([...current, placementId])]);
               }
+              if (placementToken) void recordSponsoredInteraction(placementToken, 'hide');
             }}
-            onOpen={() => router.push(`/place/${sponsoredPlace.id}`)}
+            onOpen={() => {
+              const placementToken = sponsoredPlace.sponsoredPlacement?.token;
+              if (placementToken) void recordSponsoredInteraction(placementToken, 'open');
+              router.push(`/place/${sponsoredPlace.id}`);
+            }}
             onToggleReason={() =>
               setOpenSponsorReasonId((current) =>
                 current === sponsoredPlace.sponsoredPlacement?.id
