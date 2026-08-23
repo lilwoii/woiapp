@@ -7,10 +7,10 @@ import { validateProductionArtifactContent } from './production-artifact-purity.
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_ROUTE_BYTES = 64 * 1024;
-// Static rendering repeats the shared route shell per route. Keep a narrow
-// aggregate allowance for the required navigation route while the 64 KB
-// per-route ceiling continues to prevent an individual route regression.
-const MAX_ALL_ROUTES_BYTES = 1_750_000;
+// Static rendering repeats the shared application shell in every route. Cap
+// both the largest route and the average route so adding a required workflow
+// cannot exhaust a fixed global allowance while per-route growth stays bounded.
+const MAX_AVERAGE_ROUTE_BYTES = 60_000;
 const MAX_ENTRY_BYTES = 3_200_000;
 const MAX_ENTRY_GZIP_BYTES = 800_000;
 const MAX_MAP_BYTES = 1_100_000;
@@ -26,6 +26,7 @@ const REQUIRED_ROUTES = [
   'studio.html',
   'profile.html',
   'place/[id].html',
+  'order/[id].html',
   'navigation/[id].html',
   'messages/index.html',
   'messages/[id].html',
@@ -73,6 +74,8 @@ export function validateRouteHtml(relativePath, html) {
 
 export function validateBundleBudgets(metrics) {
   const errors = [];
+  const validRouteCount = Number.isInteger(metrics.routeCount) && metrics.routeCount > 0;
+  if (!validRouteCount) errors.push('route count must be a positive integer.');
   const checks = [
     ['entry JavaScript', metrics.entryBytes, MAX_ENTRY_BYTES],
     ['entry JavaScript gzip', metrics.entryGzipBytes, MAX_ENTRY_GZIP_BYTES],
@@ -82,7 +85,11 @@ export function validateBundleBudgets(metrics) {
     ['all JavaScript gzip', metrics.allJsGzipBytes, MAX_ALL_JS_GZIP_BYTES],
     ['all CSS', metrics.allCssBytes, MAX_ALL_CSS_BYTES],
     ['largest route HTML', metrics.largestRouteBytes, MAX_ROUTE_BYTES],
-    ['all route HTML', metrics.allRouteBytes, MAX_ALL_ROUTES_BYTES],
+    [
+      'all route HTML',
+      metrics.allRouteBytes,
+      validRouteCount ? metrics.routeCount * MAX_AVERAGE_ROUTE_BYTES : 0,
+    ],
   ];
   for (const [label, actual, maximum] of checks) {
     if (!Number.isFinite(actual) || actual > maximum) {

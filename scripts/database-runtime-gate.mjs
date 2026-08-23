@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -42,6 +43,49 @@ export function psqlArguments(containerPath, singleTransaction = true) {
     '-f',
     containerPath,
   ];
+}
+
+export function runtimeSupabaseConfig(source, projectId, databasePort) {
+  if (!/^[a-z0-9-]+$/.test(projectId)) throw new Error('Invalid temporary Supabase project id.');
+  if (!Number.isInteger(databasePort) || databasePort < 1024 || databasePort > 65535) {
+    throw new Error('Invalid temporary Supabase database port.');
+  }
+  const projectPattern = /^project_id\s*=\s*"[^"]+"/m;
+  if (!projectPattern.test(source)) throw new Error('Supabase config is missing project_id.');
+  let config = source.replace(projectPattern, `project_id = "${projectId}"`);
+  const databaseHeader = /^\[db\]\s*$/m.exec(config);
+  if (!databaseHeader) {
+    return `${config.trimEnd()}\n\n[db]\nport = ${databasePort}\n`;
+  }
+
+  const sectionStart = databaseHeader.index + databaseHeader[0].length;
+  const sectionTail = config.slice(sectionStart);
+  const nextHeaderOffset = sectionTail.search(/^\[[^\]]+\]\s*$/m);
+  const sectionEnd = nextHeaderOffset < 0 ? config.length : sectionStart + nextHeaderOffset;
+  const section = config.slice(sectionStart, sectionEnd);
+  const portPattern = /^\s*port\s*=\s*\d+\s*$/m;
+  const updatedSection = portPattern.test(section)
+    ? section.replace(portPattern, `\nport = ${databasePort}`)
+    : `\nport = ${databasePort}${section}`;
+  config = `${config.slice(0, sectionStart)}${updatedSection}${config.slice(sectionEnd)}`;
+  return config.endsWith('\n') ? config : `${config}\n`;
+}
+
+async function availableLoopbackPort() {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once('error', reject);
+    server.listen({ exclusive: true, host: '127.0.0.1', port: 0 }, () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('Could not allocate a temporary Supabase database port.'));
+        return;
+      }
+      server.close((error) => error ? reject(error) : resolve(address.port));
+    });
+  });
 }
 
 function run(command, args, options = {}) {
@@ -106,6 +150,7 @@ export async function runDatabaseRuntimeGate(projectRoot = PROJECT_ROOT) {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'spottr-db-runtime-'));
   const temporarySupabase = path.join(temporaryRoot, 'supabase');
   const projectId = `spottr-runtime-${process.pid}-${Date.now()}`;
+  const databasePort = await availableLoopbackPort();
   const containerName = `supabase_db_${projectId}`;
   const cli = supabaseInvocation();
   let started = false;
@@ -113,13 +158,16 @@ export async function runDatabaseRuntimeGate(projectRoot = PROJECT_ROOT) {
   try {
     await mkdir(path.join(temporarySupabase, 'migrations'), { recursive: true });
     const configSource = path.join(projectRoot, 'supabase', 'config.toml');
-    const config = (await readFile(configSource, 'utf8')).replace(
-      /^project_id\s*=\s*"[^"]+"/m,
-      `project_id = "${projectId}"`,
+    const config = runtimeSupabaseConfig(
+      await readFile(configSource, 'utf8'),
+      projectId,
+      databasePort,
     );
     await writeFile(path.join(temporarySupabase, 'config.toml'), config, 'utf8');
 
-    process.stdout.write(`Starting pinned Supabase CLI ${SUPABASE_CLI_VERSION} database runtime...\n`);
+    process.stdout.write(
+      `Starting pinned Supabase CLI ${SUPABASE_CLI_VERSION} database runtime on ephemeral port ${databasePort}...\n`,
+    );
     started = true;
     run(cli.command, [...cli.prefix, 'db', 'start', `--workdir=${temporaryRoot}`], {
       timeout: 600_000,

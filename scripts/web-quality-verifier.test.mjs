@@ -52,6 +52,7 @@ test('route verifier requires main and H1 landmarks', () => {
 
 test('bundle budgets fail closed when a JavaScript regression crosses a ceiling', () => {
   const errors = validateBundleBudgets({
+    routeCount: 30,
     entryBytes: 3_200_001,
     entryGzipBytes: 700_000,
     mapBytes: 900_000,
@@ -63,6 +64,34 @@ test('bundle budgets fail closed when a JavaScript regression crosses a ceiling'
     allRouteBytes: 1_500_000,
   });
   assert.ok(errors.some((error) => error.includes('entry JavaScript exceeds')));
+});
+
+test('route HTML aggregate budget scales only with verified route count', () => {
+  const metrics = {
+    routeCount: 30,
+    entryBytes: 3_000_000,
+    entryGzipBytes: 700_000,
+    mapBytes: 900_000,
+    mapGzipBytes: 250_000,
+    allJsBytes: 4_100_000,
+    allJsGzipBytes: 1_000_000,
+    allCssBytes: 80_000,
+    largestRouteBytes: 60_000,
+    allRouteBytes: 1_800_001,
+  };
+  assert.ok(
+    validateBundleBudgets(metrics).some((error) => error.includes('all route HTML exceeds')),
+  );
+  assert.ok(
+    !validateBundleBudgets({ ...metrics, routeCount: 31 }).some((error) =>
+      error.includes('all route HTML exceeds'),
+    ),
+  );
+  assert.ok(
+    validateBundleBudgets({ ...metrics, routeCount: 0 }).some((error) =>
+      error.includes('route count'),
+    ),
+  );
 });
 
 test('static header policy verifier rejects missing browser protections', () => {
