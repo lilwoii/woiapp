@@ -136,6 +136,7 @@ export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
     'server/wrangler.json',
     'client/.assetsignore',
     'client/_headers',
+    '_headers',
     '.openai/hosting.json',
   ]) {
     try {

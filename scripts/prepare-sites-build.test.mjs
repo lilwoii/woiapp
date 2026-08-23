@@ -56,6 +56,10 @@ test('Sites packaging emits the standard client, server, and metadata layout', a
     await readFile(path.join(root, 'dist', 'client', '_headers'), 'utf8'),
     /X-Frame-Options: DENY/u,
   );
+  assert.match(
+    await readFile(path.join(root, 'dist', '_headers'), 'utf8'),
+    /Content-Security-Policy: default-src 'self'/u,
+  );
   await assert.rejects(access(path.join(root, 'dist', 'index.html')));
 });
 

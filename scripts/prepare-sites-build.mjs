@@ -40,6 +40,12 @@ export async function prepareSitesBuild(projectRoot = resolve(import.meta.dirnam
     resolve(projectRoot, 'hosting', 'headers'),
     resolve(clientOutputDir, '_headers'),
   );
+  // Sites currently preprocesses archive-root static metadata before binding
+  // dist/client. Keep the canonical client copy as well for direct Workers deploys.
+  await copyFile(
+    resolve(projectRoot, 'hosting', 'headers'),
+    resolve(webOutputDir, '_headers'),
+  );
   await copyFile(
     resolve(projectRoot, '.openai', 'hosting.json'),
     resolve(hostingMetadataDir, 'hosting.json'),
