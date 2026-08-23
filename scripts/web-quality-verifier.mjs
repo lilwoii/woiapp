@@ -50,6 +50,15 @@ export function validateRouteHtml(relativePath, html) {
     errors.push(`${relativePath}: viewport must not disable zoom.`);
   }
   if (!/<meta\s+name="description"/i.test(html)) errors.push(`${relativePath}: missing description metadata.`);
+  if (!/<meta\s+http-equiv="Content-Security-Policy"/i.test(html)) {
+    errors.push(`${relativePath}: missing browser-enforced content security policy.`);
+  }
+  if (!/content="[^"]*object-src 'none'/i.test(html)) {
+    errors.push(`${relativePath}: content security policy must disable object embedding.`);
+  }
+  if (!/<meta\s+name="referrer"\s+content="strict-origin-when-cross-origin"/i.test(html)) {
+    errors.push(`${relativePath}: missing strict referrer policy metadata.`);
+  }
   if (!/<main\s+role="main"/i.test(html)) errors.push(`${relativePath}: missing main landmark.`);
   if (!/<h1(?:\s|>)/i.test(html)) errors.push(`${relativePath}: missing route-level H1.`);
   const semanticlessFocusableDivs = html.match(/<div(?=[^>]*tabindex="0")(?![^>]*\srole=)[^>]*>/gi) ?? [];

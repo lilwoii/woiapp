@@ -1,5 +1,20 @@
 import { ScrollViewStyleReset } from 'expo-router/html';
 
+const browserContentSecurityPolicy = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://tile.openstreetmap.org",
+  "font-src 'self' data:",
+  "form-action 'self'",
+  "img-src 'self' data: blob: https://images.unsplash.com https://tile.openstreetmap.org https://*.supabase.co",
+  "manifest-src 'self'",
+  "object-src 'none'",
+  "script-src 'self' 'sha256-67fhrP0+BkBqmgGGXTtgiVO/9EQs3QruYNU/7fnRkI8='",
+  "style-src 'self' 'unsafe-inline'",
+  "worker-src 'self' blob:",
+  'upgrade-insecure-requests',
+].join('; ');
+
 const publicOrigin = (() => {
   const candidate = process.env.EXPO_PUBLIC_APP_URL?.trim().replace(/\/+$/, '');
   if (!candidate) return null;
@@ -17,6 +32,8 @@ export default function Root({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+        <meta httpEquiv="Content-Security-Policy" content={browserContentSecurityPolicy} />
+        <meta name="referrer" content="strict-origin-when-cross-origin" />
         <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
         <title>Spottr · Live local food, mapped</title>
         <meta

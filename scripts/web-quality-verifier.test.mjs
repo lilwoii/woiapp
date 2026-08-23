@@ -17,6 +17,8 @@ const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
 const VALID_HTML = `<!doctype html><html lang="en"><head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Spottr route">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; object-src 'none'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <style>@media (prefers-reduced-motion: reduce) { * { transition: none; } }</style>
   </head><body><main role="main"><h1>Spottr</h1><button>Open</button></main></body></html>`;
 
