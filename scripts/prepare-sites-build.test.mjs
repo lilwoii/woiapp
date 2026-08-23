@@ -16,6 +16,11 @@ async function createFixture(context) {
   await writeFile(path.join(root, 'dist', 'index.html'), '<main>Spottr</main>');
   await writeFile(path.join(root, 'dist', '_expo', 'entry.js'), 'export {};');
   await writeFile(path.join(root, 'hosting', 'worker.js'), 'export default {};');
+  await writeFile(
+    path.join(root, 'hosting', 'wrangler.json'),
+    '{"main":"index.js","assets":{"directory":"../client","binding":"ASSETS","run_worker_first":true}}',
+  );
+  await writeFile(path.join(root, 'hosting', 'assetsignore'), '.env\n');
   await writeFile(path.join(root, '.openai', 'hosting.json'), '{"project_id":"test"}');
   await writeFile(path.join(root, 'assets', 'images', 'spottr-icon.png'), 'icon');
   await writeFile(path.join(root, 'assets', 'images', 'spottr-icon-maskable.png'), 'mask');
@@ -28,12 +33,21 @@ test('Sites packaging emits the standard client, server, and metadata layout', a
 
   assert.equal(await readFile(path.join(root, 'dist', 'client', 'index.html'), 'utf8'), '<main>Spottr</main>');
   assert.equal(await readFile(path.join(root, 'dist', 'server', 'index.js'), 'utf8'), 'export default {};');
+  const workerConfig = JSON.parse(
+    await readFile(path.join(root, 'dist', 'server', 'wrangler.json'), 'utf8'),
+  );
+  assert.deepEqual(workerConfig.assets, {
+    directory: '../client',
+    binding: 'ASSETS',
+    run_worker_first: true,
+  });
   assert.equal(
     await readFile(path.join(root, 'dist', '.openai', 'hosting.json'), 'utf8'),
     '{"project_id":"test"}',
   );
   await access(path.join(root, 'dist', 'client', 'spottr-icon.png'));
   await access(path.join(root, 'dist', 'client', 'spottr-icon-maskable.png'));
+  assert.equal(await readFile(path.join(root, 'dist', 'client', '.assetsignore'), 'utf8'), '.env\n');
   await assert.rejects(access(path.join(root, 'dist', 'index.html')));
 });
 

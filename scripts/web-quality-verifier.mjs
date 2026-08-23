@@ -108,7 +108,12 @@ export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
   const dist = path.join(projectRoot, 'dist');
   const staticRoot = path.join(dist, 'client');
   const errors = [];
-  for (const requiredFile of ['server/index.js', '.openai/hosting.json']) {
+  for (const requiredFile of [
+    'server/index.js',
+    'server/wrangler.json',
+    'client/.assetsignore',
+    '.openai/hosting.json',
+  ]) {
     try {
       if (!(await stat(path.join(dist, ...requiredFile.split('/')))).isFile()) throw new Error('not a file');
     } catch {

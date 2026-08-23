@@ -29,6 +29,14 @@ export async function prepareSitesBuild(projectRoot = resolve(import.meta.dirnam
   await mkdir(hostingMetadataDir, { recursive: false });
   await copyFile(resolve(projectRoot, 'hosting', 'worker.js'), resolve(serverOutputDir, 'index.js'));
   await copyFile(
+    resolve(projectRoot, 'hosting', 'wrangler.json'),
+    resolve(serverOutputDir, 'wrangler.json'),
+  );
+  await copyFile(
+    resolve(projectRoot, 'hosting', 'assetsignore'),
+    resolve(clientOutputDir, '.assetsignore'),
+  );
+  await copyFile(
     resolve(projectRoot, '.openai', 'hosting.json'),
     resolve(hostingMetadataDir, 'hosting.json'),
   );
