@@ -53,7 +53,7 @@ export function validateRouteHtml(relativePath, html) {
   if (!/<meta\s+http-equiv="Content-Security-Policy"/i.test(html)) {
     errors.push(`${relativePath}: missing browser-enforced content security policy.`);
   }
-  if (!/content="[^"]*object-src 'none'/i.test(html)) {
+  if (!/content="[^"]*object-src (?:'|&#x27;)none(?:'|&#x27;)/i.test(html)) {
     errors.push(`${relativePath}: content security policy must disable object embedding.`);
   }
   if (!/<meta\s+name="referrer"\s+content="strict-origin-when-cross-origin"/i.test(html)) {

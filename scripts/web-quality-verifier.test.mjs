@@ -26,6 +26,14 @@ test('route verifier accepts a zoomable semantic document', () => {
   assert.deepEqual(validateRouteHtml('index.html', VALID_HTML), []);
 });
 
+test('route verifier accepts React-encoded CSP directive quotes', () => {
+  const encoded = VALID_HTML.replace(
+    "object-src 'none'",
+    'object-src &#x27;none&#x27;',
+  );
+  assert.deepEqual(validateRouteHtml('index.html', encoded), []);
+});
+
 test('route verifier rejects zoom locks and focusable role-less divs', () => {
   const invalid = VALID_HTML
     .replace('initial-scale=1', 'initial-scale=1, maximum-scale=1, user-scalable=no')
