@@ -31,6 +31,8 @@ const validWorkflow = [
   command('supabase/tests/shadow_ordering_runtime_setup.sql'),
   command('supabase/migrations/20260802000000_shadow_ordering_foundation.sql'),
   command('supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql'),
+  command('supabase/migrations/20260901000000_shadow_order_merchant_queue.sql'),
+  command('supabase/migrations/20260902000000_shadow_order_transition_maintenance_hardening.sql'),
   command('supabase/tests/shadow_ordering_runtime_test.sql'),
   command('supabase/tests/zero_money_pickup_ordering_runtime_test.sql'),
   '  secret-history:',
@@ -118,8 +120,8 @@ test('requires the zero-money ordering migration and runtime proof in dependency
     ),
   ).some((error) => error.includes('zero_money_pickup_ordering_runtime_test.sql')));
   const reordered = validWorkflow.replace(
-    `${command('supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql')}\n${command('supabase/tests/shadow_ordering_runtime_test.sql')}`,
-    `${command('supabase/tests/shadow_ordering_runtime_test.sql')}\n${command('supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql')}`,
+    `${command('supabase/migrations/20260902000000_shadow_order_transition_maintenance_hardening.sql')}\n${command('supabase/tests/shadow_ordering_runtime_test.sql')}`,
+    `${command('supabase/tests/shadow_ordering_runtime_test.sql')}\n${command('supabase/migrations/20260902000000_shadow_order_transition_maintenance_hardening.sql')}`,
   );
   assert.ok(validateShadowOrderingVerticalSlice(reordered).some((error) => error.includes('dependency order')));
 });

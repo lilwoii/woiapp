@@ -172,6 +172,12 @@ jobs:
       - name: Apply zero-money pickup vertical slice
         run: psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql
 
+      - name: Apply merchant pickup queue projection
+        run: psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/migrations/20260901000000_shadow_order_merchant_queue.sql
+
+      - name: Apply merchant transition and expiry hardening
+        run: psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/migrations/20260902000000_shadow_order_transition_maintenance_hardening.sql
+
       - name: Exercise foundation ordering invariants and RLS
         run: |
           if ! output=$(psql -X -v ON_ERROR_STOP=1 -1 -h 127.0.0.1 -U postgres -d spottr_test -f supabase/tests/shadow_ordering_runtime_test.sql 2>&1); then

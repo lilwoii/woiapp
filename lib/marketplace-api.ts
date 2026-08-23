@@ -1,5 +1,6 @@
 import { toActionError } from '@/lib/errors';
 import { featureFlags } from '@/lib/features';
+import { mapLogoPaths } from '@/lib/map-inventory';
 import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
 import { supabase } from '@/lib/supabase';
 import {
@@ -529,7 +530,7 @@ export async function fetchMapFoodFeatures(
       requested_kinds: uniqueRequestedCategories,
       max_features: 1200,
     });
-    const logoPaths = mapRows.map((entry) => stringValue(entry.logo_path)).filter(Boolean);
+    const logoPaths = mapLogoPaths(mapRows);
     const logoUrls = await createSignedMediaUrls(logoPaths);
     const features: MapInventoryFeature[] = [];
 

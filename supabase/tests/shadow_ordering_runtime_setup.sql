@@ -34,7 +34,8 @@ create table public.profiles (
 create table public.businesses (
   id uuid primary key,
   state text not null,
-  kind text not null
+  kind text not null,
+  timezone text not null default 'UTC'
 );
 create table public.business_members (
   business_id uuid not null references public.businesses(id),
@@ -46,6 +47,11 @@ create table public.business_members (
 create table public.business_locations (
   id uuid primary key,
   business_id uuid not null references public.businesses(id),
+  label text not null default 'Test pickup site',
+  address_line text,
+  city text not null default 'Test City',
+  region text not null default 'CA',
+  postal_code text,
   unique (id, business_id)
 );
 create table public.mobile_stops (

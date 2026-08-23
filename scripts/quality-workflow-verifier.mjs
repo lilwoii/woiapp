@@ -112,6 +112,8 @@ export function validateShadowOrderingVerticalSlice(workflow) {
     'supabase/tests/shadow_ordering_runtime_setup.sql',
     'supabase/migrations/20260802000000_shadow_ordering_foundation.sql',
     'supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql',
+    'supabase/migrations/20260901000000_shadow_order_merchant_queue.sql',
+    'supabase/migrations/20260902000000_shadow_order_transition_maintenance_hardening.sql',
     'supabase/tests/shadow_ordering_runtime_test.sql',
     'supabase/tests/zero_money_pickup_ordering_runtime_test.sql',
   ];

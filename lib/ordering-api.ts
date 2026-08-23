@@ -3,6 +3,13 @@ import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 import type { ActionResult } from '@/types/marketplace';
 import type {
   ShadowCancellationAttempt,
+  ShadowMerchantOrderLine,
+  ShadowMerchantOrderOption,
+  ShadowMerchantPickupLocation,
+  ShadowMerchantQueueOrder,
+  ShadowMerchantTransitionAttempt,
+  ShadowMerchantTransitionReceipt,
+  ShadowMerchantTransitionState,
   ShadowOrderMenuItem,
   ShadowOrderOption,
   ShadowOrderOptionGroup,
@@ -117,6 +124,16 @@ function currencyValue(row: UnknownRow): string {
     throw new OrderingResponseError('Ordering response contains an invalid currency.');
   }
   return currency;
+}
+
+function timeZoneValue(row: UnknownRow, key: string): string {
+  const timeZone = stringValue(row, key, 80);
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date(0));
+  } catch {
+    throw new OrderingResponseError(`Ordering response contains an invalid ${key}.`);
+  }
+  return timeZone;
 }
 
 function acceptanceModeValue(row: UnknownRow): 'automatic' | 'manual' {
@@ -424,7 +441,165 @@ export function mapCancelledShadowOrderReceipt(
   return receipt;
 }
 
-function newIdempotencyKey(scope: 'cancel' | 'place' | 'quote') {
+function mapMerchantOrderOption(value: unknown): ShadowMerchantOrderOption {
+  const row = objectValue(value);
+  return Object.freeze({
+    groupName: stringValue(row, 'group_name', 80),
+    name: stringValue(row, 'option_name', 80),
+  });
+}
+
+function mapMerchantOrderLine(value: unknown): ShadowMerchantOrderLine {
+  const row = objectValue(value);
+  const options = arrayValue(row.options, 50).map(mapMerchantOrderOption);
+  return Object.freeze({
+    allergenNote: optionalStringValue(row, 'allergen_note', 500),
+    name: stringValue(row, 'name', 120),
+    quantity: integerValue(row, 'quantity', 1, 100),
+    options: Object.freeze(options),
+  });
+}
+
+function mapMerchantPickupLocation(row: UnknownRow): ShadowMerchantPickupLocation {
+  return Object.freeze({
+    locationId: uuidValue(row, 'location_id'),
+    mobileStopId: optionalUuidValue(row, 'mobile_stop_id'),
+    label: stringValue(row, 'location_label', 120),
+    addressLine: optionalStringValue(row, 'address_line', 300),
+    city: stringValue(row, 'city', 120),
+    region: stringValue(row, 'region', 80),
+    postalCode: optionalStringValue(row, 'postal_code', 24),
+    timeZone: timeZoneValue(row, 'time_zone'),
+  });
+}
+
+function mapMerchantQueueOrder(value: unknown): ShadowMerchantQueueOrder {
+  const row = objectValue(value);
+  const fulfillmentState = stringValue(row, 'fulfillment_state', 24);
+  if (!['accepted', 'pending_acceptance', 'preparing', 'ready'].includes(fulfillmentState)) {
+    throw new OrderingResponseError('Merchant queue contains an inactive order.');
+  }
+  const lines = arrayValue(row.items, 100).map(mapMerchantOrderLine);
+  if (!lines.length) throw new OrderingResponseError('Merchant queue order has no items.');
+  const itemCount = integerValue(row, 'item_count', 1, 10_000);
+  if (lines.reduce((total, line) => total + line.quantity, 0) !== itemCount) {
+    throw new OrderingResponseError('Merchant queue item count is inconsistent.');
+  }
+  const itemSubtotalMinor = integerValue(row, 'item_subtotal_minor', 0, 1_000_000_000);
+  const shadowDiscountMinor = integerValue(row, 'shadow_discount_minor', 0, 1_000_000_000);
+  const pickupStartsAt = isoDateValue(row, 'pickup_starts_at');
+  const pickupEndsAt = isoDateValue(row, 'pickup_ends_at');
+  const acceptanceExpiresAt = isoDateValue(row, 'acceptance_expires_at');
+  if (
+    Date.parse(pickupEndsAt) <= Date.parse(pickupStartsAt) ||
+    Date.parse(acceptanceExpiresAt) > Date.parse(pickupStartsAt) ||
+    row.payment_state !== 'not_required' ||
+    row.is_shadow !== true ||
+    integerValue(row, 'total_minor', 0, 0) !== 0 ||
+    shadowDiscountMinor !== itemSubtotalMinor
+  ) {
+    throw new OrderingResponseError('Merchant queue violates the zero-money pilot contract.');
+  }
+  return Object.freeze({
+    orderPublicId: uuidValue(row, 'order_public_id'),
+    fulfillmentState: fulfillmentState as ShadowMerchantQueueOrder['fulfillmentState'],
+    paymentState: 'not_required',
+    pickupStartsAt,
+    pickupEndsAt,
+    acceptanceExpiresAt,
+    version: integerValue(row, 'version', 1, 2_147_483_647),
+    itemCount,
+    itemSubtotalMinor,
+    shadowDiscountMinor,
+    totalMinor: 0,
+    currency: currencyValue(row),
+    isShadow: true,
+    pickupLocation: mapMerchantPickupLocation(row),
+    lines: Object.freeze(lines),
+  });
+}
+
+export function mapMerchantShadowOrderQueue(value: unknown): readonly ShadowMerchantQueueOrder[] {
+  const orders = arrayValue(value, 25).map(mapMerchantQueueOrder);
+  assertUnique(orders.map((order) => order.orderPublicId), 'merchant queue orders');
+  return Object.freeze(orders);
+}
+
+const merchantTransitionRules: Readonly<
+  Record<ShadowMerchantQueueOrder['fulfillmentState'], readonly ShadowMerchantTransitionState[]>
+> = {
+  pending_acceptance: ['accepted', 'rejected'],
+  accepted: ['preparing', 'cancelled'],
+  preparing: ['ready', 'cancelled'],
+  ready: ['completed', 'cancelled'],
+};
+
+function transitionReason(nextState: ShadowMerchantTransitionState) {
+  if (nextState === 'rejected') return 'merchant_rejected_unavailable' as const;
+  if (nextState === 'cancelled') return 'merchant_cancelled_unavailable' as const;
+  return null;
+}
+
+export function prepareMerchantShadowTransitionAttempt(
+  previous: ShadowMerchantTransitionAttempt | null,
+  businessId: string,
+  order: Pick<ShadowMerchantQueueOrder, 'fulfillmentState' | 'orderPublicId' | 'version'>,
+  nextState: ShadowMerchantTransitionState
+): ShadowMerchantTransitionAttempt {
+  assertUuidInput(businessId, 'This business link');
+  assertUuidInput(order.orderPublicId, 'This order');
+  if (!Number.isInteger(order.version) || order.version < 1 || order.version > 2_147_483_646) {
+    throw new OrderingInputError('This order version is invalid.');
+  }
+  if (!merchantTransitionRules[order.fulfillmentState].includes(nextState)) {
+    throw new OrderingInputError('Refresh the queue before changing this order.');
+  }
+  const reasonCode = transitionReason(nextState);
+  if (
+    previous?.businessId === businessId &&
+    previous.orderPublicId === order.orderPublicId &&
+    previous.expectedVersion === order.version &&
+    previous.nextState === nextState &&
+    previous.reasonCode === reasonCode
+  ) return previous;
+  return Object.freeze({
+    businessId,
+    orderPublicId: order.orderPublicId,
+    expectedVersion: order.version,
+    nextState,
+    reasonCode,
+    idempotencyKey: newIdempotencyKey('transition'),
+  });
+}
+
+export function mapMerchantShadowTransitionReceipt(
+  value: unknown,
+  attempt: Pick<
+    ShadowMerchantTransitionAttempt,
+    'businessId' | 'expectedVersion' | 'nextState' | 'orderPublicId'
+  >
+): ShadowMerchantTransitionReceipt {
+  const row = objectValue(value);
+  if (
+    uuidValue(row, 'order_public_id') !== attempt.orderPublicId ||
+    integerValue(row, 'version', 1, 2_147_483_647) !== attempt.expectedVersion + 1 ||
+    stringValue(row, 'fulfillment_state', 24) !== attempt.nextState ||
+    row.payment_state !== 'not_required' ||
+    row.is_shadow !== true
+  ) {
+    throw new OrderingResponseError('Merchant order result is not bound to this request.');
+  }
+  return Object.freeze({
+    businessId: attempt.businessId,
+    orderPublicId: attempt.orderPublicId,
+    version: attempt.expectedVersion + 1,
+    fulfillmentState: attempt.nextState,
+    paymentState: 'not_required',
+    isShadow: true,
+  });
+}
+
+function newIdempotencyKey(scope: 'cancel' | 'place' | 'quote' | 'transition') {
   const cryptoApi = globalThis.crypto;
   let nonce: string | undefined = cryptoApi?.randomUUID?.();
   if (!nonce && cryptoApi?.getRandomValues) {
@@ -572,6 +747,13 @@ export function orderingFailure(error: unknown, fallback: string): OrderingFailu
   if (candidate?.status === 401 || message.includes('auth_required') || message.includes('jwt')) {
     return { ok: false, code: 'AUTH_REQUIRED', reason: 'Sign in again before using the pickup pilot.' };
   }
+  if (message.includes('business_membership_required')) {
+    return {
+      ok: false,
+      code: 'FORBIDDEN',
+      reason: 'This account no longer has access to this business workspace.',
+    };
+  }
   if (
     candidate?.status === 403 ||
     candidate?.code === '42501' ||
@@ -591,6 +773,20 @@ export function orderingFailure(error: unknown, fallback: string): OrderingFailu
   }
   if (candidate?.code === 'P0002' || hasBusinessCode('ORDER_QUOTE_NOT_FOUND', 'ORDER_NOT_FOUND')) {
     return { ok: false, code: 'NOT_FOUND', reason: 'This pickup order is no longer available.' };
+  }
+  if (hasBusinessCode('ORDER_VERSION_CONFLICT', 'ORDER_TRANSITION_NOT_ALLOWED', 'ORDER_ACCEPTANCE_EXPIRED')) {
+    return {
+      ok: false,
+      code: 'CONFLICT',
+      reason: 'This order changed or its confirmation window ended. Refresh the queue before acting.',
+    };
+  }
+  if (hasBusinessCode('ORDER_QUEUE_TOO_LARGE')) {
+    return {
+      ok: false,
+      code: 'UNKNOWN',
+      reason: 'The pickup queue is temporarily too large to display safely.',
+    };
   }
   if (
     candidate?.code === '22023' ||
@@ -791,5 +987,54 @@ export async function cancelShadowOrder(
     return { ok: true, data: receipt };
   } catch (error) {
     return orderingFailure(error, 'The pickup pilot order could not be cancelled.');
+  }
+}
+
+export async function loadMerchantShadowOrderQueue(
+  businessId: string
+): Promise<ActionResult<readonly ShadowMerchantQueueOrder[]>> {
+  try {
+    assertUuidInput(businessId, 'This business link');
+    const client = await authorizedPilotClient();
+    const { data, error } = await client.rpc('get_business_shadow_order_queue', {
+      target_business_id: businessId,
+      result_limit: 25,
+    });
+    if (error) throw error;
+    return { ok: true, data: mapMerchantShadowOrderQueue(data) };
+  } catch (error) {
+    return orderingFailure(error, 'The protected pickup queue could not be loaded.');
+  }
+}
+
+export async function transitionMerchantShadowOrder(
+  attempt: ShadowMerchantTransitionAttempt
+): Promise<ActionResult<ShadowMerchantTransitionReceipt>> {
+  try {
+    assertUuidInput(attempt.businessId, 'This business link');
+    assertUuidInput(attempt.orderPublicId, 'This order');
+    if (
+      !Number.isInteger(attempt.expectedVersion) ||
+      attempt.expectedVersion < 1 ||
+      attempt.expectedVersion > 2_147_483_646
+    ) {
+      throw new OrderingInputError('This order version is invalid.');
+    }
+    if (transitionReason(attempt.nextState) !== attempt.reasonCode) {
+      throw new OrderingInputError('Choose a valid order action.');
+    }
+    assertKey(attempt.idempotencyKey);
+    const client = await authorizedPilotClient();
+    const { data, error } = await client.rpc('transition_shadow_order', {
+      target_order_public_id: attempt.orderPublicId,
+      expected_version: attempt.expectedVersion,
+      next_state: attempt.nextState,
+      reason_code: attempt.reasonCode,
+      idempotency_key: attempt.idempotencyKey,
+    });
+    if (error) throw error;
+    return { ok: true, data: mapMerchantShadowTransitionReceipt(data, attempt) };
+  } catch (error) {
+    return orderingFailure(error, 'The pickup order could not be updated.');
   }
 }

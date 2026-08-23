@@ -134,6 +134,20 @@ export async function runProductionMaintenance({
   ) {
     throw new Error('expire_shadow_order_quotes did not report bounded completion.');
   }
+  const orderExpiry = await requestJson(
+    fetchImpl,
+    'expire_shadow_orders',
+    `${restRoot}/expire_shadow_orders`,
+    { method: 'POST', headers: databaseHeaders, body: JSON.stringify({ batch_limit: 100 }) },
+  );
+  if (
+    !Number.isInteger(orderExpiry?.expired) ||
+    orderExpiry.expired < 0 ||
+    orderExpiry.more_work !== false ||
+    orderExpiry.skipped !== false
+  ) {
+    throw new Error('expire_shadow_orders did not report bounded completion.');
+  }
   const discoveryCleanup = await requestJson(
     fetchImpl,
     'cleanup_public_discovery_leases',
@@ -204,6 +218,7 @@ export async function runProductionMaintenance({
     mediaCleanup: 'complete',
     databaseCleanup: 'complete',
     quoteExpiry: 'complete',
+    orderExpiry: 'complete',
     providerLifecycle: 'complete',
     sponsoredReservations: 'complete',
     heartbeat: 'complete',

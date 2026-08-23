@@ -18,6 +18,7 @@ import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { OwnerUpdate } from '@/components/owner-update';
 import { PageShell } from '@/components/page-shell';
 import { SectionHeading } from '@/components/section-heading';
+import { ShadowOrderQueue } from '@/components/shadow-order-queue';
 import { StatusPill } from '@/components/status-pill';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -39,6 +40,7 @@ import {
   prepareBusinessResponseAttempt,
   submitBusinessResponse,
 } from '@/lib/business-responses';
+import { featureFlags } from '@/lib/features';
 import {
   createMarketplaceIdempotencyKey,
   setMenuItemAvailability,
@@ -692,6 +694,10 @@ export default function StudioScreen() {
               {feedback.text}
             </Text>
           </View>
+        ) : null}
+
+        {featureFlags.pickupOrdering && canOperate ? (
+          <ShadowOrderQueue businessId={place.id} key={place.id} />
         ) : null}
 
         <View style={[styles.columns, wide && styles.columnsWide]}>

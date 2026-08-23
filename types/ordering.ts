@@ -154,3 +154,70 @@ export type ShadowCancellationAttempt = Readonly<{
   reasonCode: 'customer_cancelled_before_acceptance';
   idempotencyKey: string;
 }>;
+
+export type ShadowMerchantOrderOption = Readonly<{
+  groupName: string;
+  name: string;
+}>;
+
+export type ShadowMerchantOrderLine = Readonly<{
+  allergenNote: string | null;
+  name: string;
+  quantity: number;
+  options: readonly ShadowMerchantOrderOption[];
+}>;
+
+export type ShadowMerchantPickupLocation = Readonly<{
+  locationId: string;
+  mobileStopId: string | null;
+  label: string;
+  addressLine: string | null;
+  city: string;
+  region: string;
+  postalCode: string | null;
+  timeZone: string;
+}>;
+
+export type ShadowMerchantQueueOrder = Readonly<{
+  orderPublicId: string;
+  fulfillmentState: 'accepted' | 'pending_acceptance' | 'preparing' | 'ready';
+  paymentState: 'not_required';
+  pickupStartsAt: string;
+  pickupEndsAt: string;
+  acceptanceExpiresAt: string;
+  version: number;
+  itemCount: number;
+  itemSubtotalMinor: number;
+  shadowDiscountMinor: number;
+  totalMinor: 0;
+  currency: string;
+  isShadow: true;
+  pickupLocation: ShadowMerchantPickupLocation;
+  lines: readonly ShadowMerchantOrderLine[];
+}>;
+
+export type ShadowMerchantTransitionState =
+  | 'accepted'
+  | 'cancelled'
+  | 'completed'
+  | 'preparing'
+  | 'ready'
+  | 'rejected';
+
+export type ShadowMerchantTransitionAttempt = Readonly<{
+  businessId: string;
+  orderPublicId: string;
+  expectedVersion: number;
+  nextState: ShadowMerchantTransitionState;
+  reasonCode: 'merchant_cancelled_unavailable' | 'merchant_rejected_unavailable' | null;
+  idempotencyKey: string;
+}>;
+
+export type ShadowMerchantTransitionReceipt = Readonly<{
+  businessId: string;
+  orderPublicId: string;
+  version: number;
+  fulfillmentState: ShadowMerchantTransitionState;
+  paymentState: 'not_required';
+  isShadow: true;
+}>;

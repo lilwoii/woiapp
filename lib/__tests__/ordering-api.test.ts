@@ -1,10 +1,13 @@
 import {
   mapCancelledShadowOrderReceipt,
+  mapMerchantShadowOrderQueue,
+  mapMerchantShadowTransitionReceipt,
   mapPlacedShadowOrderReceipt,
   mapShadowOrderQuote,
   mapShadowOrderReceipt,
   mapShadowOrderableMenu,
   orderingFailure,
+  prepareMerchantShadowTransitionAttempt,
   prepareShadowCancellationAttempt,
   prepareShadowPlacementAttempt,
   prepareShadowQuoteAttempt,
@@ -17,6 +20,7 @@ const ids = {
   group: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
   item: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
   location: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+  mobileStop: '55555555-5555-4555-8555-555555555555',
   option: '11111111-1111-4111-8111-111111111111',
   order: '22222222-2222-4222-8222-222222222222',
   quote: '33333333-3333-4333-8333-333333333333',
@@ -157,6 +161,42 @@ function receiptResponse(overrides: Record<string, unknown> = {}) {
     lines: quoteResponse().lines,
     ...overrides,
   };
+}
+
+function merchantQueueResponse() {
+  return [
+    {
+      order_public_id: ids.order,
+      fulfillment_state: 'pending_acceptance',
+      payment_state: 'not_required',
+      pickup_starts_at: pickupStartsAt,
+      pickup_ends_at: pickupEndsAt,
+      acceptance_expires_at: '2026-09-01T18:58:00.000Z',
+      location_id: ids.location,
+      mobile_stop_id: null,
+      location_label: 'Civic Center truck court',
+      address_line: '100 Market Street',
+      city: 'San Francisco',
+      region: 'CA',
+      postal_code: '94103',
+      time_zone: 'America/Los_Angeles',
+      version: 1,
+      item_count: 2,
+      item_subtotal_minor: 2600,
+      shadow_discount_minor: 2600,
+      total_minor: 0,
+      currency: 'USD',
+      is_shadow: true,
+      items: [
+        {
+          allergen_note: 'Prepared in a shared kitchen.',
+          name: 'Citrus taco',
+          quantity: 2,
+          options: [{ group_name: 'Heat', option_name: 'Medium' }],
+        },
+      ],
+    },
+  ];
 }
 
 describe('shadow ordering API contracts', () => {
@@ -325,11 +365,106 @@ describe('shadow ordering API contracts', () => {
     expect(cancellation.reasonCode).toBe('customer_cancelled_before_acceptance');
   });
 
+  it('maps a bounded zero-money merchant queue with exact item snapshots', () => {
+    const queue = mapMerchantShadowOrderQueue(merchantQueueResponse());
+    expect(queue).toHaveLength(1);
+    expect(queue[0].itemCount).toBe(2);
+    expect(queue[0].lines[0].allergenNote).toBe('Prepared in a shared kitchen.');
+    expect(queue[0].lines[0].options[0]).toEqual({ groupName: 'Heat', name: 'Medium' });
+    expect(queue[0].pickupLocation).toMatchObject({
+      label: 'Civic Center truck court',
+      locationId: ids.location,
+      mobileStopId: null,
+      timeZone: 'America/Los_Angeles',
+    });
+    expect(
+      mapMerchantShadowOrderQueue([
+        { ...merchantQueueResponse()[0], mobile_stop_id: ids.mobileStop },
+      ])[0].pickupLocation.mobileStopId
+    ).toBe(ids.mobileStop);
+    expect(Object.isFrozen(queue)).toBe(true);
+
+    expect(() =>
+      mapMerchantShadowOrderQueue([
+        { ...merchantQueueResponse()[0], payment_state: 'captured' },
+      ])
+    ).toThrow('zero-money pilot contract');
+    expect(() =>
+      mapMerchantShadowOrderQueue([
+        { ...merchantQueueResponse()[0], item_count: 1 },
+      ])
+    ).toThrow('item count is inconsistent');
+    expect(() =>
+      mapMerchantShadowOrderQueue([
+        merchantQueueResponse()[0],
+        { ...merchantQueueResponse()[0] },
+      ])
+    ).toThrow('duplicate merchant queue orders');
+    expect(() =>
+      mapMerchantShadowOrderQueue([
+        { ...merchantQueueResponse()[0], time_zone: 'Mars/Olympus' },
+      ])
+    ).toThrow('invalid time_zone');
+  });
+
+  it('retains merchant transition keys for one exact legal state change', () => {
+    const order = mapMerchantShadowOrderQueue(merchantQueueResponse())[0];
+    const accepted = prepareMerchantShadowTransitionAttempt(
+      null,
+      ids.business,
+      order,
+      'accepted'
+    );
+    expect(
+      prepareMerchantShadowTransitionAttempt(accepted, ids.business, order, 'accepted')
+    ).toBe(accepted);
+    expect(accepted.reasonCode).toBeNull();
+
+    const rejected = prepareMerchantShadowTransitionAttempt(
+      accepted,
+      ids.business,
+      order,
+      'rejected'
+    );
+    expect(rejected.idempotencyKey).not.toBe(accepted.idempotencyKey);
+    expect(rejected.reasonCode).toBe('merchant_rejected_unavailable');
+    expect(() =>
+      prepareMerchantShadowTransitionAttempt(null, ids.business, order, 'ready')
+    ).toThrow('Refresh the queue');
+
+    expect(
+      mapMerchantShadowTransitionReceipt(
+        {
+          order_public_id: ids.order,
+          version: 2,
+          fulfillment_state: 'accepted',
+          payment_state: 'not_required',
+          is_shadow: true,
+        },
+        accepted
+      ).fulfillmentState
+    ).toBe('accepted');
+    expect(() =>
+      mapMerchantShadowTransitionReceipt(
+        {
+          order_public_id: ids.order,
+          version: 3,
+          fulfillment_state: 'accepted',
+          payment_state: 'not_required',
+          is_shadow: true,
+        },
+        accepted
+      )
+    ).toThrow('not bound');
+  });
+
   it('maps server business failures to actionable fail-closed outcomes', () => {
     expect(orderingFailure({ message: 'ORDER_QUOTE_NOT_OPEN' }, 'fallback').code).toBe('CONFLICT');
     expect(orderingFailure({ message: 'ORDER_NOT_CANCELLABLE' }, 'fallback').code).toBe('CONFLICT');
     expect(orderingFailure({ message: 'ORDER_OPTION_SELECTIONS_INVALID' }, 'fallback').code).toBe('INVALID');
     expect(orderingFailure({ message: 'ORDER_QUOTE_TOO_LARGE', code: '22003' }, 'fallback').code).toBe('INVALID');
     expect(orderingFailure({ message: 'ORDER_NOT_FOUND', code: 'P0002' }, 'fallback').code).toBe('NOT_FOUND');
+    expect(orderingFailure({ message: 'ORDER_VERSION_CONFLICT', code: '40001' }, 'fallback').reason).toContain('Refresh');
+    expect(orderingFailure({ message: 'BUSINESS_MEMBERSHIP_REQUIRED', code: '42501' }, 'fallback').reason).toContain('business workspace');
   });
 });

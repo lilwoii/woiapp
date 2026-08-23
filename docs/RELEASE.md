@@ -373,19 +373,22 @@ The phase-O1 shadow-order migrations are deliberately zero-money and employee
 only. Apply and review
 `supabase/migrations/20260802000000_shadow_ordering_foundation.sql`, followed by
 `supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql`,
+`supabase/migrations/20260901000000_shadow_order_merchant_queue.sql`, and
+`supabase/migrations/20260902000000_shadow_order_transition_maintenance_hardening.sql`
 after the baseline schema. Together they provide the server-owned
-menu/quote/place/pending-cancel flow used by the staff pilot UI. Do not change
+menu/quote/place/pending-cancel flow plus the bounded, customer-identity-free
+merchant fulfillment queue used by the staff pilot UI. Do not change
 `pilot_mode` to `shadow` outside an internal operations environment until its
 RLS/runtime/concurrency tests have passed against the target Postgres instance.
-Neither migration authorizes or implements prepaid checkout.
+No migration in this chain authorizes or implements prepaid checkout.
 
 The zero-money placement and pending-cancellation client persists only the
 opaque operation IDs, versions, fixed reason, and original idempotency key before
 calling either mutation. A killed app must replay and clear that exact operation
 before another ordering mutation is enabled. Activate and verify the
-service-role-only `expire_shadow_order_quotes` production-maintenance pass before
-any internal pilot; a checked-in schedule is not evidence that its production
-secret, heartbeat, or alert is configured.
+service-role-only `expire_shadow_order_quotes` and `expire_shadow_orders`
+production-maintenance passes before any internal pilot; a checked-in schedule
+is not evidence that their production secret, heartbeat, or alert is configured.
 
 Keep `EXPO_PUBLIC_PICKUP_ORDERING_ENABLED=false` in every customer build until
 the full ordering program is approved. The flag exposes only the staff pilot

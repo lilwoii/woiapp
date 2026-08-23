@@ -62,6 +62,16 @@ begin
     )
     or has_function_privilege(
       'authenticated',
+      'public.expire_shadow_order_quotes(integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.expire_shadow_orders(integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
       'public.reconcile_licensed_provider_lifecycle(integer)',
       'execute'
     )

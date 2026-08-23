@@ -526,7 +526,11 @@ checkout evidence for exact signed binaries.
 
 The reviewed migrations
 `supabase/migrations/20260802000000_shadow_ordering_foundation.sql` and
-`supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql`
+`supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql`,
+plus the bounded merchant projection in
+`supabase/migrations/20260901000000_shadow_order_merchant_queue.sql` and the
+server-policy/expiry hardening in
+`supabase/migrations/20260902000000_shadow_order_transition_maintenance_hardening.sql`,
 provide an immutable catalog, expiring immutable quote snapshots, capacity
 locking, opaque order receipts, append-only event history, participant/owner
 RLS, idempotent menu/quote/place/cancel RPCs, rate limits, and audit events for
@@ -537,9 +541,10 @@ pending-owner cancellation releases its reserved bucket and merchant
 transitions release accepted capacity. Acceptance is deliberately manual-only
 in this slice: mode and timeout are copied into the immutable quote, and a
 settings change before placement invalidates the quote instead of silently
-changing its behavior. A service-role-only, overlap-safe maintenance RPC
-expires elapsed open quotes in bounded batches and is wired into the checked-in
-five-minute production maintenance control plane. It cannot
+changing its behavior. Service-role-only, overlap-safe maintenance RPCs expire
+elapsed open quotes and pending acceptance windows in bounded batches, release
+reserved capacity, and are wired into the checked-in five-minute production
+maintenance control plane. It cannot
 represent or create a charge: `payment_state` is constrained to
 `not_required`, every financial addition is constrained to zero, and every
 new menu/quote/place/cancel RPC requires an active AAL2 platform staff account plus
@@ -557,9 +562,16 @@ prices, contact data, or payment material—and is removed after confirmation.
 Compare/write/delete operations are serialized per account and business; web
 checkout fails closed when cross-tab Web Locks are unavailable, while the native
 client serializes its protected-store operations inside the app runtime.
-Merchant queue integration, notification outbox,
-support issue intake, and the operational pilot still require separate release
-evidence.
+The AAL2 business Studio now exposes the active internal queue with immutable
+item/modifier snapshots, exact pickup site or scheduled truck-stop context,
+explicit local dates/time zones, and optimistic order versions. It can accept, reject,
+start preparation, mark ready, complete, or cancel only through the existing
+server transition state machine. The queue is capped, response-size bounded,
+contains no customer identity or contact data, refreshes automatically, and
+reuses an action's idempotency key after an uncertain network result. Merchant
+reason codes are an exact server allowlist rather than a client convention. A
+notification outbox, support issue intake, and the operational pilot still
+require separate release evidence.
 
 The customer cancellation RPC is intentionally narrower than merchant
 operations: it only cancels `pending_acceptance` orders and releases their

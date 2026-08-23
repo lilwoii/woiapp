@@ -9,7 +9,9 @@ insert into auth.users values
 insert into public.profiles values
   ('11111111-1111-4111-8111-111111111111', 'active', now()),
   ('22222222-2222-4222-8222-222222222222', 'active', now());
-insert into public.businesses values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'published', 'food_truck');
+insert into public.businesses (id, state, kind, timezone) values (
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'published', 'food_truck', 'America/Los_Angeles'
+);
 insert into public.business_members values (
   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   '11111111-1111-4111-8111-111111111111',
@@ -18,8 +20,12 @@ insert into public.business_members values (
 insert into private.platform_roles values (
   '11111111-1111-4111-8111-111111111111', 'admin', true
 );
-insert into public.business_locations values (
-  'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+insert into public.business_locations (
+  id, business_id, label, address_line, city, region, postal_code
+) values (
+  'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  'Runtime truck court', '100 Test Street', 'Test City', 'CA', '90001'
 );
 insert into public.business_order_settings (
   business_id, pilot_mode, accepting_orders, refund_policy_version,
@@ -79,7 +85,7 @@ select public.create_shadow_order(
 ) as receipt;
 
 do $$
-declare original jsonb; replay jsonb; target_public_id uuid;
+declare original jsonb; replay jsonb; queue jsonb; target_public_id uuid;
 begin
   select receipt into original from first_receipt;
   replay := public.create_shadow_order(
@@ -102,6 +108,24 @@ begin
   if (select reserved_count from public.order_capacity_slots) <> 1 then
     raise exception 'capacity was not reserved';
   end if;
+  queue := public.get_business_shadow_order_queue(
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    25
+  );
+  if jsonb_array_length(queue) <> 1
+    or queue -> 0 ->> 'order_public_id' <> target_public_id::text
+    or queue -> 0 ->> 'payment_state' <> 'not_required'
+    or (queue -> 0 ->> 'total_minor')::integer <> 0
+    or (queue -> 0 ->> 'item_count')::integer <> 2
+    or jsonb_array_length(queue -> 0 -> 'items') <> 1
+    or queue -> 0 -> 'items' -> 0 ->> 'name' <> 'Runtime taco'
+    or queue -> 0 ->> 'location_id' <> 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    or queue -> 0 ->> 'location_label' <> 'Runtime truck court'
+    or queue -> 0 ->> 'time_zone' <> 'America/Los_Angeles'
+    or not (queue -> 0 ? 'mobile_stop_id')
+    or queue -> 0 -> 'mobile_stop_id' is distinct from 'null'::jsonb
+    or queue -> 0 ? 'customer_id'
+  then raise exception 'merchant queue projection failed closed'; end if;
 end;
 $$;
 

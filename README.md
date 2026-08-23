@@ -15,7 +15,7 @@ account, safety, review, claim, or business mutations.
 
 - Foreground-location or city/ZIP discovery, with no fabricated live-area
   fallback
-- Food-truck-first categories, map markers, and nearby ordering
+- Food-truck-first categories, distinctive map markers, and a gated employee-only zero-money pickup pilot
 - Nearby, Popular, and Trending views
 - Server-computed effective status from timezone-aware hours, special hours,
   mobile stops, and expiring owner overrides
@@ -26,7 +26,7 @@ account, safety, review, claim, or business mutations.
 - Email/password accounts, case-insensitive unique usernames, PKCE recovery,
   TOTP enrollment/challenge, and global sign-out
 - AAL2-gated business onboarding, draft configuration, claims, mobile-stop
-  scheduling, account export, and account deletion
+  scheduling, protected pickup fulfillment, account export, and account deletion
 - Safe public database projections for directory, contact, location, review,
   aggregate, status, update, and approved-media reads
 - Report and block flows, server-controlled moderation states, rate limits,

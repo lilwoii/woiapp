@@ -1,7 +1,9 @@
 \set ON_ERROR_STOP on
 
 -- Run after shadow_ordering_runtime_setup.sql, the foundation migration, and
--- 20260831000000_zero_money_pickup_ordering_vertical_slice.sql.  This is kept
+-- 20260831000000_zero_money_pickup_ordering_vertical_slice.sql, followed by
+-- the 20260901 merchant queue and 20260902 transition/maintenance hardening.
+-- This is kept
 -- as a standalone SQL probe so CI can run it without changing client code.
 
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', false);
@@ -536,9 +538,38 @@ begin
   end if;
 end;
 $$;
+do $$
+declare
+  order_public_id uuid := (
+    select (receipt ->> 'order_public_id')::uuid
+    from shadow_accepted_place_receipt
+  );
+begin
+  begin
+    perform public.transition_shadow_order(
+      order_public_id,
+      2,
+      'cancelled',
+      'forged_merchant_reason',
+      'merchant-forged-reason-key-0001'
+    );
+    raise exception 'merchant transition accepted a forged reason';
+  exception when others then
+    if sqlerrm = 'merchant transition accepted a forged reason'
+      or sqlerrm <> 'INVALID_ORDER_TRANSITION'
+    then raise; end if;
+  end;
+  if (select fulfillment_state from public.orders where public_id = order_public_id) <> 'accepted'
+    or (select accepted_count from public.order_capacity_slots
+        where id = 'acacacac-acac-4aca-8aca-acacacacacac') <> 1
+  then
+    raise exception 'forged merchant reason changed order or capacity';
+  end if;
+end;
+$$;
 select public.transition_shadow_order(
   (select (receipt ->> 'order_public_id')::uuid from shadow_accepted_place_receipt),
-  2, 'cancelled', 'merchant_cancelled', 'merchant-cancel-runtime-key-0001'
+  2, 'cancelled', 'merchant_cancelled_unavailable', 'merchant-cancel-runtime-key-0001'
 );
 
 insert into public.mobile_stops (
@@ -589,6 +620,40 @@ begin
   end if;
 end;
 $$;
+
+-- Seed one real pending order, then age only its acceptance deadline to prove
+-- that the service-only worker releases reserved capacity and appends the
+-- server-owned acceptance_timeout event.
+insert into public.order_capacity_slots (
+  id, business_id, location_id, starts_at, ends_at, capacity
+) values (
+  'b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  now() + interval '40 minutes', now() + interval '110 minutes', 1
+);
+create temporary table shadow_expiring_order_quote_receipt as
+select public.quote_shadow_order(
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  'b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0',
+  now() + interval '50 minutes', now() + interval '65 minutes',
+  '[{"item_version_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","quantity":1,"option_version_ids":[]}]'::jsonb,
+  'quote-shadow-expiring-order-key-0001'
+) as receipt;
+create temporary table shadow_expiring_order_place_receipt as
+select public.place_shadow_order(
+  (select (receipt ->> 'quote_public_id')::uuid
+    from shadow_expiring_order_quote_receipt),
+  1,
+  'place-shadow-expiring-order-key-0001'
+) as receipt;
+update public.orders
+set created_at = now() - interval '10 minutes',
+    acceptance_expires_at = now() - interval '1 minute'
+where public_id = (
+  select (receipt ->> 'order_public_id')::uuid
+  from shadow_expiring_order_place_receipt
+);
 
 -- Seed an already-expired open quote only as test fixture data.  The public
 -- RPC cannot forge expiry because the quote snapshot/expiry fields are
@@ -652,6 +717,14 @@ select set_config('request.jwt.claim.role', 'authenticated', false);
 do $$
 begin
   begin
+    perform public.expire_shadow_orders(1);
+    raise exception 'authenticated order expiry unexpectedly succeeded';
+  exception when others then
+    if sqlerrm = 'authenticated order expiry unexpectedly succeeded'
+      or sqlerrm <> 'SERVICE_ROLE_REQUIRED'
+    then raise; end if;
+  end;
+  begin
     perform public.expire_shadow_order_quotes(1);
     raise exception 'authenticated expiry maintenance unexpectedly succeeded';
   exception when others then
@@ -665,7 +738,38 @@ select set_config('request.jwt.claim.role', 'service_role', false);
 do $$
 declare
   maintenance jsonb;
+  expiring_order_public_id uuid := (
+    select (receipt ->> 'order_public_id')::uuid
+    from shadow_expiring_order_place_receipt
+  );
 begin
+  select public.expire_shadow_orders(1) into maintenance;
+  if (maintenance ->> 'expired')::integer <> 1
+    or (maintenance ->> 'more_work')::boolean
+    or (maintenance ->> 'skipped')::boolean
+    or (select fulfillment_state from public.orders
+        where public_id = expiring_order_public_id) <> 'cancelled'
+    or (select reserved_count from public.order_capacity_slots
+        where id = 'b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0') <> 0
+    or not exists (
+      select 1
+      from public.order_events event
+      join public.orders order_row on order_row.id = event.order_id
+      where order_row.public_id = expiring_order_public_id
+        and event.actor_type = 'system'
+        and event.reason_code = 'acceptance_timeout'
+    )
+  then
+    raise exception 'expired order maintenance failed to release capacity safely';
+  end if;
+  select public.expire_shadow_orders(10) into maintenance;
+  if (maintenance ->> 'expired')::integer <> 0
+    or (maintenance ->> 'more_work')::boolean
+    or (maintenance ->> 'skipped')::boolean
+  then
+    raise exception 'expired order maintenance was not safely repeatable';
+  end if;
+
   select public.expire_shadow_order_quotes(1) into maintenance;
   if (maintenance ->> 'expired')::integer <> 1
     or not (maintenance ->> 'more_work')::boolean
