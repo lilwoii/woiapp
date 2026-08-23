@@ -72,11 +72,11 @@ function sessionChanged(): Extract<ActionResult, { ok: false }> {
 export async function getMfaOverview(
   expectedUserId?: string
 ): Promise<ActionResult<MfaOverview>> {
-  const authenticated = await requireAuthenticatedClient();
-  if (!authenticated.ok) return authenticated.result;
-  if (expectedUserId && authenticated.userId !== expectedUserId) return sessionChanged();
-
   try {
+    const authenticated = await requireAuthenticatedClient();
+    if (!authenticated.ok) return authenticated.result;
+    if (expectedUserId && authenticated.userId !== expectedUserId) return sessionChanged();
+
     const [factorsResult, assuranceResult] = await Promise.all([
       authenticated.client.auth.mfa.listFactors(),
       authenticated.client.auth.mfa.getAuthenticatorAssuranceLevel(),

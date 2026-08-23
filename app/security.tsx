@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -35,31 +35,32 @@ export default function SecurityScreen() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
-  const currentAccountId = useRef(auth.account?.id);
-  currentAccountId.current = auth.account?.id;
-
-  const load = useCallback(async () => {
-    const expectedUserId = auth.account?.id;
-    if (auth.status !== 'authenticated' || !expectedUserId) {
-      setOverview(null);
-      setBusy(false);
-      return;
-    }
-    setBusy(true);
-    const result = await getMfaOverview(expectedUserId);
-    if (currentAccountId.current !== expectedUserId) return;
-    setBusy(false);
-    if (!result.ok) {
-      setFeedback({ type: 'error', text: result.reason });
-      return;
-    }
-    setOverview(result.data ?? null);
-  }, [auth.account?.id, auth.status]);
 
   useEffect(() => {
-    const timer = setTimeout(() => void load(), 0);
-    return () => clearTimeout(timer);
-  }, [load]);
+    let cancelled = false;
+    const expectedUserId = auth.account?.id;
+    const timer = setTimeout(() => {
+      if (auth.status !== 'authenticated' || !expectedUserId) {
+        setOverview(null);
+        setBusy(false);
+        return;
+      }
+      setBusy(true);
+      void getMfaOverview(expectedUserId).then((result) => {
+        if (cancelled) return;
+        setBusy(false);
+        if (!result.ok) {
+          setFeedback({ type: 'error', text: result.reason });
+          return;
+        }
+        setOverview(result.data ?? null);
+      });
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [auth.account?.id, auth.status]);
 
   const beginEnrollment = async () => {
     setBusy(true);
