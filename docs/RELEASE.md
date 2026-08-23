@@ -251,6 +251,17 @@ production if it was built without real backend/runtime configuration. Record
 the version ID, commit SHA, access level, URL, deployment result, UTC timestamp,
 and post-deploy QA evidence.
 
+The connected owner-only Sites preview currently serves static assets ahead of
+the checked-in Worker and ignores both the packaged `_headers` policy and the
+Worker-first setting. The exported HTML therefore includes a browser-enforced
+Content Security Policy and referrer-policy fallback, but the host does not emit
+the required CSP, HSTS, anti-framing, content-type, or permissions response
+headers. This is an environment limitation, not a passed security control.
+Before public access is allowed, deploy the exact approved artifact behind a
+host or custom edge that emits the complete policy in `hosting/headers`, then
+retain live response-header and browser evidence for every public route. Keep
+the Sites project owner-only until that evidence passes.
+
 ## 5. Signed mobile release
 
 Native Metro exports are smoke tests, not installable or signed releases.
@@ -358,13 +369,23 @@ plain-language explanation controls. Consumer food checkout and merchant digital
 purchases have different Apple/Google payment-policy boundaries; the exact
 regional implementation requires current store and legal review.
 
-The phase-O1 shadow-order migration is deliberately zero-money and employee
+The phase-O1 shadow-order migrations are deliberately zero-money and employee
 only. Apply and review
-`supabase/migrations/20260802000000_shadow_ordering_foundation.sql` after the
-baseline schema. Do not change `pilot_mode` to `shadow` outside an internal
-operations environment until its RLS/runtime/concurrency tests have passed
-against the target Postgres instance. This migration does not authorize or
-implement prepaid checkout.
+`supabase/migrations/20260802000000_shadow_ordering_foundation.sql`, followed by
+`supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql`,
+after the baseline schema. Together they provide the server-owned
+menu/quote/place/pending-cancel flow used by the staff pilot UI. Do not change
+`pilot_mode` to `shadow` outside an internal operations environment until its
+RLS/runtime/concurrency tests have passed against the target Postgres instance.
+Neither migration authorizes or implements prepaid checkout.
+
+The zero-money placement and pending-cancellation client persists only the
+opaque operation IDs, versions, fixed reason, and original idempotency key before
+calling either mutation. A killed app must replay and clear that exact operation
+before another ordering mutation is enabled. Activate and verify the
+service-role-only `expire_shadow_order_quotes` production-maintenance pass before
+any internal pilot; a checked-in schedule is not evidence that its production
+secret, heartbeat, or alert is configured.
 
 Keep `EXPO_PUBLIC_PICKUP_ORDERING_ENABLED=false` in every customer build until
 the full ordering program is approved. The flag exposes only the staff pilot
@@ -476,6 +497,8 @@ The repository cannot supply or invent:
 - APNs/FCM, email-provider, map-provider, or observability credentials;
 - Apple/Google developer accounts, signing keys, signed builds, store review, or
   approval;
+- a public web host or custom edge proven to emit the checked-in CSP, HSTS,
+  anti-framing, content-type, referrer, and permissions response headers;
 - independent penetration, legal, privacy, accessibility, and load-test
   sign-off.
 

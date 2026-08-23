@@ -10,6 +10,7 @@ import {
   validateSbomImplementationContract,
   validateSbomPackageContract,
   validateSecretHistoryGate,
+  validateShadowOrderingVerticalSlice,
   validateSitesReleaseArtifactGate,
   validateTextIntegrityGate,
 } from './quality-workflow-verifier.mjs';
@@ -23,12 +24,15 @@ const validWorkflow = [
   '          version: 2.84.2',
   '      - run: npm run test:db-runtime',
   '      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6',
+  '  shadow-ordering-db:',
   `if ${command('supabase/tests/psql_fail_fast_probe.sql')}; then`,
   '  exit 1',
   'fi',
   command('supabase/tests/shadow_ordering_runtime_setup.sql'),
   command('supabase/migrations/20260802000000_shadow_ordering_foundation.sql'),
+  command('supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql'),
   command('supabase/tests/shadow_ordering_runtime_test.sql'),
+  command('supabase/tests/zero_money_pickup_ordering_runtime_test.sql'),
   '  secret-history:',
   '    permissions:',
   '      contents: read',
@@ -103,6 +107,21 @@ const validWorkflow = [
 
 test('accepts transactional fail-fast SQL commands and a guarded failure probe', () => {
   assert.deepEqual(validatePostgresCommands(validWorkflow), []);
+});
+
+test('requires the zero-money ordering migration and runtime proof in dependency order', () => {
+  assert.deepEqual(validateShadowOrderingVerticalSlice(validWorkflow), []);
+  assert.ok(validateShadowOrderingVerticalSlice(
+    validWorkflow.replace(
+      command('supabase/tests/zero_money_pickup_ordering_runtime_test.sql'),
+      'echo skipped',
+    ),
+  ).some((error) => error.includes('zero_money_pickup_ordering_runtime_test.sql')));
+  const reordered = validWorkflow.replace(
+    `${command('supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql')}\n${command('supabase/tests/shadow_ordering_runtime_test.sql')}`,
+    `${command('supabase/tests/shadow_ordering_runtime_test.sql')}\n${command('supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql')}`,
+  );
+  assert.ok(validateShadowOrderingVerticalSlice(reordered).some((error) => error.includes('dependency order')));
 });
 
 test('rejects a migration command that could continue after a SQL error', () => {

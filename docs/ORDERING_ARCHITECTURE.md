@@ -524,16 +524,47 @@ checkout evidence for exact signed binaries.
   behind server/client feature flags defaulted off.
 - Run employee-only zero-money shadow orders to verify timing and operations.
 
-The reviewed migration
-`supabase/migrations/20260802000000_shadow_ordering_foundation.sql` now provides
-an immutable catalog, capacity locking, opaque order receipts, append-only
-event history, participant RLS, idempotent creation and merchant transitions,
-rate limits, and audit events for employee-only zero-money shadow orders. It
-cannot represent or create a charge: `payment_state` is constrained to
-`not_required`, every financial addition is constrained to zero, and creation
-requires AAL2 platform staff. Cart/quote UX, modifier selection, notification
-outbox, support issue intake, scheduled expiry, and an operations pilot remain
-before phase O1 is complete.
+The reviewed migrations
+`supabase/migrations/20260802000000_shadow_ordering_foundation.sql` and
+`supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql`
+provide an immutable catalog, expiring immutable quote snapshots, capacity
+locking, opaque order receipts, append-only event history, participant/owner
+RLS, idempotent menu/quote/place/cancel RPCs, rate limits, and audit events for
+employee-only zero-money shadow orders. The vertical slice derives every item,
+modifier, pickup binding, policy version, and money field on the server. A
+quote never consumes capacity; placement locks and consumes one slot, while
+pending-owner cancellation releases its reserved bucket and merchant
+transitions release accepted capacity. Acceptance is deliberately manual-only
+in this slice: mode and timeout are copied into the immutable quote, and a
+settings change before placement invalidates the quote instead of silently
+changing its behavior. A service-role-only, overlap-safe maintenance RPC
+expires elapsed open quotes in bounded batches and is wired into the checked-in
+five-minute production maintenance control plane. It cannot
+represent or create a charge: `payment_state` is constrained to
+`not_required`, every financial addition is constrained to zero, and every
+new menu/quote/place/cancel RPC requires an active AAL2 platform staff account plus
+`pilot_mode = 'shadow'`. Public/live ordering and payment remain disabled and
+fail closed. The staff client now renders the server-owned menu, modifiers,
+capacity windows, expiring quote, zero-money receipt, and pending cancellation;
+it rejects malformed or non-zero server responses. Before either placement or
+cancellation can mutate server state, the client durably stores the original
+idempotency attempt in device-protected native storage or origin-scoped web
+storage. A killed or disconnected client replays that exact request and blocks
+new ordering mutations until the result is confirmed, preventing a fresh key
+from creating a duplicate. The record contains scoped opaque IDs, versions, the
+fixed cancellation reason, a retry key, and a timestamp—never menu contents,
+prices, contact data, or payment material—and is removed after confirmation.
+Compare/write/delete operations are serialized per account and business; web
+checkout fails closed when cross-tab Web Locks are unavailable, while the native
+client serializes its protected-store operations inside the app runtime.
+Merchant queue integration, notification outbox,
+support issue intake, and the operational pilot still require separate release
+evidence.
+
+The customer cancellation RPC is intentionally narrower than merchant
+operations: it only cancels `pending_acceptance` orders and releases their
+reserved slot. Once a merchant accepts an order, only the existing AAL2
+merchant transition path can resolve that commitment.
 
 ### Phase O2 — capped prepaid pickup pilot
 

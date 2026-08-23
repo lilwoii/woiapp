@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: 22.13.1
 
-      - name: Run bounded deletion, media, and privacy cleanup
+      - name: Run bounded deletion, media, ordering, and privacy cleanup
         env:
           SPOTTR_MAINTENANCE_SUPABASE_URL: ${{ secrets.SPOTTR_MAINTENANCE_SUPABASE_URL }}
           SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY: ${{ secrets.SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY }}

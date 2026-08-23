@@ -1,6 +1,6 @@
 # Production maintenance control plane
 
-Spottr has seven privacy-, finance-, and lifecycle-critical maintenance operations. They
+Spottr has eight privacy-, ordering-, finance-, and lifecycle-critical maintenance operations. They
 must run without relying on a customer to retry a request or an operator to
 remember a dashboard action:
 
@@ -11,6 +11,8 @@ remember a dashboard action:
   and other bounded chat data;
 - `cleanup_unavailable_meeting_place_requests` cancels meetup choices whose
   licensed public place is no longer usable;
+- `expire_shadow_order_quotes` persists expiry for elapsed zero-money pickup
+  quotes in a bounded, overlap-safe service-only pass;
 - `cleanup_public_discovery_leases` removes expired discovery leases and old
   HMAC-only rate buckets in bounded batches.
 - `reconcile_licensed_provider_lifecycle` hides missing, stale, inactive,
@@ -25,7 +27,7 @@ The checked-in
 [`production-maintenance.yml`](../.github/workflows/production-maintenance.yml)
 runs the bounded maintenance client every five minutes and on manual dispatch.
 The client performs at most ten account-deletion worker calls, one media cleanup,
-and all five database cleanup RPCs. It sends a success heartbeat only after the
+and all six database cleanup RPCs. It sends a success heartbeat only after the
 deletion worker reaches `idle` or an accepted retryable `waiting` state and every
 other cleanup reports bounded completion. Exhausting ten deletion calls with
 `deleted` or `more_work` still reported fails the run and withholds the heartbeat.
@@ -68,7 +70,7 @@ unnecessary duplicate work.
    summary with call counts; inspect GitHub secret masking and confirm no response
    bodies are present.
 4. Create a staged asynchronous account deletion, expired meetup disclosure,
-   unavailable licensed place, expired typing state, cleanup-eligible media
+   unavailable licensed place, expired zero-money pickup quote, expired typing state, cleanup-eligible media
    object, expired discovery lease, old discovery rate bucket, stale provider
    source, archive-eligible unclaimed provider listing, and expired sponsored
    reservation. Verify each
@@ -77,7 +79,9 @@ unnecessary duplicate work.
    bounded pass completes the other cleanups but withholds its heartbeat until a
    later pass observes `idle` or `waiting`. Seed more than one discovery-cleanup
    batch and verify the reported backlog withholds the success heartbeat until a
-   later run drains it.
+   later run drains it. Seed more than one quote-expiry batch and verify both
+   backlog and overlapping-worker receipts withhold the heartbeat until a later
+   non-overlapping pass reports bounded completion.
    Hold one discovery admission lock, the provider-lifecycle advisory lock, and
    the sponsored-reservation advisory lock during separate cleanup passes and
    verify each skipped operation withholds

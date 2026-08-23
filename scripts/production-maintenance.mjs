@@ -120,6 +120,20 @@ export async function runProductionMaintenance({
     `${restRoot}/cleanup_unavailable_meeting_place_requests`,
     { method: 'POST', headers: databaseHeaders, body: '{}' },
   );
+  const quoteExpiry = await requestJson(
+    fetchImpl,
+    'expire_shadow_order_quotes',
+    `${restRoot}/expire_shadow_order_quotes`,
+    { method: 'POST', headers: databaseHeaders, body: JSON.stringify({ batch_limit: 200 }) },
+  );
+  if (
+    !Number.isInteger(quoteExpiry?.expired) ||
+    quoteExpiry.expired < 0 ||
+    quoteExpiry.more_work !== false ||
+    quoteExpiry.skipped !== false
+  ) {
+    throw new Error('expire_shadow_order_quotes did not report bounded completion.');
+  }
   const discoveryCleanup = await requestJson(
     fetchImpl,
     'cleanup_public_discovery_leases',
@@ -189,6 +203,7 @@ export async function runProductionMaintenance({
     deletionStatus,
     mediaCleanup: 'complete',
     databaseCleanup: 'complete',
+    quoteExpiry: 'complete',
     providerLifecycle: 'complete',
     sponsoredReservations: 'complete',
     heartbeat: 'complete',

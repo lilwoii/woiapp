@@ -21,7 +21,9 @@ function hasReadOnlyContentsPermission(job) {
 export function validatePostgresCommands(workflow) {
   const errors = [];
   const commands = workflow.split(/\r?\n/).filter((line) => /\bpsql\b/.test(line));
-  if (commands.length < 4) errors.push('Quality workflow must exercise the fail-fast probe and three runtime SQL stages.');
+  if (commands.length < 6) {
+    errors.push('Quality workflow must exercise the fail-fast probe and five runtime SQL stages.');
+  }
   for (const command of commands) {
     if (!command.includes(' -X ')) errors.push(`psql command does not disable startup files: ${command.trim()}`);
     if (!command.includes(' -v ON_ERROR_STOP=1 ')) errors.push(`psql command is not fail-fast: ${command.trim()}`);
@@ -99,6 +101,37 @@ export function validateSitesReleaseArtifactGate(workflow) {
   }
   if (validateJob.includes('continue-on-error')) {
     errors.push('Sites release artifact path must remain fail closed.');
+  }
+  return errors;
+}
+
+export function validateShadowOrderingVerticalSlice(workflow) {
+  const job = jobBody(workflow, 'shadow-ordering-db');
+  if (!job) return ['Quality workflow must include the shadow-ordering database job.'];
+  const required = [
+    'supabase/tests/shadow_ordering_runtime_setup.sql',
+    'supabase/migrations/20260802000000_shadow_ordering_foundation.sql',
+    'supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql',
+    'supabase/tests/shadow_ordering_runtime_test.sql',
+    'supabase/tests/zero_money_pickup_ordering_runtime_test.sql',
+  ];
+  const indices = required.map((token) => job.indexOf(token));
+  const errors = [];
+  for (let index = 0; index < required.length; index += 1) {
+    if (indices[index] < 0) {
+      errors.push(`Shadow-ordering runtime is missing: ${required[index]}`);
+    }
+  }
+  if (indices.every((index) => index >= 0)) {
+    for (let index = 1; index < indices.length; index += 1) {
+      if (indices[index] <= indices[index - 1]) {
+        errors.push('Shadow-ordering migrations and runtime probes must run in dependency order.');
+        break;
+      }
+    }
+  }
+  if (job.includes('continue-on-error')) {
+    errors.push('Shadow-ordering runtime must fail closed.');
   }
   return errors;
 }
@@ -333,6 +366,7 @@ export async function verifyQualityWorkflow(projectRoot = PROJECT_ROOT) {
   const lockfile = JSON.parse(rawLockfile);
   const errors = [
     ...validatePostgresCommands(workflow),
+    ...validateShadowOrderingVerticalSlice(workflow),
     ...validateFullRuntimeGate(workflow),
     ...validatePinnedActions(workflow),
     ...validateMaintenanceGate(workflow),

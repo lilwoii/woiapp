@@ -173,6 +173,7 @@ export type ActionResult<T = undefined> =
         | 'AUTH_REQUIRED'
         | 'CONFIG_REQUIRED'
         | 'CONFLICT'
+        | 'FORBIDDEN'
         | 'INVALID'
         | 'NETWORK'
         | 'NOT_FOUND'
