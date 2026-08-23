@@ -138,6 +138,23 @@ export async function runProductionMaintenance({
     throw new Error('cleanup_public_discovery_leases did not report bounded completion.');
   }
 
+  const providerLifecycle = await requestJson(
+    fetchImpl,
+    'reconcile_licensed_provider_lifecycle',
+    `${restRoot}/reconcile_licensed_provider_lifecycle`,
+    { method: 'POST', headers: databaseHeaders, body: '{}' },
+  );
+  if (
+    typeof providerLifecycle?.sources_marked_stale !== 'number' ||
+    typeof providerLifecycle?.businesses_archived !== 'number' ||
+    providerLifecycle.sources_marked_stale < 0 ||
+    providerLifecycle.businesses_archived < 0 ||
+    providerLifecycle.more_work !== false ||
+    providerLifecycle.skipped !== false
+  ) {
+    throw new Error('reconcile_licensed_provider_lifecycle did not report bounded completion.');
+  }
+
   // A success heartbeat must mean the bounded deletion pass reached a known
   // resting state. Ten consecutive work responses leave the queue state
   // uncertain, so fail closed after completing the other privacy cleanups.
@@ -157,6 +174,7 @@ export async function runProductionMaintenance({
     deletionStatus,
     mediaCleanup: 'complete',
     databaseCleanup: 'complete',
+    providerLifecycle: 'complete',
     heartbeat: 'complete',
   };
   log(JSON.stringify(summary));

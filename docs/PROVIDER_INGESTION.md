@@ -329,6 +329,12 @@ error codes and intentionally logs none of those values.
   hash detection, PostGIS materialization, and query plans at the contractual
   maximum batch size. Static SQL assertions are not a substitute for those
   database tests.
+- The checked-in lifecycle worker hides non-active licensed sources, marks old
+  missing sources stale, and archives only unclaimed provider-owned listings
+  after all source grace periods. Production still requires staged evidence for
+  multi-provider grace timing, active-owner and approved-claim preservation,
+  advisory-lock contention, bounded backlog draining, audit receipts, and the
+  missed-heartbeat alert before provider ingestion may be enabled.
 - `supabase/config.toml` delegates gateway authentication to the checked-in HMAC
   contract. The server environment and provider-specific secrets still require
   controlled production configuration after migration approval.

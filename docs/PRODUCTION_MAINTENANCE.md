@@ -1,6 +1,6 @@
 # Production maintenance control plane
 
-Spottr has five privacy- and lifecycle-critical maintenance operations. They
+Spottr has six privacy- and lifecycle-critical maintenance operations. They
 must run without relying on a customer to retry a request or an operator to
 remember a dashboard action:
 
@@ -13,12 +13,16 @@ remember a dashboard action:
   licensed public place is no longer usable;
 - `cleanup_public_discovery_leases` removes expired discovery leases and old
   HMAC-only rate buckets in bounded batches.
+- `reconcile_licensed_provider_lifecycle` hides missing, stale, inactive,
+  disabled, or unlicensed provider sources from public discovery, advances
+  missing sources to stale, and archives only unclaimed provider-owned listings
+  after every source's configured archive grace period.
 
 The checked-in
 [`production-maintenance.yml`](../.github/workflows/production-maintenance.yml)
 runs the bounded maintenance client every five minutes and on manual dispatch.
 The client performs at most ten account-deletion worker calls, one media cleanup,
-and all three database cleanup RPCs. It sends a success heartbeat only after the
+and all four database cleanup RPCs. It sends a success heartbeat only after the
 deletion worker reaches `idle` or an accepted retryable `waiting` state and every
 other cleanup reports bounded completion. Exhausting ten deletion calls with
 `deleted` or `more_work` still reported fails the run and withholds the heartbeat.
@@ -62,15 +66,18 @@ unnecessary duplicate work.
    bodies are present.
 4. Create a staged asynchronous account deletion, expired meetup disclosure,
    unavailable licensed place, expired typing state, cleanup-eligible media
-   object, expired discovery lease, and old discovery rate bucket. Verify each
+   object, expired discovery lease, old discovery rate bucket, stale provider
+   source, and archive-eligible unclaimed provider listing. Verify each
    reaches its documented terminal state and storage is deleted before database
    finalization. Seed more than ten account-deletion work items and verify the
    bounded pass completes the other cleanups but withholds its heartbeat until a
    later pass observes `idle` or `waiting`. Seed more than one discovery-cleanup
    batch and verify the reported backlog withholds the success heartbeat until a
    later run drains it.
-   Hold one discovery admission lock during a cleanup pass and verify that its
-   skipped operation also withholds the heartbeat.
+   Hold one discovery admission lock and the provider-lifecycle advisory lock
+   during separate cleanup passes and verify each skipped operation withholds
+   the heartbeat. Confirm active owners and approved ownership claims prevent
+   provider lifecycle archival.
 5. Confirm the external heartbeat and missed-heartbeat alert, then inject one
    invalid worker secret and verify the workflow fails without pinging success.
 6. Record commit SHA, workflow run URL, Supabase project, UTC timestamps,

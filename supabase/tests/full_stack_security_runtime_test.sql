@@ -60,6 +60,11 @@ begin
       'public.cleanup_marketplace_chat_ephemera()',
       'execute'
     )
+    or has_function_privilege(
+      'authenticated',
+      'public.reconcile_licensed_provider_lifecycle(integer)',
+      'execute'
+    )
   then
     raise exception 'Authenticated users can execute a service-only maintenance RPC';
   end if;
@@ -289,6 +294,106 @@ begin
   end if;
 end;
 $publication_authority$;
+
+insert into private.provider_accounts (
+  provider_slug,
+  enabled,
+  stale_after,
+  archive_after,
+  license_agreement_id,
+  license_effective_on,
+  license_expires_on,
+  allowed_field_classes,
+  accepted_signing_key_ids,
+  retention_terms,
+  deletion_terms,
+  configuration_version
+)
+values (
+  'runtime_provider',
+  true,
+  interval '1 day',
+  interval '30 days',
+  'runtime-license',
+  current_date - 30,
+  current_date + 30,
+  array['profile']::text[],
+  array['runtime-key']::text[],
+  'Runtime retention terms',
+  'Runtime deletion terms',
+  'runtime-v1'
+);
+
+insert into private.provider_business_sources (
+  provider_slug,
+  provider_external_id,
+  business_id,
+  source_status,
+  source_updated_at,
+  first_seen_at,
+  last_seen_at,
+  missing_since,
+  license_agreement_id,
+  normalized_payload_hash
+)
+values (
+  'runtime_provider',
+  'runtime-missing-listing',
+  '70000000-0000-4000-8000-000000000007',
+  'missing',
+  now() - interval '3 days',
+  now() - interval '3 days',
+  now() - interval '3 days',
+  now() - interval '2 days',
+  'runtime-license',
+  repeat('c', 64)
+);
+
+do $provider_lifecycle$
+declare
+  result jsonb;
+begin
+  result := public.reconcile_licensed_provider_lifecycle(100);
+  if result->>'sources_marked_stale' <> '1'
+    or result->>'businesses_archived' <> '0'
+    or result->>'more_work' <> 'false'
+    or result->>'skipped' <> 'false'
+  then
+    raise exception 'Provider lifecycle returned an unsafe or incomplete result';
+  end if;
+
+  if not exists (
+    select 1
+    from private.provider_business_sources source
+    where source.provider_slug = 'runtime_provider'
+      and source.provider_external_id = 'runtime-missing-listing'
+      and source.source_status = 'stale'
+      and source.missing_since is not null
+      and source.inactive_at is null
+  ) then
+    raise exception 'Missing provider source did not advance to stale';
+  end if;
+
+  if not exists (
+    select 1
+    from private.provider_ingest_audit_events event
+    where event.provider_slug = 'runtime_provider'
+      and event.event_type = 'sources_marked_stale'
+      and event.metadata->>'count' = '1'
+  ) then
+    raise exception 'Provider stale transition was not audited';
+  end if;
+
+  if exists (
+    select 1
+    from public.businesses business
+    where business.id = '70000000-0000-4000-8000-000000000007'
+      and business.state = 'archived'
+  ) then
+    raise exception 'Provider listing was archived before its archive grace period';
+  end if;
+end;
+$provider_lifecycle$;
 
 insert into private.account_deletion_requests (
   id,

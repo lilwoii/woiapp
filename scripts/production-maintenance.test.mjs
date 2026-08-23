@@ -23,6 +23,15 @@ function response(body, status = 200) {
   };
 }
 
+function completeProviderLifecycle() {
+  return response({
+    sources_marked_stale: 0,
+    businesses_archived: 0,
+    more_work: false,
+    skipped: false,
+  });
+}
+
 test('maintenance configuration rejects non-HTTPS and non-Supabase origins', () => {
   assert.throws(
     () => readMaintenanceConfiguration({
@@ -49,6 +58,7 @@ test('maintenance drains bounded deletion work and runs every privacy cleanup', 
     response({ requests_expired: 0 }),
     response({ requests_cancelled: 0 }),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    completeProviderLifecycle(),
     response(null),
   ];
   const summary = await runProductionMaintenance({
@@ -62,12 +72,13 @@ test('maintenance drains bounded deletion work and runs every privacy cleanup', 
 
   assert.equal(summary.deletionCalls, 2);
   assert.equal(summary.deletionStatus, 'idle');
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 8);
   assert.match(calls[2].url, /\/functions\/v1\/media-cleanup$/);
   assert.match(calls[3].url, /\/rpc\/cleanup_marketplace_chat_ephemera$/);
   assert.match(calls[4].url, /\/rpc\/cleanup_unavailable_meeting_place_requests$/);
   assert.match(calls[5].url, /\/rpc\/cleanup_public_discovery_leases$/);
-  assert.equal(calls[6].url, VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL);
+  assert.match(calls[6].url, /\/rpc\/reconcile_licensed_provider_lifecycle$/);
+  assert.equal(calls[7].url, VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL);
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${VALID_ENV.SPOTTR_ACCOUNT_DELETE_WORKER_SECRET}`);
   assert.equal(calls[3].init.headers.apikey, VALID_ENV.SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY);
 });
@@ -83,6 +94,7 @@ test('maintenance accepts a retryable receipt-finalization wait', async () => {
     response({ requests_expired: 0 }),
     response({ requests_cancelled: 0 }),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    completeProviderLifecycle(),
     response(null),
   ];
   const summary = await runProductionMaintenance({
@@ -104,6 +116,7 @@ for (const terminalStatus of ['more_work', 'deleted']) {
       response({ requests_expired: 0 }),
       response({ requests_cancelled: 0 }),
       response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+      completeProviderLifecycle(),
     ];
 
     await assert.rejects(
@@ -118,7 +131,7 @@ for (const terminalStatus of ['more_work', 'deleted']) {
       /exhausted its bounded call cap/,
     );
 
-    assert.equal(calls.length, 14);
+    assert.equal(calls.length, 15);
     assert.equal(
       calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
       false,
@@ -180,6 +193,39 @@ test('maintenance withholds heartbeat when a discovery operation was skipped', a
     /did not report bounded completion/,
   );
   assert.equal(calls.length, 5);
+});
+
+test('maintenance withholds heartbeat while provider lifecycle work remains', async () => {
+  const calls = [];
+  const queue = [
+    response({ status: 'idle' }),
+    response({ status: 'complete' }),
+    response({ requests_expired: 0 }),
+    response({ requests_cancelled: 0 }),
+    response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    response({
+      sources_marked_stale: 500,
+      businesses_archived: 0,
+      more_work: true,
+      skipped: false,
+    }),
+  ];
+  await assert.rejects(
+    runProductionMaintenance({
+      config: readMaintenanceConfiguration(VALID_ENV),
+      fetchImpl: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return queue.shift();
+      },
+      log: () => {},
+    }),
+    /reconcile_licensed_provider_lifecycle did not report bounded completion/,
+  );
+  assert.equal(calls.length, 6);
+  assert.equal(
+    calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
+    false,
+  );
 });
 
 test('maintenance errors never include an upstream response body', async () => {
