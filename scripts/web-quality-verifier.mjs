@@ -83,6 +83,29 @@ export function validateBundleBudgets(metrics) {
   return errors;
 }
 
+export function validateStaticHeaderPolicy(policy) {
+  const requiredDirectives = [
+    "Content-Security-Policy: default-src 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    'Permissions-Policy: camera=(), geolocation=(self), microphone=()',
+    'Referrer-Policy: strict-origin-when-cross-origin',
+    'Strict-Transport-Security: max-age=31536000; includeSubDomains',
+    'Cross-Origin-Opener-Policy: same-origin',
+    'Origin-Agent-Cluster: ?1',
+    'X-Content-Type-Options: nosniff',
+    'X-Frame-Options: DENY',
+    '/manifest.webmanifest',
+    '/register-sw.js',
+    '/sw.js',
+    '/_expo/static/*',
+    'Cache-Control: public, max-age=31536000, immutable',
+  ];
+  return requiredDirectives
+    .filter((directive) => !policy.includes(directive))
+    .map((directive) => `Static asset header policy is missing: ${directive}.`);
+}
+
 async function collectFiles(root, extension = null) {
   const files = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
@@ -112,6 +135,7 @@ export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
     'server/index.js',
     'server/wrangler.json',
     'client/.assetsignore',
+    'client/_headers',
     '.openai/hosting.json',
   ]) {
     try {
@@ -124,6 +148,11 @@ export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
     if (!(await stat(staticRoot)).isDirectory()) throw new Error('not a directory');
   } catch {
     throw new Error([...errors, 'Missing required Sites static asset directory: client.'].join('\n'));
+  }
+  try {
+    errors.push(...validateStaticHeaderPolicy(await readFile(path.join(staticRoot, '_headers'), 'utf8')));
+  } catch {
+    errors.push('Static asset header policy could not be read.');
   }
   for (const route of REQUIRED_ROUTES) {
     try {

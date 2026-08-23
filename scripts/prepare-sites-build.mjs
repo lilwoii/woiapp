@@ -37,6 +37,10 @@ export async function prepareSitesBuild(projectRoot = resolve(import.meta.dirnam
     resolve(clientOutputDir, '.assetsignore'),
   );
   await copyFile(
+    resolve(projectRoot, 'hosting', 'headers'),
+    resolve(clientOutputDir, '_headers'),
+  );
+  await copyFile(
     resolve(projectRoot, '.openai', 'hosting.json'),
     resolve(hostingMetadataDir, 'hosting.json'),
   );

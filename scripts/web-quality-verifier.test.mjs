@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,9 +9,11 @@ import {
   validateBundleBudgets,
   validateRouteHtml,
   validateProductionArtifactTree,
+  validateStaticHeaderPolicy,
 } from './web-quality-verifier.mjs';
 import { validateProductionArtifactContent } from './production-artifact-purity.mjs';
 
+const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
 const VALID_HTML = `<!doctype html><html lang="en"><head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Spottr route">
@@ -51,6 +53,18 @@ test('bundle budgets fail closed when a JavaScript regression crosses a ceiling'
     allRouteBytes: 1_500_000,
   });
   assert.ok(errors.some((error) => error.includes('entry JavaScript exceeds')));
+});
+
+test('static header policy verifier rejects missing browser protections', () => {
+  const errors = validateStaticHeaderPolicy("/*\n  X-Content-Type-Options: nosniff\n");
+  assert.ok(errors.some((error) => error.includes('Content-Security-Policy')));
+  assert.ok(errors.some((error) => error.includes('X-Frame-Options')));
+  assert.ok(errors.some((error) => error.includes('/_expo/static/*')));
+});
+
+test('repository static header policy contains every required protection', async () => {
+  const policy = await readFile(path.join(PROJECT_ROOT, 'hosting', 'headers'), 'utf8');
+  assert.deepEqual(validateStaticHeaderPolicy(policy), []);
 });
 
 test('production artifact verifier rejects isolated browser-fixture state', () => {

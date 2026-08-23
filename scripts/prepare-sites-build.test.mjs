@@ -21,6 +21,10 @@ async function createFixture(context) {
     '{"main":"index.js","assets":{"directory":"../client","binding":"ASSETS","run_worker_first":true}}',
   );
   await writeFile(path.join(root, 'hosting', 'assetsignore'), '.env\n');
+  await writeFile(
+    path.join(root, 'hosting', 'headers'),
+    "/*\n  X-Frame-Options: DENY\n  Content-Security-Policy: default-src 'self'\n",
+  );
   await writeFile(path.join(root, '.openai', 'hosting.json'), '{"project_id":"test"}');
   await writeFile(path.join(root, 'assets', 'images', 'spottr-icon.png'), 'icon');
   await writeFile(path.join(root, 'assets', 'images', 'spottr-icon-maskable.png'), 'mask');
@@ -48,6 +52,10 @@ test('Sites packaging emits the standard client, server, and metadata layout', a
   await access(path.join(root, 'dist', 'client', 'spottr-icon.png'));
   await access(path.join(root, 'dist', 'client', 'spottr-icon-maskable.png'));
   assert.equal(await readFile(path.join(root, 'dist', 'client', '.assetsignore'), 'utf8'), '.env\n');
+  assert.match(
+    await readFile(path.join(root, 'dist', 'client', '_headers'), 'utf8'),
+    /X-Frame-Options: DENY/u,
+  );
   await assert.rejects(access(path.join(root, 'dist', 'index.html')));
 });
 

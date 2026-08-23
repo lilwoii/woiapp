@@ -1,0 +1,22 @@
+/*
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://tile.openstreetmap.org; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https://images.unsplash.com https://tile.openstreetmap.org https://*.supabase.co; manifest-src 'self'; object-src 'none'; script-src 'self' 'sha256-67fhrP0+BkBqmgGGXTtgiVO/9EQs3QruYNU/7fnRkI8='; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; upgrade-insecure-requests
+  Permissions-Policy: camera=(), geolocation=(self), microphone=()
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Cross-Origin-Opener-Policy: same-origin
+  Origin-Agent-Cluster: ?1
+  X-Permitted-Cross-Domain-Policies: none
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+
+/manifest.webmanifest
+  Cache-Control: no-cache
+
+/register-sw.js
+  Cache-Control: no-cache
+
+/sw.js
+  Cache-Control: no-cache
+
+/_expo/static/*
+  Cache-Control: public, max-age=31536000, immutable
