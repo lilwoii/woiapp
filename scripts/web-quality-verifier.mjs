@@ -106,21 +106,34 @@ export async function validateProductionArtifactTree(root) {
 
 export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
   const dist = path.join(projectRoot, 'dist');
+  const staticRoot = path.join(dist, 'client');
   const errors = [];
+  for (const requiredFile of ['server/index.js', '.openai/hosting.json']) {
+    try {
+      if (!(await stat(path.join(dist, ...requiredFile.split('/')))).isFile()) throw new Error('not a file');
+    } catch {
+      errors.push(`Missing required Sites runtime file: ${requiredFile}.`);
+    }
+  }
+  try {
+    if (!(await stat(staticRoot)).isDirectory()) throw new Error('not a directory');
+  } catch {
+    throw new Error([...errors, 'Missing required Sites static asset directory: client.'].join('\n'));
+  }
   for (const route of REQUIRED_ROUTES) {
     try {
-      if (!(await stat(path.join(dist, ...route.split('/')))).isFile()) throw new Error('not a file');
+      if (!(await stat(path.join(staticRoot, ...route.split('/')))).isFile()) throw new Error('not a file');
     } catch {
       errors.push(`Missing required static route: ${route}.`);
     }
   }
 
-  const htmlFiles = await collectFiles(dist, '.html');
+  const htmlFiles = await collectFiles(staticRoot, '.html');
   let allRouteBytes = 0;
   let largestRouteBytes = 0;
   for (const file of htmlFiles) {
     const buffer = await readFile(file);
-    const relative = path.relative(dist, file).replaceAll('\\', '/');
+    const relative = path.relative(staticRoot, file).replaceAll('\\', '/');
     allRouteBytes += buffer.length;
     largestRouteBytes = Math.max(largestRouteBytes, buffer.length);
     errors.push(...validateRouteHtml(relative, buffer.toString('utf8')));
@@ -128,10 +141,10 @@ export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
 
   errors.push(...await validateProductionArtifactTree(dist));
 
-  const jsRoot = path.join(dist, '_expo', 'static', 'js', 'web');
+  const jsRoot = path.join(staticRoot, '_expo', 'static', 'js', 'web');
   const jsFiles = await collectFiles(jsRoot, '.js');
-  const cssFiles = await collectFiles(path.join(dist, '_expo', 'static', 'css'), '.css');
-  const sourceMapFiles = await collectFiles(dist, '.map');
+  const cssFiles = await collectFiles(path.join(staticRoot, '_expo', 'static', 'css'), '.css');
+  const sourceMapFiles = await collectFiles(staticRoot, '.map');
   if (sourceMapFiles.length) errors.push('Production web output must not include source maps.');
   const entryFile = jsFiles.find((file) => path.basename(file).startsWith('entry-'));
   const mapFile = jsFiles.find((file) => path.basename(file).startsWith('maplibre-map-'));
