@@ -532,7 +532,7 @@ begin
   );
   insert into private.ad_request_buckets (subject_hmac, bucket_started_at, request_count)
   values (subject_hmac, bucket_start, 1)
-  on conflict (subject_hmac, bucket_started_at)
+  on conflict on constraint ad_request_buckets_pkey
   do update set request_count = private.ad_request_buckets.request_count + 1
     where private.ad_request_buckets.request_count < 60
   returning request_count into accepted_count;
