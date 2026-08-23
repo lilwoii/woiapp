@@ -51,6 +51,8 @@ $$;
 
 revoke all on function private.is_business_publicly_eligible(uuid)
   from public, anon, authenticated;
+grant execute on function private.is_business_publicly_eligible(uuid)
+  to anon, authenticated;
 
 create or replace function public.reconcile_licensed_provider_lifecycle(
   result_limit integer default 500

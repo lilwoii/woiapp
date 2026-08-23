@@ -90,6 +90,13 @@ from public.public_business_directory;
 do $anon$
 begin
   begin
+    perform private.is_business_publicly_eligible(null);
+    raise exception 'Anonymous role unexpectedly invoked the private eligibility helper directly';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
     perform 1 from public.profiles limit 1;
     raise exception 'Anonymous role unexpectedly read the profile base table';
   exception

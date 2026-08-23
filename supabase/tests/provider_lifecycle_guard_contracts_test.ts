@@ -21,6 +21,14 @@ Deno.test("licensed provider visibility requires a current active source", () =>
       /current_date between account\.license_effective_on[\s\S]*account\.license_expires_on/,
     );
   }
+  assertMatch(
+    migration,
+    /revoke all on function private\.is_business_publicly_eligible\(uuid\)[\s\S]*from public, anon, authenticated[\s\S]*grant execute on function private\.is_business_publicly_eligible\(uuid\)[\s\S]*to anon, authenticated/,
+  );
+  assertMatch(
+    schema,
+    /revoke all on schema private from public, anon, authenticated/,
+  );
 });
 
 Deno.test("provider lifecycle cleanup is bounded, audited, and service-only", () => {

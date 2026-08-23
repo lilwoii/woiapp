@@ -1669,6 +1669,8 @@ $$;
 
 revoke all on function private.is_business_publicly_eligible(uuid)
   from public, anon, authenticated;
+grant execute on function private.is_business_publicly_eligible(uuid)
+  to anon, authenticated;
 
 create or replace function private.time_window_is_open(
   opens_at time,
