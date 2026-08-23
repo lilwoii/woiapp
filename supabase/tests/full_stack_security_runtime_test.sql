@@ -237,6 +237,59 @@ begin
 end;
 $legacy_claim_approval$;
 
+insert into public.businesses (
+  id, kind, name, slug, state, verification, provenance, created_by
+)
+values (
+  '71000000-0000-4000-8000-000000000007',
+  'restaurant',
+  'Runtime Publication Guard',
+  'runtime-publication-guard',
+  'draft',
+  'pending',
+  'owner',
+  '10000000-0000-4000-8000-000000000001'
+);
+
+do $publication_authority$
+begin
+  begin
+    update public.businesses
+    set state = 'published', verification = 'verified'
+    where id = '71000000-0000-4000-8000-000000000007';
+    raise exception 'Owner draft bypassed the review lifecycle';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'BUSINESS_REVIEW_REQUIRED' then
+        raise;
+      end if;
+  end;
+
+  begin
+    update public.businesses
+    set state = 'published'
+    where id = '70000000-0000-4000-8000-000000000007';
+    raise exception 'Provider draft published without an active licensed source';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'LICENSED_SOURCE_NOT_ACTIVE' then
+        raise;
+      end if;
+  end;
+
+  if exists (
+    select 1 from public.businesses
+    where id in (
+      '70000000-0000-4000-8000-000000000007',
+      '71000000-0000-4000-8000-000000000007'
+    )
+      and state = 'published'
+  ) then
+    raise exception 'Publication authority guard did not preserve private state';
+  end if;
+end;
+$publication_authority$;
+
 insert into private.account_deletion_requests (
   id,
   user_id,

@@ -2177,7 +2177,35 @@ begin
     raise exception using errcode = '23514', message = 'Invalid business timezone';
   end if;
 
-  if new.state = 'published' then
+  if new.state = 'published'
+    and (tg_op = 'INSERT' or old.state <> 'published')
+  then
+    if new.provenance in ('owner', 'community')
+      and (
+        tg_op = 'INSERT'
+        or old.state not in ('pending', 'suspended')
+        or new.verification <> 'verified'
+      )
+    then
+      raise exception using errcode = '55000', message = 'BUSINESS_REVIEW_REQUIRED';
+    end if;
+
+    if new.provenance = 'licensed_provider'
+      and not exists (
+        select 1
+        from private.provider_business_sources source
+        join private.provider_accounts account
+          on account.provider_slug = source.provider_slug
+        where source.business_id = new.id
+          and source.source_status = 'active'
+          and account.enabled
+          and current_date between account.license_effective_on
+            and account.license_expires_on
+      )
+    then
+      raise exception using errcode = '55000', message = 'LICENSED_SOURCE_NOT_ACTIVE';
+    end if;
+
     perform private.assert_business_publication_ready(new.id);
   end if;
 
@@ -2204,6 +2232,9 @@ begin
   return new;
 end;
 $$;
+
+revoke all on function private.enforce_business_publication()
+  from public, anon, authenticated;
 
 create or replace function private.prevent_published_setup_mutation()
 returns trigger
