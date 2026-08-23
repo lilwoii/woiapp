@@ -7,7 +7,7 @@ import type { BusinessCategory, Place } from '@/types/marketplace';
 export const MAX_MAP_LOGO_URLS = 300;
 
 export function mapLogoPaths(
-  rows: ReadonlyArray<{ logo_path?: unknown }>,
+  rows: readonly { logo_path?: unknown }[],
 ): string[] {
   return [
     ...new Set(
