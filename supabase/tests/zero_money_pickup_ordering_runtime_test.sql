@@ -493,7 +493,7 @@ insert into public.order_capacity_slots (
   'acacacac-acac-4aca-8aca-acacacacacac',
   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-  now() + interval '20 minutes', now() + interval '90 minutes', 1
+  now() + interval '25 minutes', now() + interval '95 minutes', 1
 );
 
 create temporary table shadow_accepted_quote_receipt as
