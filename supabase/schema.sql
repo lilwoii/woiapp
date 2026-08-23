@@ -218,6 +218,32 @@ create table if not exists public.business_claims (
   unique (business_id, claimant_id, state)
 );
 
+create or replace function private.require_business_claim_verification_receipt()
+returns trigger
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+begin
+  if new.state = 'approved' then
+    raise exception using
+      errcode = '55000',
+      message = 'CLAIM_VERIFICATION_RECEIPT_REQUIRED';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function private.require_business_claim_verification_receipt()
+  from public, anon, authenticated;
+
+drop trigger if exists require_business_claim_verification_receipt
+  on public.business_claims;
+create trigger require_business_claim_verification_receipt
+before insert or update of state on public.business_claims
+for each row execute function private.require_business_claim_verification_receipt();
+
 create table if not exists public.business_locations (
   id uuid primary key default gen_random_uuid(),
   business_id uuid not null references public.businesses(id) on delete cascade,

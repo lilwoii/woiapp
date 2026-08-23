@@ -310,7 +310,11 @@ withdrawal, evidence deletion, audit history, and ownership-conflict handling
 against the target environment. A checked authorization statement, matching
 email domain, listed phone selection, uploaded path, or administrator click is
 not ownership proof by itself. The public claim RPC deliberately rejects every
-method until this contract and its operational review path are deployed.
+method until this contract and its operational review path are deployed. The
+database also blocks approval of legacy pending claims. Before deploying to an
+existing environment, export and investigate every previously approved claim
+and the owner memberships it created; do not automatically revoke a legitimate
+owner or accept a historical approval as proof.
 
 ### Home kitchens
 

@@ -6,6 +6,12 @@ const migration = await Deno.readTextFile(
     import.meta.url,
   ),
 );
+const approvalMigration = await Deno.readTextFile(
+  new URL(
+    "../migrations/20260827000000_business_claim_approval_guard.sql",
+    import.meta.url,
+  ),
+);
 const schema = await Deno.readTextFile(new URL("../schema.sql", import.meta.url));
 const features = await Deno.readTextFile(
   new URL("../../lib/features.ts", import.meta.url),
@@ -30,6 +36,12 @@ Deno.test("claim authority fails closed in baseline and upgrade SQL", () => {
   }
   assertMatch(migration, /revoke all on function public\.submit_business_claim[\s\S]*from public, anon/);
   assert(!migration.includes("submit_business_claim_core("));
+  for (const source of [schema, approvalMigration]) {
+    assertMatch(source, /require_business_claim_verification_receipt/);
+    assertMatch(source, /if new\.state = 'approved'/);
+    assertMatch(source, /CLAIM_VERIFICATION_RECEIPT_REQUIRED/);
+    assertMatch(source, /before insert or update of state on public\.business_claims/);
+  }
 });
 
 Deno.test("client and production release hide claims until verified proof exists", () => {

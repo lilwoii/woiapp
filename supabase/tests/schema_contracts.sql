@@ -395,6 +395,22 @@ begin
   then
     raise exception 'Business ownership claims do not fail closed without verification proof';
   end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_trigger trigger_row
+    join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
+    join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
+    where schema_row.nspname = 'public'
+      and table_row.relname = 'business_claims'
+      and trigger_row.tgname = 'require_business_claim_verification_receipt'
+      and not trigger_row.tgisinternal
+  ) or pg_catalog.pg_get_functiondef(
+    'private.require_business_claim_verification_receipt()'::regprocedure
+  ) not like '%CLAIM_VERIFICATION_RECEIPT_REQUIRED%'
+  then
+    raise exception 'Legacy business claims can still be approved without proof';
+  end if;
 end;
 $contract$;
 

@@ -185,6 +185,58 @@ $rls$;
 
 reset role;
 
+insert into public.businesses (
+  id, kind, name, slug, state, provenance, created_by
+)
+values (
+  '70000000-0000-4000-8000-000000000007',
+  'restaurant',
+  'Runtime Claim Guard',
+  'runtime-claim-guard',
+  'published',
+  'licensed_provider',
+  '10000000-0000-4000-8000-000000000001'
+);
+
+insert into public.business_claims (
+  id, business_id, claimant_id, method, state
+)
+values (
+  '80000000-0000-4000-8000-000000000008',
+  '70000000-0000-4000-8000-000000000007',
+  '10000000-0000-4000-8000-000000000001',
+  'listed_phone',
+  'pending'
+);
+
+do $legacy_claim_approval$
+begin
+  begin
+    update public.business_claims
+    set state = 'approved'
+    where id = '80000000-0000-4000-8000-000000000008';
+    raise exception 'Legacy claim was approved without a verification receipt';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'CLAIM_VERIFICATION_RECEIPT_REQUIRED' then
+        raise;
+      end if;
+  end;
+
+  update public.business_claims
+  set state = 'rejected'
+  where id = '80000000-0000-4000-8000-000000000008';
+
+  if not exists (
+    select 1 from public.business_claims
+    where id = '80000000-0000-4000-8000-000000000008'
+      and state = 'rejected'
+  ) then
+    raise exception 'Unsafe legacy claim could not be rejected';
+  end if;
+end;
+$legacy_claim_approval$;
+
 insert into private.account_deletion_requests (
   id,
   user_id,
@@ -868,6 +920,19 @@ begin
     or not pg_catalog.has_function_privilege(
       'authenticated', 'public.submit_business_claim(uuid,text,text)', 'execute'
     )
+    or not exists (
+      select 1
+      from pg_catalog.pg_trigger trigger_row
+      join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
+      join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
+      where schema_row.nspname = 'public'
+        and table_row.relname = 'business_claims'
+        and trigger_row.tgname = 'require_business_claim_verification_receipt'
+        and not trigger_row.tgisinternal
+    )
+    or pg_catalog.pg_get_functiondef(
+      'private.require_business_claim_verification_receipt()'::regprocedure
+    ) not like '%CLAIM_VERIFICATION_RECEIPT_REQUIRED%'
   then
     raise exception 'Business claim authority guard was weakened after migrations';
   end if;
