@@ -22,7 +22,7 @@ export default defineConfig({
   webServer: [
     {
       command: 'node scripts/serve-static-dist.mjs',
-      env: { SPOTTR_E2E_PORT: '4173', SPOTTR_E2E_ROOT: 'dist' },
+      env: { SPOTTR_E2E_PORT: '4173', SPOTTR_E2E_ROOT: 'dist/client' },
       url: 'http://127.0.0.1:4173',
       reuseExistingServer: !process.env.CI,
       timeout: 20_000,
