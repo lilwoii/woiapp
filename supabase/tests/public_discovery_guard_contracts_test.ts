@@ -5,6 +5,7 @@ import {
   assertThrows,
 } from "jsr:@std/assert@1";
 import {
+  DiscoveryContractError,
   normalizePublicDiscoveryRows,
   normalizeSponsoredPlacement,
   validatePublicDiscoveryRequest,
