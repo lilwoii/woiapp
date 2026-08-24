@@ -3800,6 +3800,14 @@ begin
     raise exception using errcode = '42501', message = 'Active verified account required';
   end if;
 
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   select bm.role
   into actor_role
   from public.business_members bm
@@ -4058,6 +4066,7 @@ declare
   actor uuid := auth.uid();
   actor_email text;
   actor_username text;
+  invitation_business_id uuid;
   invitation private.business_invitations%rowtype;
   assigned_role public.member_role;
 begin
@@ -4067,6 +4076,23 @@ begin
   end if;
   if decision not in ('accept', 'decline') then
     raise exception using errcode = '22023', message = 'Invalid invitation decision';
+  end if;
+
+  select bi.business_id
+  into invitation_business_id
+  from private.business_invitations bi
+  where bi.id = target_invitation_id;
+
+  if invitation_business_id is null then
+    raise exception using errcode = '22023', message = 'Invitation not found';
+  end if;
+
+  perform 1
+  from public.businesses b
+  where b.id = invitation_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Invitation not found';
   end if;
 
   select lower(u.email), lower(p.username::text)
@@ -4223,6 +4249,15 @@ declare
   previous_role public.member_role;
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(
     target_business_id,
     actor,
@@ -4298,6 +4333,14 @@ declare
 begin
   perform private.require_aal2();
 
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   select bm.role
   into actor_role
   from public.business_members bm
@@ -4369,6 +4412,14 @@ declare
   invitation_state text;
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
 
   select bm.role
   into actor_role

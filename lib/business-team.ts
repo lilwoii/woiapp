@@ -1,5 +1,9 @@
 import { validateUsername } from '@/lib/moderation';
-import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import {
+  createAccountBoundSupabaseClient,
+  isSupabaseConfigured,
+  supabase,
+} from '@/lib/supabase';
 
 export type BusinessTeamRole = 'owner' | 'manager' | 'staff';
 export type AssignableBusinessTeamRole = Exclude<BusinessTeamRole, 'owner'>;
@@ -438,36 +442,33 @@ function failure<T>(error: unknown, fallback: string): BusinessTeamResult<T> {
   return { ok: false, code: 'UNKNOWN', reason: fallback };
 }
 
-async function secureClient() {
+async function secureClient(expectedUserId: string) {
   if (!isSupabaseConfigured || !supabase) {
     throw Object.assign(new Error('Live services are not configured.'), {
       code: 'CONFIG_REQUIRED',
     });
   }
-  const [{ data: userData, error: userError }, assurance] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
-  ]);
-  if (userError || !userData.user) {
-    throw Object.assign(userError ?? new Error('Not authenticated'), {
+  if (!expectedUserId || !uuidPattern.test(expectedUserId)) {
+    throw Object.assign(new Error('The active account could not be verified.'), {
       status: 401,
     });
   }
-  if (assurance.error) throw assurance.error;
-  if (assurance.data.currentLevel !== 'aal2') {
-    throw Object.assign(new Error('AAL2 authenticator verification required'), {
-      status: 403,
+  const client = await createAccountBoundSupabaseClient(expectedUserId);
+  if (!client) {
+    throw Object.assign(new Error('The active account changed.'), {
+      status: 401,
     });
   }
-  return supabase;
+  return client;
 }
 
 export async function loadBusinessTeam(
-  businessId: string
+  businessId: string,
+  expectedUserId: string
 ): Promise<BusinessTeamResult<BusinessTeamWorkspace>> {
   try {
     assertUuid(businessId, 'This business link');
-    const client = await secureClient();
+    const client = await secureClient(expectedUserId);
     const { data, error } = await client.rpc('get_business_team', {
       target_business_id: businessId,
     });
@@ -478,11 +479,11 @@ export async function loadBusinessTeam(
   }
 }
 
-export async function loadMyBusinessInvitations(): Promise<
+export async function loadMyBusinessInvitations(expectedUserId: string): Promise<
   BusinessTeamResult<BusinessTeamInvitation[]>
 > {
   try {
-    const client = await secureClient();
+    const client = await secureClient(expectedUserId);
     const { data, error } = await client.rpc('list_my_business_invitations');
     if (error) throw error;
     return { ok: true, data: mapBusinessInvitations(data) };
@@ -491,12 +492,15 @@ export async function loadMyBusinessInvitations(): Promise<
   }
 }
 
-export async function inviteBusinessTeamMember(input: {
-  businessId: string;
-  target: string;
-  role: AssignableBusinessTeamRole;
-  idempotencyKey: string;
-}): Promise<BusinessTeamResult> {
+export async function inviteBusinessTeamMember(
+  input: {
+    businessId: string;
+    target: string;
+    role: AssignableBusinessTeamRole;
+    idempotencyKey: string;
+  },
+  expectedUserId: string
+): Promise<BusinessTeamResult> {
   try {
     assertUuid(input.businessId, 'This business link');
     const recipient = validateInviteTarget(input.target);
@@ -506,7 +510,7 @@ export async function inviteBusinessTeamMember(input: {
     ) {
       throw new TeamValidationError('This invitation request is invalid.');
     }
-    const client = await secureClient();
+    const client = await secureClient(expectedUserId);
     const { error } = await client.rpc('invite_business_member', {
       target_business_id: input.businessId,
       invite_target: recipient.value,
@@ -525,13 +529,16 @@ export async function inviteBusinessTeamMember(input: {
   }
 }
 
-export async function respondToBusinessInvitation(input: {
-  invitationId: string;
-  decision: BusinessInvitationDecision;
-}): Promise<BusinessTeamResult> {
+export async function respondToBusinessInvitation(
+  input: {
+    invitationId: string;
+    decision: BusinessInvitationDecision;
+  },
+  expectedUserId: string
+): Promise<BusinessTeamResult> {
   try {
     assertUuid(input.invitationId, 'This invitation');
-    const client = await secureClient();
+    const client = await secureClient(expectedUserId);
     const { error } = await client.rpc('respond_business_invitation', {
       target_invitation_id: input.invitationId,
       decision: input.decision,
@@ -550,15 +557,18 @@ export async function respondToBusinessInvitation(input: {
   }
 }
 
-export async function changeBusinessMemberRole(input: {
-  businessId: string;
-  memberPublicId: string;
-  role: AssignableBusinessTeamRole;
-}): Promise<BusinessTeamResult> {
+export async function changeBusinessMemberRole(
+  input: {
+    businessId: string;
+    memberPublicId: string;
+    role: AssignableBusinessTeamRole;
+  },
+  expectedUserId: string
+): Promise<BusinessTeamResult> {
   try {
     assertUuid(input.businessId, 'This business link');
     assertUuid(input.memberPublicId, 'This member reference');
-    const client = await secureClient();
+    const client = await secureClient(expectedUserId);
     const { error } = await client.rpc('set_business_member_role', {
       target_business_id: input.businessId,
       target_member_public_id: input.memberPublicId,
@@ -575,14 +585,17 @@ export async function changeBusinessMemberRole(input: {
   }
 }
 
-export async function revokeBusinessTeamAccess(input: {
-  businessId: string;
-  memberPublicId: string;
-}): Promise<BusinessTeamResult> {
+export async function revokeBusinessTeamAccess(
+  input: {
+    businessId: string;
+    memberPublicId: string;
+  },
+  expectedUserId: string
+): Promise<BusinessTeamResult> {
   try {
     assertUuid(input.businessId, 'This business link');
     assertUuid(input.memberPublicId, 'This member reference');
-    const client = await secureClient();
+    const client = await secureClient(expectedUserId);
     const { error } = await client.rpc('revoke_business_member', {
       target_business_id: input.businessId,
       target_member_public_id: input.memberPublicId,
@@ -598,14 +611,17 @@ export async function revokeBusinessTeamAccess(input: {
   }
 }
 
-export async function revokeBusinessTeamInvitation(input: {
-  businessId: string;
-  invitationId: string;
-}): Promise<BusinessTeamResult> {
+export async function revokeBusinessTeamInvitation(
+  input: {
+    businessId: string;
+    invitationId: string;
+  },
+  expectedUserId: string
+): Promise<BusinessTeamResult> {
   try {
     assertUuid(input.businessId, 'This business link');
     assertUuid(input.invitationId, 'This invitation');
-    const client = await secureClient();
+    const client = await secureClient(expectedUserId);
     const { error } = await client.rpc('revoke_business_invitation', {
       target_business_id: input.businessId,
       target_invitation_id: input.invitationId,
@@ -621,11 +637,14 @@ export async function revokeBusinessTeamInvitation(input: {
   }
 }
 
-export async function transferBusinessOwnership(input: {
-  businessId: string;
-  memberPublicId: string;
-  idempotencyKey: string;
-}): Promise<BusinessTeamResult> {
+export async function transferBusinessOwnership(
+  input: {
+    businessId: string;
+    memberPublicId: string;
+    idempotencyKey: string;
+  },
+  expectedUserId: string
+): Promise<BusinessTeamResult> {
   try {
     assertUuid(input.businessId, 'This business link');
     assertUuid(input.memberPublicId, 'This member reference');
@@ -635,7 +654,7 @@ export async function transferBusinessOwnership(input: {
     ) {
       throw new TeamValidationError('This ownership request is invalid.');
     }
-    const client = await secureClient();
+    const client = await secureClient(expectedUserId);
     const { error } = await client.rpc('transfer_business_ownership', {
       target_business_id: input.businessId,
       target_member_public_id: input.memberPublicId,

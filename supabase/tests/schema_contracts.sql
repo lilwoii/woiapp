@@ -230,6 +230,30 @@ begin
     raise exception 'A required privileged business RPC is missing AAL2';
   end if;
 
+  if exists (
+    select 1
+    from unnest(array[
+      'invite_business_member',
+      'respond_business_invitation',
+      'set_business_member_role',
+      'revoke_business_member',
+      'revoke_business_invitation',
+      'transfer_business_ownership'
+    ]) required(name)
+    where not exists (
+      select 1
+      from pg_catalog.pg_proc p
+      join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+        and p.proname = required.name
+        and p.prosecdef
+        and pg_catalog.pg_get_functiondef(p.oid) like '%from public.businesses%'
+        and pg_catalog.pg_get_functiondef(p.oid) like '%for update%'
+    )
+  ) then
+    raise exception 'A business team mutation is missing authority serialization';
+  end if;
+
   if not exists (
     select 1
     from pg_catalog.pg_trigger t
