@@ -26,7 +26,7 @@ const tierColor: Record<BadgeTier, string> = {
 };
 
 export default function BadgesScreen() {
-  const [filter, setFilter] = useState<BadgeFilter>('all');
+  const [filter, setFilter] = useState<BadgeFilter>('reviewer');
   const badges = useMemo(
     () => TRUST_BADGES.filter((badge) => filter === 'all' || badge.audience === filter),
     [filter]

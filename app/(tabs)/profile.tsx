@@ -166,9 +166,9 @@ export default function ProfileScreen() {
           </View>
           <Pressable
             accessibilityRole="button"
-            onPress={() => router.push(signedIn ? '/security' : '/auth')}
+            onPress={() => router.push(signedIn ? '/profile-edit' : '/auth')}
             style={styles.editButton}>
-            <Text style={styles.editButtonText}>{signedIn ? 'Security' : 'Sign in'}</Text>
+            <Text style={styles.editButtonText}>{signedIn ? 'Edit' : 'Sign in'}</Text>
           </Pressable>
         </View>
 

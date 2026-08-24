@@ -25,6 +25,8 @@ const REQUIRED_ROUTES = [
   'saved.html',
   'studio.html',
   'profile.html',
+  'profile/[id].html',
+  'profile-edit.html',
   'place/[id].html',
   'order/[id].html',
   'navigation/[id].html',

@@ -8,6 +8,7 @@ import { ActionResult } from '@/types/marketplace';
 
 export type MediaPurpose =
   | 'profile_avatar'
+  | 'profile_banner'
   | 'business_logo'
   | 'business_gallery'
   | 'review_photo'

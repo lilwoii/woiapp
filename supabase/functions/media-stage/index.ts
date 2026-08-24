@@ -11,6 +11,7 @@ import {
 
 type MediaPurpose =
   | "profile_avatar"
+  | "profile_banner"
   | "business_logo"
   | "business_gallery"
   | "review_photo"
@@ -40,6 +41,7 @@ function uploadsEnabled(): boolean {
 function purpose(value: unknown): MediaPurpose {
   if (
     value !== "profile_avatar" &&
+    value !== "profile_banner" &&
     value !== "business_logo" &&
     value !== "business_gallery" &&
     value !== "review_photo" &&
@@ -89,7 +91,7 @@ Deno.serve(async (request) => {
     const { user, client } = await authenticatedUser(request, ownerMedia);
     const targetBusinessId = businessId(
       body.businessId,
-      selectedPurpose !== "profile_avatar",
+      selectedPurpose !== "profile_avatar" && selectedPurpose !== "profile_banner",
     );
     const targetConversationId = conversationId(
       body.conversationId,

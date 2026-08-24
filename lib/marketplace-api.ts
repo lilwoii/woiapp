@@ -21,6 +21,7 @@ import {
   WeeklyHours,
 } from '@/types/marketplace';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
+import type { PublicProfile, PublicProfileLink, PublicProfileReview } from '@/types/social';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Row = Record<string, unknown>;
@@ -232,6 +233,158 @@ export async function fetchMyTrustBadges(
     return { ok: true, data: badges };
   } catch (error) {
     return toActionError(error, 'Your badges could not be loaded.');
+  }
+}
+
+function publicProfileLinks(value: unknown): PublicProfileLink[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 3).flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return [];
+    const row = candidate as Row;
+    const label = stringValue(row.label).trim();
+    const url = stringValue(row.url).trim();
+    if (!label || !safeHttpsProfileLink(url)) return [];
+    return [{ label, url }];
+  });
+}
+
+function safeHttpsProfileLink(candidate: string) {
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchPublicProfile(
+  publicId: string,
+  resultOffset = 0
+): Promise<ActionResult<PublicProfile>> {
+  const client = supabase;
+  if (!client) return configurationRequired();
+  if (!uuidPattern.test(publicId) || !Number.isInteger(resultOffset) || resultOffset < 0 || resultOffset > 10_000) {
+    return { ok: false, code: 'INVALID', reason: 'This profile link is invalid.' };
+  }
+
+  const pageSize = 20;
+  try {
+    const [profileResult, reviewsResult, badgesResult] = await Promise.all([
+      client.from('public_profile_directory').select('*').eq('public_id', publicId).maybeSingle(),
+      client
+        .from('public_reviews')
+        .select('*')
+        .eq('author_public_id', publicId)
+        .order('created_at', { ascending: false })
+        .range(resultOffset, resultOffset + pageSize),
+      client.from('public_profile_badges').select('*').eq('subject_public_id', publicId),
+    ]);
+    if (profileResult.error) throw profileResult.error;
+    if (reviewsResult.error) throw reviewsResult.error;
+    if (badgesResult.error) throw badgesResult.error;
+    if (!profileResult.data) {
+      return { ok: false, code: 'NOT_FOUND', reason: 'This profile is unavailable.' };
+    }
+
+    const profile = profileResult.data as Row;
+    const reviewRows = rows(reviewsResult.data);
+    const hasMoreReviews = reviewRows.length > pageSize;
+    const pageRows = reviewRows.slice(0, pageSize);
+    const reviewIds = pageRows.map((row) => stringValue(row.review_id)).filter((id) => uuidPattern.test(id));
+    const businessIds = [...new Set(pageRows.map((row) => stringValue(row.business_id)).filter((id) => uuidPattern.test(id)))];
+    const [businessesResult, mediaResult] = await Promise.all([
+      businessIds.length
+        ? client.from('public_business_directory').select('business_id,name,slug').in('business_id', businessIds)
+        : Promise.resolve({ data: [], error: null }),
+      reviewIds.length
+        ? client.from('public_review_media').select('*').in('review_id', reviewIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (businessesResult.error) throw businessesResult.error;
+    if (mediaResult.error) throw mediaResult.error;
+    const mediaRows = rows(mediaResult.data);
+    const mediaUrls = await createSignedMediaUrls([
+      stringValue(profile.avatar_path),
+      stringValue(profile.banner_path),
+      ...mediaRows.map((row) => stringValue(row.storage_path)),
+    ]);
+    const businesses = new Map(rows(businessesResult.data).map((row) => [stringValue(row.business_id), row]));
+    const profileReviews: PublicProfileReview[] = pageRows.map((review) => {
+      const reviewId = stringValue(review.review_id);
+      const businessId = stringValue(review.business_id);
+      const business = businesses.get(businessId);
+      return {
+        id: reviewId,
+        businessId,
+        businessName: stringValue(business?.name, 'Spottr place'),
+        businessSlug: stringValue(business?.slug),
+        rating: numberValue(review.rating),
+        body: stringValue(review.body),
+        postedAt: stringValue(review.created_at),
+        postedLabel: relativeTime(review.created_at),
+        photos: mediaRows
+          .filter((row) => stringValue(row.review_id) === reviewId)
+          .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order))
+          .map((row) => mediaUrls.get(stringValue(row.storage_path)))
+          .filter((url): url is string => Boolean(url)),
+        helpfulCount: numberValue(review.helpful_count),
+      };
+    });
+    const badges = rows(badgesResult.data)
+      .map((row) => publicBadgeFromCode(
+        stringValue(row.badge_code),
+        stringValue(row.earned_at) || undefined,
+        stringValue(row.expires_at) || undefined
+      ))
+      .filter((badge): badge is PublicBadge => Boolean(badge));
+
+    return {
+      ok: true,
+      data: {
+        id: stringValue(profile.public_id),
+        username: stringValue(profile.username),
+        displayName: stringValue(profile.display_name, 'Spottr member'),
+        avatarUrl: mediaUrls.get(stringValue(profile.avatar_path)),
+        bannerUrl: mediaUrls.get(stringValue(profile.banner_path)),
+        bio: stringValue(profile.bio),
+        links: publicProfileLinks(profile.links),
+        reviewCount: numberValue(profile.review_count),
+        followerCount: numberValue(profile.follower_count),
+        followingCount: profile.following_count == null ? null : numberValue(profile.following_count),
+        favoriteCount: profile.favorite_count == null ? null : numberValue(profile.favorite_count),
+        showFollowing: booleanValue(profile.show_following),
+        showFavorites: booleanValue(profile.show_favorites),
+        followedByViewer: booleanValue(profile.followed_by_viewer),
+        memberSince: stringValue(profile.created_at),
+        badges,
+        reviews: profileReviews,
+        hasMoreReviews,
+      },
+    };
+  } catch (error) {
+    return toActionError(error, 'This profile could not be loaded.');
+  }
+}
+
+export async function setProfileFollow(
+  targetPublicId: string,
+  shouldFollow: boolean,
+  expectedUserId: string
+): Promise<ActionResult<boolean>> {
+  if (!uuidPattern.test(targetPublicId) || !uuidPattern.test(expectedUserId)) {
+    return { ok: false, code: 'INVALID', reason: 'This profile follow request is invalid.' };
+  }
+  try {
+    const client = await createAccountBoundSupabaseClient(expectedUserId);
+    if (!client) return configurationRequired();
+    const { data, error } = await client.rpc('set_profile_follow_by_public_id', {
+      target_public_id: targetPublicId,
+      should_follow: shouldFollow,
+    });
+    if (error) throw error;
+    return { ok: true, data: data === true };
+  } catch (error) {
+    return toActionError(error, shouldFollow ? 'This profile could not be followed.' : 'This profile could not be unfollowed.');
   }
 }
 

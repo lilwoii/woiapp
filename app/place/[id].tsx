@@ -693,7 +693,13 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
                       </View>
                       <View style={styles.reviewerCopy}>
                         <View style={styles.reviewerIdentity}>
-                          <Text style={styles.reviewerName}>{item.displayName}</Text>
+                          <Pressable
+                            accessibilityLabel={`View ${item.displayName} profile`}
+                            accessibilityRole={item.authorId ? 'link' : undefined}
+                            disabled={!item.authorId}
+                            onPress={() => item.authorId && router.push({ pathname: '/profile/[id]', params: { id: item.authorId } })}>
+                            <Text style={styles.reviewerName}>{item.displayName}</Text>
+                          </Pressable>
                           <TrustBadgeStrip badges={item.badges ?? []} />
                         </View>
                         <Text style={styles.reviewerMeta}>

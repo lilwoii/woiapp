@@ -74,6 +74,8 @@ export default function RootLayout() {
                 }}>
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="place/[id]" options={{ headerShown: false }} />
+                <Stack.Screen name="profile/[id]" options={{ headerShown: false }} />
+                <Stack.Screen name="profile-edit" options={{ headerShown: false }} />
                 <Stack.Screen name="navigation/[id]" options={{ headerShown: false }} />
                 <Stack.Screen name="order/[id]" options={{ headerShown: false }} />
                 <Stack.Screen name="messages/index" options={{ headerShown: false }} />
