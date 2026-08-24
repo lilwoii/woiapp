@@ -22,7 +22,10 @@ function codes(source: string, pattern: RegExp) {
 
 Deno.test("client and database badge catalogs stay synchronized", () => {
   const clientCodes = codes(catalog, /code: '([a-z0-9_]+)'/g);
-  const databaseCodes = codes(migration, /\('([a-z0-9_]+)', '(?:reviewer|business|seller)'/g);
+  const databaseCodes = codes(
+    migration,
+    /^\s{2}\('([a-z0-9_]+)', '(?:reviewer|business|seller)'/gm,
+  );
   assert(clientCodes.length >= 30, "Spottr must launch with a meaningful achievement catalog");
   assertEquals(databaseCodes, clientCodes);
   assert(clientCodes.includes("spottr_orders_1000"));
