@@ -430,7 +430,7 @@ left join lateral (
   select count(*)::integer as badge_count
   from public.profile_badge_awards award
   join public.badge_definitions definition on definition.code = award.badge_code
-  where award.user_id = r.author_id
+  where award.subject_id = r.author_id
     and award.revoked_at is null
     and (award.expires_at is null or award.expires_at > now())
     and definition.audience = 'reviewer'
