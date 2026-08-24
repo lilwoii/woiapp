@@ -32,7 +32,7 @@ export default function BadgesScreen() {
     () => TRUST_BADGES.filter((badge) => filter === 'all' || badge.audience === filter),
     [filter]
   );
-  const visibleBadges = expanded ? badges : badges.slice(0, 4);
+  const visibleBadges = expanded ? badges : badges.slice(0, 3);
 
   return (
     <FocusAwareScreen>
