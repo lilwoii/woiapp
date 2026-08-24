@@ -77,7 +77,7 @@ test('route HTML aggregate budget scales only with verified route count', () => 
     allJsGzipBytes: 1_000_000,
     allCssBytes: 80_000,
     largestRouteBytes: 60_000,
-    allRouteBytes: 1_800_001,
+    allRouteBytes: 1_830_001,
   };
   assert.ok(
     validateBundleBudgets(metrics).some((error) => error.includes('all route HTML exceeds')),
