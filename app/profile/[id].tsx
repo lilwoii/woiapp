@@ -78,16 +78,17 @@ function ScopedPublicProfile({ id }: { id?: string }) {
       showMessage('Reaction unavailable', result.ok ? 'Your reaction could not be saved.' : result.reason);
       return;
     }
+    const reactionData = result.data;
     setSnapshot((current) => current?.id === profile.id ? {
       ...current,
       profile: {
         ...current.profile,
         reviews: current.profile.reviews.map((candidate) => candidate.id === reviewId ? {
           ...candidate,
-          helpfulCount: result.data.upCount,
-          upCount: result.data.upCount,
-          downCount: result.data.downCount,
-          viewerReaction: result.data.viewerReaction,
+          helpfulCount: reactionData.upCount,
+          upCount: reactionData.upCount,
+          downCount: reactionData.downCount,
+          viewerReaction: reactionData.viewerReaction,
         } : candidate),
       },
     } : current);
