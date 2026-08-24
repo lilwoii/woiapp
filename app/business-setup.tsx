@@ -532,7 +532,7 @@ function BusinessSetupContent({
   const savedServiceLocations = [location, ...additionalLocations].filter(
     (entry): entry is LocationEditor & { id: string } => Boolean(entry?.id)
   );
-  const isBusy = mutationBusy.current || busySection !== null;
+  const isBusy = busySection !== null;
   const hasUnsavedChanges = Object.values(dirtySections).some(Boolean);
 
   const markDirty = (section: EditableSectionKey) => {

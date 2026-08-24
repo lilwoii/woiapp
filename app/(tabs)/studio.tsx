@@ -1,7 +1,14 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { Link, router } from 'expo-router';
 import type { Href } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -109,8 +116,6 @@ export default function StudioScreen() {
   const scheduleAccountId = useRef<string | null>(accountId);
   const scheduleScopeRef = useRef<string | null>(scheduleScope);
   const loadedScheduleScope = useRef<string | null>(null);
-  scheduleAccountId.current = accountId;
-  scheduleScopeRef.current = scheduleScope;
   const responseQueueRequest = useRef(0);
   const responseAttempts = useRef<Record<string, BusinessResponseAttempt>>({});
   const ownerUpdateAttempt = useRef<{
@@ -168,6 +173,11 @@ export default function StudioScreen() {
       scheduleMutationBusy.current = false;
     };
   }, []);
+
+  useLayoutEffect(() => {
+    scheduleAccountId.current = accountId;
+    scheduleScopeRef.current = scheduleScope;
+  }, [accountId, scheduleScope]);
 
   const setItemSoldOut = (itemId: string, soldOut: boolean) => {
     if (!place) return;
@@ -247,12 +257,16 @@ export default function StudioScreen() {
   useEffect(() => {
     scheduleRequest.current += 1;
     loadedScheduleScope.current = null;
-    setMobileScheduleSnapshot(null);
-    setStopEditor(null);
-    setScheduleError(null);
-    setScheduleLoading(false);
     scheduleMutationBusy.current = false;
-    setScheduleSaving(false);
+    const timer = setTimeout(() => {
+      if (!studioMounted.current || scheduleScopeRef.current !== scheduleScope) return;
+      setMobileScheduleSnapshot(null);
+      setStopEditor(null);
+      setScheduleError(null);
+      setScheduleLoading(false);
+      setScheduleSaving(false);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [scheduleScope]);
 
   const refreshResponseQueue = useCallback(async () => {
