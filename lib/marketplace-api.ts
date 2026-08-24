@@ -1541,23 +1541,31 @@ export async function submitOwnerUpdate(
 
 export async function uploadBusinessLogo(
   businessId: string,
-  media: LocalMedia
+  media: LocalMedia,
+  expectedUserId: string
 ): Promise<ActionResult<{ assetId: string }>> {
-  const client = supabase;
-  if (!client) {
+  if (!supabase) {
     return {
       ok: false,
       code: 'CONFIG_REQUIRED',
       reason: 'Secure logo processing is not configured.',
     };
   }
-  const user = await authenticatedUserId();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return accountChanged();
   if (!uuidPattern.test(businessId)) {
     return { ok: false, code: 'INVALID', reason: 'This business link is invalid.' };
   }
 
-  const staged = await stageMediaUpload(media, 'business_logo', businessId);
+  const staged = await stageMediaUpload(
+    media,
+    'business_logo',
+    businessId,
+    undefined,
+    client,
+  );
   if (!staged.ok) return staged;
 
   try {
@@ -1679,26 +1687,30 @@ export async function blockUser(
   }
 }
 
-export async function createBusinessDraft(input: {
-  kind: BusinessCategory;
-  name: string;
-  description: string;
-  cuisines: string[];
-  businessEmail: string;
-  businessPhone: string;
-  websiteUrl?: string;
-  address?: string;
-  city: string;
-  region: string;
-  postalCode?: string;
-  timezone: string;
-  payments: PaymentMethod[];
-  permitNumber?: string;
-}): Promise<ActionResult<{ businessId: string }>> {
-  const client = supabase;
-  if (!client) return configurationRequired();
-  const user = await authenticatedUserId();
+export async function createBusinessDraft(
+  input: {
+    kind: BusinessCategory;
+    name: string;
+    description: string;
+    cuisines: string[];
+    businessEmail: string;
+    businessPhone: string;
+    websiteUrl?: string;
+    address?: string;
+    city: string;
+    region: string;
+    postalCode?: string;
+    timezone: string;
+    payments: PaymentMethod[];
+    permitNumber?: string;
+  },
+  expectedUserId: string,
+): Promise<ActionResult<{ businessId: string }>> {
+  if (!supabase) return configurationRequired();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return accountChanged();
 
   try {
     const { data, error } = await client.rpc('create_business_draft', {
@@ -1740,7 +1752,8 @@ export async function createBusinessDraft(input: {
 
 export async function submitBusinessClaim(
   businessId: string,
-  method: 'listed_phone' | 'domain_email' | 'document' | 'permit'
+  method: 'listed_phone' | 'domain_email' | 'document' | 'permit',
+  expectedUserId: string,
 ): Promise<ActionResult> {
   if (!featureFlags.businessClaims) {
     return {
@@ -1749,10 +1762,11 @@ export async function submitBusinessClaim(
         'Ownership claims are unavailable until secure phone, email, or document verification is connected.',
     };
   }
-  const client = supabase;
-  if (!client) return configurationRequired();
-  const user = await authenticatedUserId();
+  if (!supabase) return configurationRequired();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return accountChanged();
 
   try {
     const { error } = await client.rpc('submit_business_claim', {

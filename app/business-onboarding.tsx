@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -56,6 +56,13 @@ const payments: PaymentMethod[] = [
   'Venmo',
 ];
 
+type BusinessOnboardingContentProps = {
+  claimRequested: boolean;
+  initialClaimId: string | null;
+  initialName: string;
+  expectedUserId: string | null;
+};
+
 function Input({
   label,
   value,
@@ -94,12 +101,49 @@ function Input({
 }
 
 export default function BusinessOnboardingScreen() {
-  const claimParams = useLocalSearchParams<{ claim?: string; claimId?: string; name?: string }>();
+  const claimParams = useLocalSearchParams<{
+    claim?: string | string[];
+    claimId?: string | string[];
+    name?: string | string[];
+  }>();
+  const auth = useAuth();
+  const value = (input?: string | string[]) =>
+    (Array.isArray(input) ? (input[0] ?? '') : (input ?? '')).trim();
+  const claimRequested = value(claimParams.claim) === '1';
+  const initialClaimId = value(claimParams.claimId) || null;
+  const initialName = value(claimParams.name);
+  const accountId =
+    auth.status === 'authenticated' && auth.account?.id ? auth.account.id : null;
+  const accountScope = accountId ? `account:${accountId}` : `session:${auth.status}`;
+  const accessScope =
+    auth.securityStatus === 'ready' &&
+    auth.mfaEnrolled &&
+    auth.assuranceLevel === 'aal2'
+      ? 'aal2'
+      : 'locked';
+
+  return (
+    <BusinessOnboardingContent
+      claimRequested={claimRequested}
+      expectedUserId={accountId}
+      initialClaimId={initialClaimId}
+      initialName={initialName}
+      key={`${accountScope}:${accessScope}:business-onboarding:${initialClaimId ?? 'new'}:${claimRequested ? 'claim' : 'create'}:${initialName}`}
+    />
+  );
+}
+
+function BusinessOnboardingContent({
+  claimRequested,
+  expectedUserId,
+  initialClaimId,
+  initialName,
+}: BusinessOnboardingContentProps) {
   const auth = useAuth();
   const { refreshAccess } = useMarketplaceStore();
   const [step, setStep] = useState(1);
   const [category, setCategory] = useState<BusinessCategory>('food_truck');
-  const [businessName, setBusinessName] = useState(claimParams.name ?? '');
+  const [businessName, setBusinessName] = useState(initialName);
   const [cuisine, setCuisine] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -120,9 +164,9 @@ export default function BusinessOnboardingScreen() {
   const [logoMeta, setLogoMeta] = useState('');
   const [description, setDescription] = useState('');
   const [claimExisting, setClaimExisting] = useState(
-    featureFlags.businessClaims && claimParams.claim === '1'
+    featureFlags.businessClaims && claimRequested
   );
-  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(claimParams.claimId ?? null);
+  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(initialClaimId);
   const [claimMethod, setClaimMethod] = useState<'listed_phone' | 'domain_email'>('listed_phone');
   const [claimSearchResults, setClaimSearchResults] = useState<Place[]>([]);
   const [claimSearching, setClaimSearching] = useState(false);
@@ -132,6 +176,46 @@ export default function BusinessOnboardingScreen() {
   const [formMessage, setFormMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
     null
   );
+  const mounted = useRef(true);
+  const mutationGeneration = useRef(0);
+  const mutationBusy = useRef(false);
+  const navigationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const secureSession =
+    Boolean(expectedUserId) &&
+    auth.isConfigured &&
+    auth.status === 'authenticated' &&
+    auth.securityStatus === 'ready' &&
+    auth.mfaEnrolled &&
+    auth.assuranceLevel === 'aal2';
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      mutationGeneration.current += 1;
+      mutationBusy.current = false;
+      if (navigationTimer.current) clearTimeout(navigationTimer.current);
+      navigationTimer.current = null;
+    };
+  }, []);
+
+  const beginMutation = () => {
+    if (!secureSession || !expectedUserId || mutationBusy.current) return null;
+    mutationBusy.current = true;
+    const generation = mutationGeneration.current + 1;
+    mutationGeneration.current = generation;
+    setSubmitting(true);
+    setFormMessage(null);
+    return generation;
+  };
+  const isCurrentMutation = (generation: number) =>
+    mounted.current && mutationGeneration.current === generation;
+  const finishMutation = (generation: number) => {
+    if (!isCurrentMutation(generation)) return false;
+    mutationBusy.current = false;
+    setSubmitting(false);
+    return true;
+  };
 
   const visibleCategories = useMemo(
     () => categories.filter((item) => item.id !== 'home_kitchen' || featureFlags.homeKitchens),
@@ -218,6 +302,47 @@ export default function BusinessOnboardingScreen() {
     );
   }
 
+  if (auth.securityStatus === 'loading') {
+    return (
+      <View role="main" style={styles.authGate}>
+        <ActivityIndicator color={palette.accentDeep} />
+        <Text style={styles.authGateDetail}>Checking authenticator security…</Text>
+      </View>
+    );
+  }
+
+  if (
+    auth.securityStatus !== 'ready' ||
+    !auth.mfaEnrolled ||
+    auth.assuranceLevel !== 'aal2'
+  ) {
+    return (
+      <View role="main" style={styles.authGate}>
+        <BrandMark />
+        <View style={styles.authGateIcon}>
+          <FontAwesome6
+            color={palette.accentDeep}
+            name="mobile-screen-button"
+            size={21}
+          />
+        </View>
+        <Text accessibilityRole="header" style={styles.authGateTitle}>
+          Verify your authenticator first.
+        </Text>
+        <Text style={styles.authGateDetail}>
+          Business drafts, ownership claims, permits, and logos are protected by
+          a current authenticator code. Verify once before entering setup details.
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.push('/security')}
+          style={styles.authGateButton}>
+          <Text style={styles.authGateButtonText}>Open security</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   const pickLogo = async () => {
     if (auth.isConfigured && !featureFlags.mediaUploads) {
       showMessage(
@@ -227,6 +352,7 @@ export default function BusinessOnboardingScreen() {
       return;
     }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!mounted.current) return;
     if (!permission.granted) {
       showMessage('Photo access needed', 'Allow photo access to choose a business logo.');
       return;
@@ -238,6 +364,8 @@ export default function BusinessOnboardingScreen() {
       mediaTypes: ['images'],
       quality: 0.9,
     });
+
+    if (!mounted.current) return;
 
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
@@ -331,7 +459,7 @@ export default function BusinessOnboardingScreen() {
   };
 
   const submit = async () => {
-    if (auth.isConfigured && auth.status !== 'authenticated') {
+    if (!expectedUserId || auth.status !== 'authenticated') {
       setFormMessage({ type: 'error', text: 'Sign in before creating a business draft.' });
       router.push('/auth');
       return;
@@ -362,35 +490,39 @@ export default function BusinessOnboardingScreen() {
       return;
     }
 
-    setSubmitting(true);
-    setFormMessage(null);
+    const generation = beginMutation();
+    if (generation === null) return;
     let businessId = createdBusinessId;
     let successMessage = 'Business draft created.';
     if (!businessId) {
-      const result = await createBusinessDraft({
-        kind: category,
-        name: businessName,
-        description: descriptionCheck.clean,
-        cuisines: cuisine.split(','),
-        businessEmail: email,
-        businessPhone: phone,
-        websiteUrl: website,
-        address,
-        city,
-        region,
-        postalCode,
-        timezone,
-        payments: selectedPayments,
-        permitNumber: category === 'home_kitchen' ? permitNumber : undefined,
-      });
+      const result = await createBusinessDraft(
+        {
+          kind: category,
+          name: businessName,
+          description: descriptionCheck.clean,
+          cuisines: cuisine.split(','),
+          businessEmail: email,
+          businessPhone: phone,
+          websiteUrl: website,
+          address,
+          city,
+          region,
+          postalCode,
+          timezone,
+          payments: selectedPayments,
+          permitNumber: category === 'home_kitchen' ? permitNumber : undefined,
+        },
+        expectedUserId
+      );
+      if (!isCurrentMutation(generation)) return;
       if (!result.ok) {
-        setSubmitting(false);
+        finishMutation(generation);
         setFormMessage({ type: 'error', text: result.reason });
         return;
       }
       businessId = result.data?.businessId ?? null;
       if (auth.isConfigured && !businessId) {
-        setSubmitting(false);
+        finishMutation(generation);
         setFormMessage({
           type: 'error',
           text: 'The business draft was saved without a usable identifier. Contact support before retrying.',
@@ -408,9 +540,14 @@ export default function BusinessOnboardingScreen() {
       logoMedia &&
       !logoUploadComplete
     ) {
-      const logoResult = await uploadBusinessLogo(businessId, logoMedia);
+      const logoResult = await uploadBusinessLogo(
+        businessId,
+        logoMedia,
+        expectedUserId
+      );
+      if (!isCurrentMutation(generation)) return;
       if (!logoResult.ok) {
-        setSubmitting(false);
+        finishMutation(generation);
         setFormMessage({
           type: 'error',
           text: `Your business draft is safely saved, but its logo was not attached. ${logoResult.reason} Press Submit again to retry the logo without creating another draft.`,
@@ -421,16 +558,18 @@ export default function BusinessOnboardingScreen() {
       successMessage = `${successMessage} ${logoResult.message ?? ''}`.trim();
     }
 
-    setSubmitting(false);
     await refreshAccess();
+    if (!isCurrentMutation(generation) || !finishMutation(generation)) return;
     setFormMessage({ type: 'success', text: successMessage });
-    setTimeout(
-      () =>
+    navigationTimer.current = setTimeout(
+      () => {
+        if (!isCurrentMutation(generation)) return;
         router.replace(
-          businessId && auth.isConfigured
+          businessId
             ? { pathname: '/business-setup', params: { businessId } }
             : '/(tabs)/studio'
-        ),
+        );
+      },
       500
     );
   };
@@ -446,7 +585,7 @@ export default function BusinessOnboardingScreen() {
       });
       return;
     }
-    if (auth.isConfigured && auth.status !== 'authenticated') {
+    if (!expectedUserId || auth.status !== 'authenticated') {
       setFormMessage({ type: 'error', text: 'Sign in before claiming a business.' });
       router.push('/auth');
       return;
@@ -473,9 +612,14 @@ export default function BusinessOnboardingScreen() {
       });
       return;
     }
-    setSubmitting(true);
-    const result = await submitBusinessClaim(selectedClaimId, claimMethod);
-    setSubmitting(false);
+    const generation = beginMutation();
+    if (generation === null) return;
+    const result = await submitBusinessClaim(
+      selectedClaimId,
+      claimMethod,
+      expectedUserId
+    );
+    if (!isCurrentMutation(generation) || !finishMutation(generation)) return;
     if (!result.ok) {
       setFormMessage({ type: 'error', text: result.reason });
       return;

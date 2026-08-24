@@ -110,8 +110,23 @@ begin
   where p.schemaname = 'public'
     and p.tablename = 'weekly_hours'
     and p.policyname = 'active members manage weekly hours';
-  if policy_expression not like '%can_manage_business_draft%' then
+  if policy_expression is null
+    or policy_expression not like '%can_manage_business_draft%'
+  then
     raise exception 'Weekly-hours mutation policy is not draft/AAL2 constrained';
+  end if;
+
+  select p.qual
+  into policy_expression
+  from pg_catalog.pg_policies p
+  where p.schemaname = 'public'
+    and p.tablename = 'home_kitchen_permits'
+    and p.policyname = 'owners and managers read permit status';
+  if policy_expression is null
+    or policy_expression not like '%has_aal2%'
+    or policy_expression not like '%is_business_member%'
+  then
+    raise exception 'Home-kitchen permit reads are not member/AAL2 constrained';
   end if;
 
   if not exists (
@@ -206,6 +221,12 @@ begin
       'list_pending_content_moderation',
       'decide_content_moderation',
       'nominate_business_logo',
+      'create_business_draft',
+      'submit_business_claim',
+      'submit_business_revision',
+      'submit_business_for_review',
+      'schedule_mobile_stop',
+      'cancel_mobile_stop',
       'get_business_team',
       'invite_business_member',
       'list_my_business_invitations',
@@ -238,7 +259,12 @@ begin
       'set_business_member_role',
       'revoke_business_member',
       'revoke_business_invitation',
-      'transfer_business_ownership'
+      'transfer_business_ownership',
+      'nominate_business_logo',
+      'submit_business_revision',
+      'submit_business_for_review',
+      'schedule_mobile_stop',
+      'cancel_mobile_stop'
     ]) required(name)
     where not exists (
       select 1
@@ -251,7 +277,7 @@ begin
         and pg_catalog.pg_get_functiondef(p.oid) like '%for update%'
     )
   ) then
-    raise exception 'A business team mutation is missing authority serialization';
+    raise exception 'A privileged business mutation is missing authority serialization';
   end if;
 
   if not exists (

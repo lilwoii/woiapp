@@ -1,7 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { checkProfessionalText } from '@/lib/moderation';
-import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import {
+  createAccountBoundSupabaseClient,
+  isSupabaseConfigured,
+  supabase,
+} from '@/lib/supabase';
 
 export type BusinessMemberRole = 'owner' | 'manager';
 export type BusinessKind =
@@ -450,25 +454,19 @@ function assertBusinessId(businessId: string) {
   }
 }
 
-async function authorizeBusiness(businessId: string) {
+async function authorizeBusiness(businessId: string, expectedUserId: string) {
   assertBusinessId(businessId);
   if (!isSupabaseConfigured || !supabase) {
     throw Object.assign(new Error('Live services are not configured.'), { code: 'CONFIG_REQUIRED' });
   }
-
-  const client = supabase;
-  const { data: userData, error: userError } = await client.auth.getUser();
-  if (userError || !userData.user) {
-    throw Object.assign(userError ?? new Error('Not authenticated'), { status: 401 });
-  }
-  const { data: assurance, error: assuranceError } =
-    await client.auth.mfa.getAuthenticatorAssuranceLevel();
-  if (assuranceError) throw assuranceError;
-  if (assurance.currentLevel !== 'aal2') {
-    throw Object.assign(new Error('Authenticator verification required (AAL2).'), {
-      code: '42501',
-      status: 403,
+  if (!uuidPattern.test(expectedUserId)) {
+    throw Object.assign(new Error('The active account could not be verified.'), {
+      status: 401,
     });
+  }
+  const client = await createAccountBoundSupabaseClient(expectedUserId);
+  if (!client) {
+    throw Object.assign(new Error('The active account changed.'), { status: 401 });
   }
 
   const { data: allowed, error: accessError } = await client.rpc('is_business_member', {
@@ -486,7 +484,7 @@ async function authorizeBusiness(businessId: string) {
         .from('business_members')
         .select('role, status')
         .eq('business_id', businessId)
-        .eq('user_id', userData.user.id)
+        .eq('user_id', expectedUserId)
         .eq('status', 'active')
         .maybeSingle(),
       client
@@ -511,7 +509,7 @@ async function authorizeBusiness(businessId: string) {
 
   return {
     client,
-    userId: userData.user.id,
+    userId: expectedUserId,
     role: membership.role,
     business,
   };
@@ -811,7 +809,8 @@ async function loadAuthorizedConfiguration(
 }
 
 export async function loadBusinessConfiguration(
-  businessId: string
+  businessId: string,
+  expectedUserId: string
 ): Promise<BusinessManagementResult<BusinessConfiguration>> {
   if (!isSupabaseConfigured || !supabase) {
     return {
@@ -821,7 +820,7 @@ export async function loadBusinessConfiguration(
     };
   }
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     return { ok: true, data: await loadAuthorizedConfiguration(access) };
   } catch (error) {
     return failure(error, 'This business setup could not be loaded.');
@@ -895,10 +894,11 @@ function locationPayload(
 
 export async function savePrimaryLocation(
   businessId: string,
-  input: ManagedLocation
+  input: ManagedLocation,
+  expectedUserId: string
 ): Promise<BusinessManagementResult<ManagedLocation>> {
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (access.business.state !== 'draft' && access.business.state !== 'published') {
       throw new ValidationError('This listing cannot accept setup changes in its current state.');
     }
@@ -990,11 +990,12 @@ export async function savePrimaryLocation(
 
 export async function saveDraftServiceLocations(
   businessId: string,
-  input: ManagedLocation[]
+  input: ManagedLocation[],
+  expectedUserId: string
 ): Promise<BusinessManagementResult<ManagedLocation[]>> {
   let wroteData = false;
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (access.business.state !== 'draft' && access.business.state !== 'published') {
       throw new ValidationError('This listing cannot accept service-pin changes in its current state.');
     }
@@ -1180,10 +1181,11 @@ export function validateWeeklyHours(hours: ManagedWeeklyHour[]) {
 
 export async function saveWeeklyHours(
   businessId: string,
-  input: ManagedWeeklyHour[]
+  input: ManagedWeeklyHour[],
+  expectedUserId: string
 ): Promise<BusinessManagementResult<ManagedWeeklyHour[]>> {
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (access.business.state !== 'draft' && access.business.state !== 'published') {
       throw new ValidationError('This listing cannot accept hours changes in its current state.');
     }
@@ -1222,11 +1224,12 @@ export async function saveWeeklyHours(
 
 export async function saveBusinessPayments(
   businessId: string,
-  input: PaymentKind[]
+  input: PaymentKind[],
+  expectedUserId: string
 ): Promise<BusinessManagementResult<PaymentKind[]>> {
   let changed = false;
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (access.business.state !== 'draft' && access.business.state !== 'published') {
       throw new ValidationError('This listing cannot accept payment changes in its current state.');
     }
@@ -1407,11 +1410,12 @@ export function validateSpecialHours(
 
 export async function saveBusinessSpecialHours(
   businessId: string,
-  input: ManagedSpecialHour[]
+  input: ManagedSpecialHour[],
+  expectedUserId: string
 ): Promise<BusinessManagementResult<ManagedSpecialHour[]>> {
   let wroteData = false;
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (access.business.state !== 'draft' && access.business.state !== 'published') {
       throw new ValidationError('This listing cannot accept special-hours changes in its current state.');
     }
@@ -1524,11 +1528,12 @@ export function validateMobileStopSchedule(
 
 export async function saveDraftMobileStops(
   businessId: string,
-  input: ManagedMobileStop[]
+  input: ManagedMobileStop[],
+  expectedUserId: string
 ): Promise<BusinessManagementResult<ManagedMobileStop[]>> {
   let wroteData = false;
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (access.business.state !== 'draft') {
       throw new ValidationError('Only draft listings can change setup details.');
     }
@@ -1619,10 +1624,11 @@ export function createPublishedMobileStop(
 }
 
 export async function loadPublishedMobileSchedule(
-  businessId: string
+  businessId: string,
+  expectedUserId: string
 ): Promise<BusinessManagementResult<PublishedMobileSchedule>> {
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (
       access.business.state !== 'published' ||
       !['food_truck', 'pop_up'].includes(access.business.kind)
@@ -1702,10 +1708,11 @@ export async function loadPublishedMobileSchedule(
 
 export async function schedulePublishedMobileStop(
   businessId: string,
-  input: PublishedMobileStop
+  input: PublishedMobileStop,
+  expectedUserId: string
 ): Promise<BusinessManagementResult<PublishedMobileStop>> {
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (
       access.business.state !== 'published' ||
       !['food_truck', 'pop_up'].includes(access.business.kind)
@@ -1798,14 +1805,15 @@ export async function schedulePublishedMobileStop(
 
 export async function cancelPublishedMobileStop(
   businessId: string,
-  stopId: string
+  stopId: string,
+  expectedUserId: string
 ): Promise<BusinessManagementResult<null>> {
   try {
     assertBusinessId(businessId);
     if (!uuidPattern.test(stopId)) {
       throw new ValidationError('Reload the schedule and choose an upcoming stop.');
     }
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (
       access.business.state !== 'published' ||
       !['food_truck', 'pop_up'].includes(access.business.kind)
@@ -1884,11 +1892,12 @@ export function validateMenuConfiguration(input: ManagedMenuSection[]) {
 
 export async function saveBusinessMenu(
   businessId: string,
-  input: ManagedMenuSection[]
+  input: ManagedMenuSection[],
+  expectedUserId: string
 ): Promise<BusinessManagementResult<ManagedMenuSection[]>> {
   let wroteData = false;
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (access.business.state !== 'draft' && access.business.state !== 'published') {
       throw new ValidationError('This listing cannot accept menu changes in its current state.');
     }
@@ -2051,10 +2060,11 @@ export function configurationReadiness(configuration: BusinessConfiguration) {
 }
 
 export async function submitBusinessConfiguration(
-  businessId: string
+  businessId: string,
+  expectedUserId: string
 ): Promise<BusinessManagementResult<BusinessConfiguration>> {
   try {
-    const access = await authorizeBusiness(businessId);
+    const access = await authorizeBusiness(businessId, expectedUserId);
     if (access.role !== 'owner') {
       throw Object.assign(new Error('Business owner role required'), { status: 403 });
     }

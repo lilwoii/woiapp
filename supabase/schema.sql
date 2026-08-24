@@ -3450,6 +3450,15 @@ declare
   actor uuid := auth.uid();
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.can_manage_business_draft(target_business_id, actor) then
     raise exception using errcode = '42501', message = 'Draft owner or manager role required';
   end if;
@@ -4928,6 +4937,15 @@ declare
   existing_state text;
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(
     target_business_id,
     actor,
@@ -5071,10 +5089,27 @@ begin
   join public.businesses b on b.id = ms.business_id
   where ms.id = target_stop_id
     and ms.state in ('draft', 'scheduled', 'live')
+    and b.state = 'published';
+
+  if target_business_id is null then
+    raise exception using errcode = '42501', message = 'Editable mobile stop owner or manager role required';
+  end if;
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+
+  perform 1
+  from public.mobile_stops ms
+  join public.businesses b on b.id = ms.business_id
+  where ms.id = target_stop_id
+    and ms.business_id = target_business_id
+    and ms.state in ('draft', 'scheduled', 'live')
     and b.state = 'published'
   for update of ms;
 
-  if target_business_id is null
+  if not found
     or not private.is_business_member(
       target_business_id,
       actor,
@@ -5797,6 +5832,15 @@ declare
   merged_patch jsonb;
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(
     target_business_id,
     actor,
@@ -6658,6 +6702,15 @@ declare
   current_kind public.business_kind;
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(
     target_business_id,
     actor,
@@ -9546,7 +9599,8 @@ create policy "legally reviewed jurisdictions are readable" on public.jurisdicti
 create policy "owners and managers read permit status" on public.home_kitchen_permits
   for select to authenticated
   using (
-    private.is_business_member(
+    private.has_aal2()
+    and private.is_business_member(
       business_id,
       auth.uid(),
       array['owner', 'manager']::public.member_role[]

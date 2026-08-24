@@ -102,6 +102,65 @@ begin
 end;
 $contract$;
 
+do $business_core_acl$
+declare
+  expected_core_count constant integer := 11;
+  actual_core_count integer;
+begin
+  select count(*)
+  into actual_core_count
+  from pg_catalog.pg_proc function_row
+  join pg_catalog.pg_namespace schema_row
+    on schema_row.oid = function_row.pronamespace
+  where schema_row.nspname = 'private'
+    and function_row.proname = any(array[
+      'invite_business_member_core',
+      'respond_business_invitation_core',
+      'set_business_member_role_core',
+      'revoke_business_member_core',
+      'revoke_business_invitation_core',
+      'transfer_business_ownership_core',
+      'nominate_business_logo_core',
+      'schedule_mobile_stop_core',
+      'cancel_mobile_stop_core',
+      'submit_business_revision_core',
+      'submit_business_for_review_core'
+    ]::text[]);
+
+  if actual_core_count <> expected_core_count then
+    raise exception 'A serialized business core function is missing after migrations';
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.pg_proc function_row
+    join pg_catalog.pg_namespace schema_row
+      on schema_row.oid = function_row.pronamespace
+    where schema_row.nspname = 'private'
+      and function_row.proname = any(array[
+        'invite_business_member_core',
+        'respond_business_invitation_core',
+        'set_business_member_role_core',
+        'revoke_business_member_core',
+        'revoke_business_invitation_core',
+        'transfer_business_ownership_core',
+        'nominate_business_logo_core',
+        'schedule_mobile_stop_core',
+        'cancel_mobile_stop_core',
+        'submit_business_revision_core',
+        'submit_business_for_review_core'
+      ]::text[])
+      and pg_catalog.has_function_privilege(
+        'service_role',
+        function_row.oid,
+        'execute'
+      )
+  ) then
+    raise exception 'Service role can bypass a serialized business RPC wrapper';
+  end if;
+end;
+$business_core_acl$;
+
 set local role anon;
 
 select count(*)

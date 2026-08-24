@@ -68,6 +68,8 @@ const currency = new Intl.NumberFormat('en-US', {
 
 export default function StudioScreen() {
   const auth = useAuth();
+  const accountId =
+    auth.status === 'authenticated' && auth.account?.id ? auth.account.id : null;
   const { managedPlaceIds, places, publishUpdate, setVenueStatus } = useMarketplaceStore();
   const { width } = useWindowDimensions();
   const wide = width >= 900;
@@ -88,12 +90,27 @@ export default function StudioScreen() {
   const [publishing, setPublishing] = useState(false);
   const [statusPending, setStatusPending] = useState<VenueStatus | null>(null);
   const [menuPendingIds, setMenuPendingIds] = useState<string[]>([]);
-  const [mobileSchedule, setMobileSchedule] = useState<PublishedMobileSchedule | null>(null);
+  const scheduleScope = accountId && place ? `${accountId}:${place.id}` : null;
+  const [mobileScheduleSnapshot, setMobileScheduleSnapshot] = useState<{
+    scope: string;
+    data: PublishedMobileSchedule;
+  } | null>(null);
+  const mobileSchedule =
+    scheduleScope && mobileScheduleSnapshot?.scope === scheduleScope
+      ? mobileScheduleSnapshot.data
+      : null;
   const [stopEditor, setStopEditor] = useState<PublishedMobileStop | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const scheduleRequest = useRef(0);
+  const scheduleMutationBusy = useRef(false);
+  const studioMounted = useRef(true);
+  const scheduleAccountId = useRef<string | null>(accountId);
+  const scheduleScopeRef = useRef<string | null>(scheduleScope);
+  const loadedScheduleScope = useRef<string | null>(null);
+  scheduleAccountId.current = accountId;
+  scheduleScopeRef.current = scheduleScope;
   const responseQueueRequest = useRef(0);
   const responseAttempts = useRef<Record<string, BusinessResponseAttempt>>({});
   const ownerUpdateAttempt = useRef<{
@@ -144,6 +161,14 @@ export default function StudioScreen() {
     return mapped;
   }, [place?.id, responseOverrides, responseQueue]);
 
+  useEffect(() => {
+    studioMounted.current = true;
+    return () => {
+      studioMounted.current = false;
+      scheduleMutationBusy.current = false;
+    };
+  }, []);
+
   const setItemSoldOut = (itemId: string, soldOut: boolean) => {
     if (!place) return;
     setSoldOutState((current) => {
@@ -164,12 +189,15 @@ export default function StudioScreen() {
     if (
       !place ||
       !publishedMobile ||
+      !accountId ||
+      !scheduleScope ||
       !auth.isConfigured ||
       auth.securityStatus !== 'ready' ||
       !auth.mfaEnrolled ||
       auth.assuranceLevel !== 'aal2'
     ) {
-      setMobileSchedule(null);
+      loadedScheduleScope.current = null;
+      setMobileScheduleSnapshot(null);
       setStopEditor(null);
       setScheduleError(null);
       setScheduleLoading(false);
@@ -177,22 +205,33 @@ export default function StudioScreen() {
     }
     setScheduleLoading(true);
     setScheduleError(null);
-    const result = await loadPublishedMobileSchedule(place.id);
-    if (scheduleRequest.current !== request) return;
+    const result = await loadPublishedMobileSchedule(place.id, accountId);
+    if (
+      scheduleRequest.current !== request ||
+      scheduleAccountId.current !== accountId ||
+      scheduleScopeRef.current !== scheduleScope
+    ) {
+      return;
+    }
     setScheduleLoading(false);
     if (!result.ok) {
-      setMobileSchedule(null);
+      loadedScheduleScope.current = null;
+      setMobileScheduleSnapshot(null);
       setScheduleError(result.reason);
       return;
     }
-    setMobileSchedule(result.data);
+    if (loadedScheduleScope.current !== scheduleScope) setStopEditor(null);
+    loadedScheduleScope.current = scheduleScope;
+    setMobileScheduleSnapshot({ scope: scheduleScope, data: result.data });
   }, [
     auth.assuranceLevel,
     auth.isConfigured,
     auth.mfaEnrolled,
     auth.securityStatus,
+    accountId,
     place,
     publishedMobile,
+    scheduleScope,
   ]);
 
   useEffect(() => {
@@ -204,6 +243,17 @@ export default function StudioScreen() {
       scheduleRequest.current += 1;
     };
   }, [refreshMobileSchedule]);
+
+  useEffect(() => {
+    scheduleRequest.current += 1;
+    loadedScheduleScope.current = null;
+    setMobileScheduleSnapshot(null);
+    setStopEditor(null);
+    setScheduleError(null);
+    setScheduleLoading(false);
+    scheduleMutationBusy.current = false;
+    setScheduleSaving(false);
+  }, [scheduleScope]);
 
   const refreshResponseQueue = useCallback(async () => {
     const request = responseQueueRequest.current + 1;
@@ -271,7 +321,7 @@ export default function StudioScreen() {
   }, [refreshResponseQueue]);
 
   const beginNewStop = () => {
-    if (!mobileSchedule?.locations.length || scheduleSaving) return;
+    if (!mobileSchedule?.locations.length || scheduleMutationBusy.current) return;
     const serviceDate = businessDateAfter(mobileSchedule.business.timezone, 1);
     setStopEditor(
       createPublishedMobileStop(mobileSchedule.locations[0].id!, serviceDate)
@@ -280,10 +330,33 @@ export default function StudioScreen() {
   };
 
   const saveScheduledStop = async () => {
-    if (!place || !stopEditor || scheduleSaving) return;
+    if (
+      !place ||
+      !stopEditor ||
+      !accountId ||
+      !scheduleScope ||
+      scheduleMutationBusy.current
+    ) {
+      return;
+    }
+    const initiatingAccountId = accountId;
+    const initiatingScheduleScope = scheduleScope;
+    scheduleMutationBusy.current = true;
     setScheduleSaving(true);
     setScheduleError(null);
-    const result = await schedulePublishedMobileStop(place.id, stopEditor);
+    const result = await schedulePublishedMobileStop(
+      place.id,
+      stopEditor,
+      initiatingAccountId
+    );
+    if (
+      !studioMounted.current ||
+      scheduleAccountId.current !== initiatingAccountId ||
+      scheduleScopeRef.current !== initiatingScheduleScope
+    ) {
+      return;
+    }
+    scheduleMutationBusy.current = false;
     setScheduleSaving(false);
     if (!result.ok) {
       setScheduleError(result.reason);
@@ -298,17 +371,50 @@ export default function StudioScreen() {
   };
 
   const cancelScheduledStop = async () => {
-    if (!place || !stopEditor?.id || scheduleSaving) return;
+    if (
+      !place ||
+      !stopEditor?.id ||
+      !accountId ||
+      !scheduleScope ||
+      scheduleMutationBusy.current
+    ) {
+      return;
+    }
+    const initiatingAccountId = accountId;
+    const initiatingScheduleScope = scheduleScope;
+    scheduleMutationBusy.current = true;
     const confirmed = await confirmAction({
       title: 'Cancel this upcoming stop?',
       message: 'Customers will no longer see this stop in the upcoming schedule.',
       confirmLabel: 'Cancel stop',
       destructive: true,
     });
-    if (!confirmed) return;
+    if (
+      !studioMounted.current ||
+      scheduleAccountId.current !== initiatingAccountId ||
+      scheduleScopeRef.current !== initiatingScheduleScope
+    ) {
+      return;
+    }
+    if (!confirmed) {
+      scheduleMutationBusy.current = false;
+      return;
+    }
     setScheduleSaving(true);
     setScheduleError(null);
-    const result = await cancelPublishedMobileStop(place.id, stopEditor.id);
+    const result = await cancelPublishedMobileStop(
+      place.id,
+      stopEditor.id,
+      initiatingAccountId
+    );
+    if (
+      !studioMounted.current ||
+      scheduleAccountId.current !== initiatingAccountId ||
+      scheduleScopeRef.current !== initiatingScheduleScope
+    ) {
+      return;
+    }
+    scheduleMutationBusy.current = false;
     setScheduleSaving(false);
     if (!result.ok) {
       setScheduleError(result.reason);

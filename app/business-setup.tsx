@@ -1,7 +1,14 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as ExpoLocation from 'expo-location';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -61,6 +68,10 @@ type SectionKey =
   | 'submit';
 type EditableSectionKey = Exclude<SectionKey, 'submit'>;
 type Feedback = { type: 'success' | 'error'; text: string; partial?: boolean };
+type BusinessSetupContentProps = {
+  businessId: string;
+  expectedUserId: string | null;
+};
 type LocationEditor = Omit<ManagedLocation, 'latitude' | 'longitude'> & {
   latitude: string;
   longitude: string;
@@ -337,11 +348,37 @@ function Gate({
 export default function BusinessSetupScreen() {
   const params = useLocalSearchParams<{ businessId?: string | string[] }>();
   const auth = useAuth();
+  const businessId = (
+    Array.isArray(params.businessId)
+      ? (params.businessId[0] ?? '')
+      : (params.businessId ?? '')
+  ).trim();
+  const accountId =
+    auth.status === 'authenticated' && auth.account?.id ? auth.account.id : null;
+  const accountScope = accountId ? `account:${accountId}` : `session:${auth.status}`;
+  const accessScope =
+    auth.securityStatus === 'ready' &&
+    auth.mfaEnrolled &&
+    auth.assuranceLevel === 'aal2'
+      ? 'aal2'
+      : 'locked';
+
+  return (
+    <BusinessSetupContent
+      businessId={businessId}
+      expectedUserId={accountId}
+      key={`${accountScope}:${accessScope}:business-setup:${businessId}`}
+    />
+  );
+}
+
+function BusinessSetupContent({
+  businessId,
+  expectedUserId,
+}: BusinessSetupContentProps) {
+  const auth = useAuth();
   const { width } = useWindowDimensions();
   const wide = width >= 720;
-  const businessId = (
-    Array.isArray(params.businessId) ? params.businessId[0] : params.businessId ?? ''
-  ).trim();
   const [configuration, setConfiguration] = useState<BusinessConfiguration | null>(null);
   const [location, setLocation] = useState<LocationEditor | null>(null);
   const [additionalLocations, setAdditionalLocations] = useState<LocationEditor[]>([]);
@@ -359,6 +396,27 @@ export default function BusinessSetupScreen() {
   const [dirtySections, setDirtySections] = useState<
     Partial<Record<EditableSectionKey, boolean>>
   >({});
+  const mounted = useRef(true);
+  const loadGeneration = useRef(0);
+  const mutationGeneration = useRef(0);
+  const mutationBusy = useRef(false);
+  const secureSession =
+    Boolean(expectedUserId) &&
+    auth.isConfigured &&
+    auth.status === 'authenticated' &&
+    auth.securityStatus === 'ready' &&
+    auth.mfaEnrolled &&
+    auth.assuranceLevel === 'aal2';
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      loadGeneration.current += 1;
+      mutationGeneration.current += 1;
+      mutationBusy.current = false;
+    };
+  }, []);
 
   const hydrate = useCallback((next: BusinessConfiguration) => {
     setConfiguration(next);
@@ -384,18 +442,13 @@ export default function BusinessSetupScreen() {
       setLoadError('This business setup link is missing a valid business ID.');
       return;
     }
-    if (
-      auth.isConfigured &&
-      (auth.status !== 'authenticated' ||
-        auth.securityStatus !== 'ready' ||
-        !auth.mfaEnrolled ||
-        auth.assuranceLevel !== 'aal2')
-    ) {
-      return;
-    }
+    if (!secureSession || !expectedUserId) return;
+    const generation = loadGeneration.current + 1;
+    loadGeneration.current = generation;
     setLoading(true);
     setLoadError(null);
-    const result = await loadBusinessConfiguration(businessId);
+    const result = await loadBusinessConfiguration(businessId, expectedUserId);
+    if (!mounted.current || loadGeneration.current !== generation) return;
     setLoading(false);
     if (!result.ok) {
       setLoadError(result.reason);
@@ -403,37 +456,49 @@ export default function BusinessSetupScreen() {
     }
     hydrate(result.data);
   }, [
-    auth.assuranceLevel,
-    auth.isConfigured,
-    auth.mfaEnrolled,
-    auth.securityStatus,
-    auth.status,
     businessId,
+    expectedUserId,
     hydrate,
+    secureSession,
   ]);
 
   useEffect(() => {
-    if (
-      !auth.isConfigured ||
-      (auth.status === 'authenticated' &&
-        auth.securityStatus === 'ready' &&
-        auth.mfaEnrolled &&
-        auth.assuranceLevel === 'aal2')
-    ) {
+    if (secureSession) {
       const timer = setTimeout(() => {
         void load();
       }, 0);
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(timer);
+        loadGeneration.current += 1;
+      };
     }
     return undefined;
-  }, [
-    auth.assuranceLevel,
-    auth.isConfigured,
-    auth.mfaEnrolled,
-    auth.securityStatus,
-    auth.status,
-    load,
-  ]);
+  }, [load, secureSession]);
+
+  const beginMutation = useCallback(
+    (section: SectionKey | 'locating') => {
+      if (!secureSession || !expectedUserId || mutationBusy.current) return null;
+      mutationBusy.current = true;
+      const generation = mutationGeneration.current + 1;
+      mutationGeneration.current = generation;
+      setBusySection(section);
+      return generation;
+    },
+    [expectedUserId, secureSession]
+  );
+
+  const finishMutation = useCallback((generation: number) => {
+    if (!mounted.current || mutationGeneration.current !== generation) return false;
+    mutationBusy.current = false;
+    setBusySection(null);
+    return true;
+  }, []);
+
+  const isCurrentMutation = useCallback(
+    (generation: number) =>
+      mounted.current && mutationGeneration.current === generation,
+    []
+  );
 
   const readiness = useMemo(
     () =>
@@ -467,7 +532,7 @@ export default function BusinessSetupScreen() {
   const savedServiceLocations = [location, ...additionalLocations].filter(
     (entry): entry is LocationEditor & { id: string } => Boolean(entry?.id)
   );
-  const isBusy = busySection !== null;
+  const isBusy = mutationBusy.current || busySection !== null;
   const hasUnsavedChanges = Object.values(dirtySections).some(Boolean);
 
   const markDirty = (section: EditableSectionKey) => {
@@ -494,7 +559,7 @@ export default function BusinessSetupScreen() {
         confirmLabel: 'Discard changes',
         destructive: true,
       });
-      if (!confirmed) return;
+      if (!mounted.current || !confirmed) return;
     }
     router.replace('/(tabs)/studio');
   };
@@ -505,10 +570,12 @@ export default function BusinessSetupScreen() {
   };
 
   const applyCurrentLocation = async (additionalIndex?: number) => {
-    if (isBusy || !canEditListing) return;
-    setBusySection('locating');
+    if (mutationBusy.current || !canEditListing) return;
+    const generation = beginMutation('locating');
+    if (generation === null) return;
     try {
       const permission = await ExpoLocation.requestForegroundPermissionsAsync();
+      if (!isCurrentMutation(generation)) return;
       if (!permission.granted) {
         showFeedback('location', {
           type: 'error',
@@ -519,6 +586,7 @@ export default function BusinessSetupScreen() {
       const current = await ExpoLocation.getCurrentPositionAsync({
         accuracy: ExpoLocation.Accuracy.High,
       });
+      if (!isCurrentMutation(generation)) return;
       const coordinates = {
         latitude: current.coords.latitude.toFixed(6),
         longitude: current.coords.longitude.toFixed(6),
@@ -538,26 +606,33 @@ export default function BusinessSetupScreen() {
         text: 'Current coordinates added. Review the address, then save the private pin.',
       });
     } catch {
-      showFeedback('location', {
-        type: 'error',
-        text: 'Your position could not be read. Enter latitude and longitude manually.',
-      });
+      if (isCurrentMutation(generation)) {
+        showFeedback('location', {
+          type: 'error',
+          text: 'Your position could not be read. Enter latitude and longitude manually.',
+        });
+      }
     } finally {
-      setBusySection(null);
+      finishMutation(generation);
     }
   };
 
   const saveLocation = async () => {
-    if (!location || isBusy || !canEditListing) return;
-    setBusySection('location');
+    if (!location || mutationBusy.current || !canEditListing) return;
+    const generation = beginMutation('location');
+    if (generation === null || !expectedUserId) return;
     setFeedback((current) => ({ ...current, location: undefined }));
     const inputs = [location, ...additionalLocations].map((entry) => ({
       ...entry,
       latitude: entry.latitude.trim() ? Number(entry.latitude) : null,
       longitude: entry.longitude.trim() ? Number(entry.longitude) : null,
     }));
-    const result = await saveDraftServiceLocations(businessId, inputs);
-    setBusySection(null);
+    const result = await saveDraftServiceLocations(
+      businessId,
+      inputs,
+      expectedUserId
+    );
+    if (!isCurrentMutation(generation) || !finishMutation(generation)) return;
     if (!result.ok) {
       showFeedback('location', { type: 'error', text: result.reason, partial: result.partial });
       return;
@@ -664,11 +739,12 @@ export default function BusinessSetupScreen() {
   };
 
   const saveHours = async () => {
-    if (isBusy || !canEditListing) return;
-    setBusySection('hours');
+    if (mutationBusy.current || !canEditListing) return;
+    const generation = beginMutation('hours');
+    if (generation === null || !expectedUserId) return;
     setFeedback((current) => ({ ...current, hours: undefined }));
-    const result = await saveWeeklyHours(businessId, hours);
-    setBusySection(null);
+    const result = await saveWeeklyHours(businessId, hours, expectedUserId);
+    if (!isCurrentMutation(generation) || !finishMutation(generation)) return;
     if (!result.ok) {
       showFeedback('hours', { type: 'error', text: result.reason, partial: result.partial });
       return;
@@ -717,11 +793,16 @@ export default function BusinessSetupScreen() {
   };
 
   const saveSpecialHours = async () => {
-    if (isBusy || !canEditListing) return;
-    setBusySection('specialHours');
+    if (mutationBusy.current || !canEditListing) return;
+    const generation = beginMutation('specialHours');
+    if (generation === null || !expectedUserId) return;
     setFeedback((current) => ({ ...current, specialHours: undefined }));
-    const result = await saveBusinessSpecialHours(businessId, specialHours);
-    setBusySection(null);
+    const result = await saveBusinessSpecialHours(
+      businessId,
+      specialHours,
+      expectedUserId
+    );
+    if (!isCurrentMutation(generation) || !finishMutation(generation)) return;
     if (!result.ok) {
       showFeedback('specialHours', {
         type: 'error',
@@ -777,11 +858,16 @@ export default function BusinessSetupScreen() {
   };
 
   const saveMobileStops = async () => {
-    if (isBusy || !isDraft) return;
-    setBusySection('stops');
+    if (mutationBusy.current || !isDraft) return;
+    const generation = beginMutation('stops');
+    if (generation === null || !expectedUserId) return;
     setFeedback((current) => ({ ...current, stops: undefined }));
-    const result = await saveDraftMobileStops(businessId, mobileStops);
-    setBusySection(null);
+    const result = await saveDraftMobileStops(
+      businessId,
+      mobileStops,
+      expectedUserId
+    );
+    if (!isCurrentMutation(generation) || !finishMutation(generation)) return;
     if (!result.ok) {
       showFeedback('stops', {
         type: 'error',
@@ -812,11 +898,16 @@ export default function BusinessSetupScreen() {
   };
 
   const savePayments = async () => {
-    if (isBusy || !canEditListing) return;
-    setBusySection('payments');
+    if (mutationBusy.current || !canEditListing) return;
+    const generation = beginMutation('payments');
+    if (generation === null || !expectedUserId) return;
     setFeedback((current) => ({ ...current, payments: undefined }));
-    const result = await saveBusinessPayments(businessId, payments);
-    setBusySection(null);
+    const result = await saveBusinessPayments(
+      businessId,
+      payments,
+      expectedUserId
+    );
+    if (!isCurrentMutation(generation) || !finishMutation(generation)) return;
     if (!result.ok) {
       showFeedback('payments', { type: 'error', text: result.reason, partial: result.partial });
       return;
@@ -924,7 +1015,7 @@ export default function BusinessSetupScreen() {
   };
 
   const saveMenu = async () => {
-    if (isBusy || !canEditListing) return;
+    if (mutationBusy.current || !canEditListing) return;
     let invalidPriceItem = '';
     const menuToSave = menuSections.map((section) => ({
       ...section,
@@ -943,10 +1034,15 @@ export default function BusinessSetupScreen() {
       });
       return;
     }
-    setBusySection('menu');
+    const generation = beginMutation('menu');
+    if (generation === null || !expectedUserId) return;
     setFeedback((current) => ({ ...current, menu: undefined }));
-    const result = await saveBusinessMenu(businessId, menuToSave);
-    setBusySection(null);
+    const result = await saveBusinessMenu(
+      businessId,
+      menuToSave,
+      expectedUserId
+    );
+    if (!isCurrentMutation(generation) || !finishMutation(generation)) return;
     if (!result.ok) {
       showFeedback('menu', { type: 'error', text: result.reason, partial: result.partial });
       return;
@@ -961,21 +1057,33 @@ export default function BusinessSetupScreen() {
   };
 
   const submit = async () => {
-    if (isBusy || !isDraft || hasUnsavedChanges || !allRequirementsReady) return;
-    setBusySection('submit');
+    if (
+      mutationBusy.current ||
+      !isDraft ||
+      hasUnsavedChanges ||
+      !allRequirementsReady
+    ) {
+      return;
+    }
+    const generation = beginMutation('submit');
+    if (generation === null || !expectedUserId) return;
     const confirmed = await confirmAction({
       title: 'Submit this listing?',
       message:
         'Setup will be locked while Spottr reviews ownership, eligibility, and listing quality.',
       confirmLabel: 'Submit for review',
     });
+    if (!isCurrentMutation(generation)) return;
     if (!confirmed) {
-      setBusySection(null);
+      finishMutation(generation);
       return;
     }
     setFeedback((current) => ({ ...current, submit: undefined }));
-    const result = await submitBusinessConfiguration(businessId);
-    setBusySection(null);
+    const result = await submitBusinessConfiguration(
+      businessId,
+      expectedUserId
+    );
+    if (!isCurrentMutation(generation) || !finishMutation(generation)) return;
     if (!result.ok) {
       showFeedback('submit', { type: 'error', text: result.reason, partial: result.partial });
       return;
