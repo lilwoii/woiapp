@@ -56,9 +56,15 @@ export default function ProfileScreen() {
   const [accountMessage, setAccountMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
     null
   );
-  const [earnedBadges, setEarnedBadges] = useState<PublicBadge[]>([]);
+  const [badgeSnapshot, setBadgeSnapshot] = useState<{
+    accountId: string;
+    badges: PublicBadge[];
+  } | null>(null);
   const signedIn = auth.status === 'authenticated';
   const unconfigured = auth.status === 'unconfigured';
+  const earnedBadges = auth.account?.id && badgeSnapshot?.accountId === auth.account.id
+    ? badgeSnapshot.badges
+    : [];
   const initials = account.displayName
     .split(/\s+/)
     .map((part) => part.charAt(0))
@@ -69,11 +75,13 @@ export default function ProfileScreen() {
   useEffect(() => {
     let current = true;
     if (!signedIn || !auth.account?.id) {
-      setEarnedBadges([]);
       return () => { current = false; };
     }
-    void fetchMyTrustBadges(auth.account.id).then((result) => {
-      if (current && result.ok) setEarnedBadges(result.data ?? []);
+    const accountId = auth.account.id;
+    void fetchMyTrustBadges(accountId).then((result) => {
+      if (current && result.ok) {
+        setBadgeSnapshot({ accountId, badges: result.data ?? [] });
+      }
     });
     return () => { current = false; };
   }, [auth.account?.id, signedIn]);
