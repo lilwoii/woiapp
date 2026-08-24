@@ -62,6 +62,7 @@ export type Review = {
   photos: string[];
   photoMediaIds?: string[];
   helpfulCount: number;
+  badges?: import('@/lib/trust-badges').PublicBadge[];
   ownerResponse?: string;
   ownerResponseId?: string;
   moderation?: 'pending' | 'approved' | 'rejected' | 'removed';

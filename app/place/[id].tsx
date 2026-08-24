@@ -25,6 +25,7 @@ import { PageShell } from '@/components/page-shell';
 import { Rating } from '@/components/rating';
 import { SectionHeading } from '@/components/section-heading';
 import { StatusPill } from '@/components/status-pill';
+import { TrustBadgeStrip } from '@/components/trust-badge-strip';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
@@ -691,7 +692,10 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
                         <Text style={styles.reviewerInitial}>{item.displayName.charAt(0)}</Text>
                       </View>
                       <View style={styles.reviewerCopy}>
-                        <Text style={styles.reviewerName}>{item.displayName}</Text>
+                        <View style={styles.reviewerIdentity}>
+                          <Text style={styles.reviewerName}>{item.displayName}</Text>
+                          <TrustBadgeStrip badges={item.badges ?? []} />
+                        </View>
                         <Text style={styles.reviewerMeta}>
                           @{item.username} · {item.createdAt}
                         </Text>
@@ -1413,6 +1417,12 @@ const styles = StyleSheet.create({
   reviewerCopy: {
     flex: 1,
     gap: 2,
+  },
+  reviewerIdentity: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
   },
   reviewerName: {
     color: palette.ink,

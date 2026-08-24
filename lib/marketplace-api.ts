@@ -1,6 +1,7 @@
 import { toActionError } from '@/lib/errors';
 import { featureFlags } from '@/lib/features';
 import { mapLogoPaths } from '@/lib/map-inventory';
+import { publicBadgeFromCode, type PublicBadge } from '@/lib/trust-badges';
 import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
 import {
   createAccountBoundSupabaseClient,
@@ -58,6 +59,7 @@ export type MarketplacePage = {
   hasMore: boolean;
   nextOffset: number;
 };
+
 type MarketplaceFetchOptions = {
   expectedUserId?: string;
   includeDetails?: boolean;
@@ -207,6 +209,30 @@ function rows(value: unknown): Row[] {
 
 function stringValue(value: unknown, fallback = '') {
   return typeof value === 'string' ? value : fallback;
+}
+
+export async function fetchMyTrustBadges(
+  expectedUserId: string
+): Promise<ActionResult<PublicBadge[]>> {
+  if (!uuidPattern.test(expectedUserId)) {
+    return { ok: false, code: 'AUTH_REQUIRED', reason: 'Sign in to view earned badges.' };
+  }
+  try {
+    const client = await createAccountBoundSupabaseClient(expectedUserId);
+    if (!client) return configurationRequired();
+    const { data, error } = await client.rpc('get_my_profile_badges');
+    if (error) throw error;
+    const badges = rows(data)
+      .map((entry) => publicBadgeFromCode(
+        stringValue(entry.badge_code),
+        stringValue(entry.earned_at) || undefined,
+        stringValue(entry.expires_at) || undefined
+      ))
+      .filter((badge): badge is PublicBadge => Boolean(badge));
+    return { ok: true, data: badges };
+  } catch (error) {
+    return toActionError(error, 'Your badges could not be loaded.');
+  }
 }
 
 function numberValue(value: unknown, fallback = 0) {
@@ -413,7 +439,8 @@ function buildReviews(
   responseRows: Row[],
   reviewMediaRows: Row[],
   mediaUrls: Map<string, string>,
-  businessId: string
+  businessId: string,
+  badgeRows: Row[] = []
 ): Review[] {
   return reviewRows
     .filter((review) => review.business_id === businessId)
@@ -428,9 +455,18 @@ function buildReviews(
       const reviewMedia = reviewMediaRows
         .filter((entry) => entry.review_id === reviewId)
         .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+      const authorPublicId = stringValue(review.author_public_id);
+      const badges = badgeRows
+        .filter((entry) => stringValue(entry.subject_public_id) === authorPublicId)
+        .map((entry) => publicBadgeFromCode(
+          stringValue(entry.badge_code),
+          stringValue(entry.earned_at) || undefined,
+          stringValue(entry.expires_at) || undefined
+        ))
+        .filter((badge): badge is PublicBadge => Boolean(badge));
       return {
         id: reviewId,
-        authorId: stringValue(review.author_public_id) || undefined,
+        authorId: authorPublicId || undefined,
         username: stringValue(review.author_username, 'spottr-member'),
         displayName: stringValue(review.author_display_name, 'Spottr member'),
         rating: numberValue(review.rating, 5),
@@ -443,6 +479,7 @@ function buildReviews(
           .map((entry) => stringValue(entry.asset_id))
           .filter((id) => uuidPattern.test(id)),
         helpfulCount: numberValue(review.helpful_count),
+        badges,
         ownerResponse: response ? stringValue(response.body) : undefined,
         ownerResponseId: response
           ? stringValue(response.review_id) || undefined
@@ -812,7 +849,10 @@ export async function fetchMarketplacePlaces(
     const reviewIds = rows(reviewsResult.data)
       .map((entry) => stringValue(entry.review_id))
       .filter((id) => uuidPattern.test(id));
-    const [itemsResult, responsesResult, reviewMediaResult] = await Promise.all([
+    const reviewAuthorIds = [...new Set(rows(reviewsResult.data)
+      .map((entry) => stringValue(entry.author_public_id))
+      .filter((id) => uuidPattern.test(id)))];
+    const [itemsResult, responsesResult, reviewMediaResult, reviewBadgesResult] = await Promise.all([
       sectionIds.length
         ? client.from('menu_items').select('*').in('section_id', sectionIds).eq('is_published', true)
         : Promise.resolve({ data: [], error: null }),
@@ -828,8 +868,14 @@ export async function fetchMarketplacePlaces(
             .select('*')
             .in('review_id', reviewIds)
         : Promise.resolve({ data: [], error: null }),
+      reviewAuthorIds.length
+        ? client
+            .from('public_profile_badges')
+            .select('*')
+            .in('subject_public_id', reviewAuthorIds)
+        : Promise.resolve({ data: [], error: null }),
     ]);
-    const dependentError = [itemsResult, responsesResult, reviewMediaResult].find(
+    const dependentError = [itemsResult, responsesResult, reviewMediaResult, reviewBadgesResult].find(
       (result) => result.error
     )?.error;
     if (dependentError) throw dependentError;
@@ -852,6 +898,7 @@ export async function fetchMarketplacePlaces(
     const reviewRows = rows(reviewsResult.data);
     const responses = rows(responsesResult.data);
     const reviewMedia = rows(reviewMediaResult.data);
+    const reviewBadges = rows(reviewBadgesResult.data);
     const businessMedia = rows(businessMediaResult.data);
     const liveStatuses = rows(liveStatusResult.data);
     const aggregates = rows(aggregatesResult.data);
@@ -927,7 +974,7 @@ export async function fetchMarketplacePlaces(
             )
           ? (business.effective_status as VenueStatus)
           : hoursInfo.status;
-      const businessReviews = buildReviews(reviewRows, responses, reviewMedia, mediaUrls, id);
+      const businessReviews = buildReviews(reviewRows, responses, reviewMedia, mediaUrls, id, reviewBadges);
       const hasMoreReviews =
         hasDetails &&
         reviewRows.filter((entry) => entry.business_id === id).length > 20;
@@ -1196,7 +1243,10 @@ export async function fetchBusinessReviewsPage(
     const reviewIds = pageRows
       .map((entry) => stringValue(entry.review_id))
       .filter((id) => uuidPattern.test(id));
-    const [responsesResult, mediaResult] = await Promise.all([
+    const authorIds = [...new Set(pageRows
+      .map((entry) => stringValue(entry.author_public_id))
+      .filter((id) => uuidPattern.test(id)))];
+    const [responsesResult, mediaResult, badgesResult] = await Promise.all([
       reviewIds.length
         ? client
             .from('public_business_responses')
@@ -1206,9 +1256,13 @@ export async function fetchBusinessReviewsPage(
       reviewIds.length
         ? client.from('public_review_media').select('*').in('review_id', reviewIds)
         : Promise.resolve({ data: [], error: null }),
+      authorIds.length
+        ? client.from('public_profile_badges').select('*').in('subject_public_id', authorIds)
+        : Promise.resolve({ data: [], error: null }),
     ]);
     if (responsesResult.error) throw responsesResult.error;
     if (mediaResult.error) throw mediaResult.error;
+    if (badgesResult.error) throw badgesResult.error;
     const reviewMedia = rows(mediaResult.data);
     const mediaUrls = await createSignedMediaUrls(
       reviewMedia.map((entry) => stringValue(entry.storage_path))
@@ -1221,7 +1275,8 @@ export async function fetchBusinessReviewsPage(
           rows(responsesResult.data),
           reviewMedia,
           mediaUrls,
-          businessId
+          businessId,
+          rows(badgesResult.data)
         ),
         hasMore,
         nextOffset: hasMore ? resultOffset + pageSize : resultOffset,
