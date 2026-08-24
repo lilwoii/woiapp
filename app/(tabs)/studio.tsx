@@ -387,6 +387,8 @@ export default function StudioScreen() {
     place,
     publishedMobile,
     scheduleScope,
+    setScheduleError,
+    setStopEditor,
   ]);
 
   useEffect(() => {
