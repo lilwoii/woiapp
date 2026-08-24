@@ -1,5 +1,6 @@
 import { File } from 'expo-file-system';
 import { Platform } from 'react-native';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { toActionError } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
@@ -72,9 +73,10 @@ export async function stageMediaUpload(
   media: LocalMedia,
   purpose: MediaPurpose,
   businessId?: string,
-  conversationId?: string
+  conversationId?: string,
+  accountClient?: SupabaseClient,
 ): Promise<ActionResult<StagedMedia>> {
-  const client = supabase;
+  const client = accountClient ?? supabase;
   if (!client) {
     return {
       ok: false,

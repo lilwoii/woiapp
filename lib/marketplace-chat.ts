@@ -1,7 +1,11 @@
 import { toActionError } from "@/lib/errors";
 import { chatSafetyIssue, chatSafetyMessage } from "@/lib/chat-safety";
-import { supabase } from "@/lib/supabase";
+import {
+  createAccountBoundSupabaseClient,
+  supabase,
+} from "@/lib/supabase";
 import type { ActionResult, BusinessCategory } from "@/types/marketplace";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   MarketplaceChatMessage,
   MarketplaceConversation,
@@ -29,6 +33,21 @@ function unavailable<T>(): ActionResult<T> {
     code: "CONFIG_REQUIRED",
     reason: "Secure Spottr chat is not configured.",
   };
+}
+
+function accountChanged<T = undefined>(): ActionResult<T> {
+  return {
+    ok: false,
+    code: "AUTH_REQUIRED",
+    reason: "The active account changed. Try again from the current account.",
+  };
+}
+
+async function marketplaceMutationClient(
+  expectedUserId?: string,
+): Promise<SupabaseClient | null> {
+  if (!expectedUserId) return null;
+  return createAccountBoundSupabaseClient(expectedUserId);
 }
 
 function rows(value: unknown): Row[] {
@@ -105,23 +124,16 @@ export async function startMarketplaceConversation(
   businessId: string,
   expectedUserId?: string,
 ): Promise<ActionResult<string>> {
-  const client = supabase;
-  if (!client) return unavailable();
+  if (!supabase) return unavailable();
   if (!uuidPattern.test(businessId)) {
     return { ok: false, code: "INVALID", reason: "Choose a valid business." };
   }
   if (!expectedUserId) {
     return { ok: false, code: "AUTH_REQUIRED", reason: "Sign in to start a conversation." };
   }
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return accountChanged();
   try {
-    const { data: userData, error: userError } = await client.auth.getUser();
-    if (userError || userData.user?.id !== expectedUserId) {
-      return {
-        ok: false,
-        code: "AUTH_REQUIRED",
-        reason: "The active account changed. Try again from the current account.",
-      };
-    }
     const { data, error } = await client.rpc("start_marketplace_conversation", {
       target_business_id: businessId,
       idempotency_key: chatIdempotencyKey("start"),
@@ -289,9 +301,9 @@ export async function sendMarketplaceMessage(
   conversationId: string,
   body: string,
   mediaAssetIds: string[] = [],
+  expectedUserId?: string,
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return unavailable();
+  if (!supabase) return unavailable();
   if (
     !uuidPattern.test(conversationId) ||
     mediaAssetIds.some((id) => !uuidPattern.test(id))
@@ -310,6 +322,8 @@ export async function sendMarketplaceMessage(
       reason: chatSafetyMessage(safetyIssue),
     };
   }
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : unavailable();
   try {
     const { error } = await client.rpc("send_marketplace_message", {
       target_conversation_public_id: conversationId,
@@ -344,8 +358,9 @@ export async function sendMarketplaceMessage(
 export async function setMarketplaceTyping(
   conversationId: string,
   isTyping: boolean,
+  expectedUserId?: string,
 ) {
-  const client = supabase;
+  const client = await marketplaceMutationClient(expectedUserId);
   if (!client || !uuidPattern.test(conversationId)) return;
   await client.rpc("set_marketplace_typing", {
     target_conversation_public_id: conversationId,
@@ -383,8 +398,9 @@ export async function getMarketplaceTyping(
 export async function markMarketplaceConversationRead(
   conversationId: string,
   sequence: number,
+  expectedUserId?: string,
 ) {
-  const client = supabase;
+  const client = await marketplaceMutationClient(expectedUserId);
   if (!client || !uuidPattern.test(conversationId) || sequence < 0) return;
   await client.rpc("mark_marketplace_conversation_read", {
     target_conversation_public_id: conversationId,
@@ -394,12 +410,14 @@ export async function markMarketplaceConversationRead(
 
 export async function reportMarketplaceMessage(
   messageId: string,
+  expectedUserId?: string,
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return unavailable();
+  if (!supabase) return unavailable();
   if (!uuidPattern.test(messageId)) {
     return { ok: false, code: "INVALID", reason: "Choose a valid message." };
   }
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : unavailable();
   try {
     const { error } = await client.rpc("report_marketplace_message", {
       target_message_public_id: messageId,
@@ -488,9 +506,9 @@ export async function getMarketplaceConversationContext(
 
 export async function clearMarketplaceConversation(
   conversationId: string,
+  expectedUserId?: string,
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return unavailable();
+  if (!supabase) return unavailable();
   if (!uuidPattern.test(conversationId)) {
     return {
       ok: false,
@@ -498,6 +516,8 @@ export async function clearMarketplaceConversation(
       reason: "Choose a valid conversation.",
     };
   }
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : unavailable();
   try {
     const { error } = await client.rpc(
       "clear_marketplace_conversation_from_inbox",
@@ -576,9 +596,9 @@ export async function requestNeighborhoodPickupChoice(
   endsAt: Date,
   residenceWarningAccepted: boolean,
   note = "",
+  expectedUserId?: string,
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return unavailable();
+  if (!supabase) return unavailable();
   if (
     !uuidPattern.test(conversationId) || !uuidPattern.test(option.id) ||
     !["safe_meeting_place", "seller_residence"].includes(option.kind)
@@ -596,6 +616,8 @@ export async function requestNeighborhoodPickupChoice(
       reason: "Review and accept the residence pickup caution first.",
     };
   }
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : unavailable();
   try {
     const { error } = await client.rpc("request_neighborhood_pickup_choice", {
       target_conversation_public_id: conversationId,
@@ -620,9 +642,9 @@ export async function authorizeNeighborhoodPickupChoice(
   conversationId: string,
   requestId: string,
   expectedVersion: number,
+  expectedUserId?: string,
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return unavailable();
+  if (!supabase) return unavailable();
   if (![conversationId, requestId].every((value) => uuidPattern.test(value))) {
     return {
       ok: false,
@@ -630,6 +652,8 @@ export async function authorizeNeighborhoodPickupChoice(
       reason: "Choose a valid pickup request.",
     };
   }
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : unavailable();
   try {
     const { error } = await client.rpc("authorize_neighborhood_pickup_choice", {
       target_conversation_public_id: conversationId,
@@ -780,9 +804,9 @@ export async function requestMarketplacePickup(
   startsAt: Date,
   endsAt: Date,
   note = "",
+  expectedUserId?: string,
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return unavailable();
+  if (!supabase) return unavailable();
   if (
     !uuidPattern.test(conversationId) || !Number.isFinite(startsAt.getTime()) ||
     !Number.isFinite(endsAt.getTime())
@@ -801,6 +825,8 @@ export async function requestMarketplacePickup(
       reason: chatSafetyMessage(safetyIssue),
     };
   }
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : unavailable();
   try {
     const { error } = await client.rpc("request_marketplace_pickup_detail", {
       target_conversation_public_id: conversationId,
@@ -869,9 +895,9 @@ export async function authorizeMarketplacePickup(
   requestId: string,
   siteId: string,
   expectedVersion: number,
+  expectedUserId?: string,
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return unavailable();
+  if (!supabase) return unavailable();
   if (
     ![conversationId, requestId, siteId].every((value) =>
       uuidPattern.test(value)
@@ -883,6 +909,8 @@ export async function authorizeMarketplacePickup(
       reason: "Choose a valid pickup request and location.",
     };
   }
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : unavailable();
   try {
     const { error } = await client.rpc("authorize_marketplace_pickup_detail", {
       target_conversation_public_id: conversationId,
@@ -974,9 +1002,9 @@ export async function resolveMarketplacePickup(
   requestId: string,
   resolution: "cancel" | "decline" | "revoke",
   expectedVersion: number,
+  expectedUserId?: string,
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return unavailable();
+  if (!supabase) return unavailable();
   if (![conversationId, requestId].every((value) => uuidPattern.test(value))) {
     return {
       ok: false,
@@ -984,6 +1012,8 @@ export async function resolveMarketplacePickup(
       reason: "Choose a valid pickup request.",
     };
   }
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : unavailable();
   try {
     const { error } = await client.rpc("resolve_marketplace_pickup_request", {
       target_conversation_public_id: conversationId,

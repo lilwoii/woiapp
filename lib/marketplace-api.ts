@@ -2,7 +2,10 @@ import { toActionError } from '@/lib/errors';
 import { featureFlags } from '@/lib/features';
 import { mapLogoPaths } from '@/lib/map-inventory';
 import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
-import { supabase } from '@/lib/supabase';
+import {
+  createAccountBoundSupabaseClient,
+  supabase,
+} from '@/lib/supabase';
 import {
   ActionResult,
   BusinessCategory,
@@ -17,6 +20,7 @@ import {
   WeeklyHours,
 } from '@/types/marketplace';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Row = Record<string, unknown>;
 type PublicDiscoveryRequest =
@@ -79,6 +83,21 @@ function configurationRequired<T = undefined>(): ActionResult<T> {
     code: 'CONFIG_REQUIRED',
     reason: 'Live Spottr services are not configured for this build.',
   };
+}
+
+function accountChanged<T = undefined>(): ActionResult<T> {
+  return {
+    ok: false,
+    code: 'AUTH_REQUIRED',
+    reason: 'The active account changed. Try again from the current account.',
+  };
+}
+
+async function marketplaceMutationClient(
+  expectedUserId?: string,
+): Promise<SupabaseClient | null> {
+  if (!expectedUserId) return null;
+  return createAccountBoundSupabaseClient(expectedUserId);
 }
 
 async function invokePublicDiscovery<TRequest extends PublicDiscoveryRequest>(
@@ -1386,8 +1405,7 @@ export async function setFollow(
   following: boolean,
   expectedUserId?: string
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) {
+  if (!supabase) {
     return {
       ok: false,
       code: 'CONFIG_REQUIRED',
@@ -1396,6 +1414,8 @@ export async function setFollow(
   }
   const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : configurationRequired();
 
   try {
     const query = following
@@ -1417,8 +1437,7 @@ export async function submitReview(
   input: ReviewInput,
   expectedUserId?: string
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) {
+  if (!supabase) {
     return {
       ok: false,
       code: 'CONFIG_REQUIRED',
@@ -1427,6 +1446,8 @@ export async function submitReview(
   }
   const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : configurationRequired();
   if (!uuidPattern.test(placeId)) {
     return { ok: false, code: 'INVALID', reason: 'This business link is invalid.' };
   }
@@ -1437,7 +1458,13 @@ export async function submitReview(
   try {
     const mediaAssetIds: string[] = [];
     for (const photo of input.photoUploads ?? []) {
-      const staged = await stageMediaUpload(photo, 'review_photo', placeId);
+      const staged = await stageMediaUpload(
+        photo,
+        'review_photo',
+        placeId,
+        undefined,
+        expectedUserId ? client : undefined,
+      );
       if (!staged.ok) return staged;
       mediaAssetIds.push(staged.data!.assetId);
     }
@@ -1471,8 +1498,7 @@ export async function submitOwnerUpdate(
   input: OwnerUpdateInput,
   expectedUserId?: string
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) {
+  if (!supabase) {
     return {
       ok: false,
       code: 'CONFIG_REQUIRED',
@@ -1481,6 +1507,8 @@ export async function submitOwnerUpdate(
   }
   const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : configurationRequired();
   if (!uuidPattern.test(input.placeId)) {
     return { ok: false, code: 'INVALID', reason: 'This business link is invalid.' };
   }
@@ -1553,8 +1581,7 @@ export async function updateVenueStatus(
   status: VenueStatus,
   expectedUserId?: string
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) {
+  if (!supabase) {
     return {
       ok: false,
       code: 'CONFIG_REQUIRED',
@@ -1563,6 +1590,8 @@ export async function updateVenueStatus(
   }
   const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : configurationRequired();
 
   try {
     const { error } = await client.rpc('set_business_live_status', {
@@ -1629,10 +1658,11 @@ export async function blockUser(
   blockedPublicProfileId: string,
   expectedUserId?: string
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return configurationRequired();
+  if (!supabase) return configurationRequired();
   const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return expectedUserId ? accountChanged() : configurationRequired();
   if (!uuidPattern.test(blockedPublicProfileId)) {
     return { ok: false, code: 'INVALID', reason: 'This member cannot be blocked.' };
   }

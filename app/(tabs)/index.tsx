@@ -106,6 +106,11 @@ function viewportAroundPoint(
 }
 
 export default function DiscoverScreen() {
+  const { scopeKey } = useMarketplaceStore();
+  return <ScopedDiscoverScreen key={`discover:${scopeKey}`} />;
+}
+
+function ScopedDiscoverScreen() {
   const {
     ensurePlace,
     followedIds,
@@ -145,6 +150,8 @@ export default function DiscoverScreen() {
   const [pagination, setPagination] = useState({ key: '', count: 24 });
   const [locationError, setLocationError] = useState<string | null>(null);
   const [mapInventoryFeatures, setMapInventoryFeatures] = useState<MapInventoryFeature[]>([]);
+  const mounted = useRef(true);
+  const locationRequestGeneration = useRef(0);
   const mapInventoryRequest = useRef(0);
   const deferredQuery = useDeferredValue(query);
   const visibleCategoryFilters = useMemo(
@@ -177,12 +184,13 @@ export default function DiscoverScreen() {
 
   const loadMapInventory = useCallback(async (viewport: MapViewport) => {
     const requestId = ++mapInventoryRequest.current;
+    if (!mounted.current) return { ok: false, reason: 'Screen is no longer active.' } as const;
     if (!requestedMapCategories.length) {
       setMapInventoryFeatures([]);
       return { ok: true, data: [] } as const;
     }
     const result = await fetchMapFoodFeatures(viewport, requestedMapCategories);
-    if (requestId !== mapInventoryRequest.current) return result;
+    if (!mounted.current || requestId !== mapInventoryRequest.current) return result;
     if (!result.ok) {
       // Keep the last verified inventory visible during a brief gateway quota
       // or availability event. A successful later viewport request replaces it.
@@ -191,6 +199,15 @@ export default function DiscoverScreen() {
     setMapInventoryFeatures(result.data ?? []);
     return result;
   }, [requestedMapCategories]);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      locationRequestGeneration.current += 1;
+      mapInventoryRequest.current += 1;
+    };
+  }, []);
 
   const toggleSelection = <T extends string | number>(
     value: T,
@@ -205,11 +222,15 @@ export default function DiscoverScreen() {
   };
 
   const requestNearby = useCallback(async () => {
+    const generation = ++locationRequestGeneration.current;
+    const isCurrent = () => mounted.current && locationRequestGeneration.current === generation;
+    if (!isCurrent()) return;
     setLocating(true);
     setLocationError(null);
 
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
+      if (!isCurrent()) return;
       if (permission.status !== 'granted') {
         setLocationLabel('Choose a city or ZIP');
         setLocationError('Location permission is off. Search by city or ZIP instead.');
@@ -219,6 +240,7 @@ export default function DiscoverScreen() {
       const current = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
+      if (!isCurrent()) return;
       setUserCoordinates({
         latitude: current.coords.latitude,
         longitude: current.coords.longitude,
@@ -230,6 +252,7 @@ export default function DiscoverScreen() {
         longitude,
         radiusMeters: 16093,
       });
+      if (!isCurrent()) return;
       if (!searchResult.ok) {
         setLocationError(searchResult.reason);
         return;
@@ -240,9 +263,10 @@ export default function DiscoverScreen() {
       setSortMode('nearby');
       void loadMapInventory(viewportAroundPoint(latitude, longitude, 16_093));
     } catch {
+      if (!isCurrent()) return;
       setLocationError('Your location could not be read. Search by city or ZIP instead.');
     } finally {
-      setLocating(false);
+      if (isCurrent()) setLocating(false);
     }
   }, [loadMapInventory, refresh]);
 
@@ -274,9 +298,21 @@ export default function DiscoverScreen() {
       setLocationError('Enter a city or ZIP code.');
       return;
     }
+    const generation = ++locationRequestGeneration.current;
+    const isCurrent = () => mounted.current && locationRequestGeneration.current === generation;
+    if (!isCurrent()) return;
     setLocating(true);
     setLocationError(null);
-    const result = await searchArea(clean);
+    let result: Awaited<ReturnType<typeof searchArea>>;
+    try {
+      result = await searchArea(clean);
+    } catch {
+      if (!isCurrent()) return;
+      setLocating(false);
+      setLocationError('This search area could not be loaded. Try again.');
+      return;
+    }
+    if (!isCurrent()) return;
     setLocating(false);
     if (!result.ok) {
       setLocationError(result.reason);
@@ -290,6 +326,9 @@ export default function DiscoverScreen() {
   };
 
   const searchVisibleMap = useCallback(async (viewport: MapViewport) => {
+    const generation = ++locationRequestGeneration.current;
+    const isCurrent = () => mounted.current && locationRequestGeneration.current === generation;
+    if (!isCurrent()) return;
     setLocating(true);
     setLocationError(null);
     const [result] = await Promise.all([
@@ -300,6 +339,7 @@ export default function DiscoverScreen() {
       }),
       loadMapInventory(viewport),
     ]);
+    if (!isCurrent()) return;
     setLocating(false);
     if (!result.ok) {
       setLocationError(result.reason);
@@ -408,7 +448,7 @@ export default function DiscoverScreen() {
   const selectPlace = useCallback((place: Place) => setSelectedId(place.id), []);
   const selectBusinessId = useCallback(async (businessId: string) => {
     const result = await ensurePlace(businessId);
-    if (result.ok) setSelectedId(businessId);
+    if (mounted.current && result.ok) setSelectedId(businessId);
   }, [ensurePlace]);
 
   return (

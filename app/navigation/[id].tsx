@@ -40,6 +40,11 @@ const automaticReroutingPrivacyNotice = 'When on, Spottr may send your updated p
 export default function NavigationScreen() {
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const placeId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const { scopeKey } = useMarketplaceStore();
+  return <ScopedNavigationScreen key={`${scopeKey}:navigation:${placeId ?? ''}`} placeId={placeId} />;
+}
+
+function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   const auth = useAuth();
   const { ensurePlace, places } = useMarketplaceStore();
   const place = places.find((entry) => entry.id === placeId);
@@ -62,6 +67,22 @@ export default function NavigationScreen() {
   const automaticReroutingRef = useRef(false);
   const appStateRef = useRef(AppState.currentState);
   const watcherGeneration = useRef(0);
+  const navigationOperationGeneration = useRef(0);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      trackingWanted.current = false;
+      watcherGeneration.current += 1;
+      navigationOperationGeneration.current += 1;
+      routeRequestSequence.current += 1;
+      activeRouteRequest.current = null;
+      watcher.current?.remove();
+      watcher.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!placeId || place) return;
@@ -80,7 +101,7 @@ export default function NavigationScreen() {
   } : null, [place]);
 
   const refreshRoute = useCallback(async (origin: NavigationCoordinate, selectedMode: TravelMode) => {
-    if (!destination || activeRouteRequest.current !== null) return false;
+    if (!mounted.current || !destination || activeRouteRequest.current !== null) return false;
     const requestId = routeRequestSequence.current + 1;
     routeRequestSequence.current = requestId;
     activeRouteRequest.current = requestId;
@@ -90,12 +111,12 @@ export default function NavigationScreen() {
       result = await requestRoutePlan({ origin, destination, mode: selectedMode });
     } catch {
       if (activeRouteRequest.current === requestId) activeRouteRequest.current = null;
-      if (routeRequestSequence.current === requestId) {
+      if (mounted.current && routeRequestSequence.current === requestId) {
         setMessage('Your route could not be updated. Check your connection and try again.');
       }
       return false;
     }
-    if (activeRouteRequest.current !== requestId || routeRequestSequence.current !== requestId) return false;
+    if (!mounted.current || activeRouteRequest.current !== requestId || routeRequestSequence.current !== requestId) return false;
     activeRouteRequest.current = null;
     if (!result.ok || !result.data) {
       setMessage(result.ok ? 'A route could not be created.' : result.reason);
@@ -109,6 +130,7 @@ export default function NavigationScreen() {
   }, [destination]);
 
   const beginWatching = useCallback(async () => {
+    if (!mounted.current) return;
     const generation = watcherGeneration.current + 1;
     watcherGeneration.current = generation;
     watcher.current?.remove();
@@ -118,6 +140,7 @@ export default function NavigationScreen() {
       { accuracy: Location.Accuracy.High, distanceInterval: 10, timeInterval: 4_000 },
       (position) => {
         if (
+          !mounted.current ||
           watcherGeneration.current !== generation ||
           !trackingWanted.current ||
           appStateRef.current !== 'active'
@@ -135,6 +158,7 @@ export default function NavigationScreen() {
       }
     );
     if (
+      !mounted.current ||
       watcherGeneration.current !== generation ||
       !trackingWanted.current ||
       appStateRef.current !== 'active'
@@ -154,7 +178,7 @@ export default function NavigationScreen() {
         watcher.current = null;
       } else if (trackingWanted.current && !watcher.current) {
         void beginWatching().catch(() => {
-          if (trackingWanted.current && appStateRef.current === 'active') {
+          if (mounted.current && trackingWanted.current && appStateRef.current === 'active') {
             setMessage('Live tracking could not resume. Check location services and try again.');
           }
         });
@@ -177,16 +201,21 @@ export default function NavigationScreen() {
       return;
     }
     if (!place || !destination || place.category === 'home_kitchen') return;
+    const navigationGeneration = ++navigationOperationGeneration.current;
+    routeRequestSequence.current += 1;
+    activeRouteRequest.current = null;
     setBusy(true);
     setPendingMode(selectedMode);
     setMessage(null);
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
+      if (!mounted.current || navigationOperationGeneration.current !== navigationGeneration) return;
       if (permission.status !== Location.PermissionStatus.GRANTED) {
         setMessage('Allow foreground location access to start live navigation. Spottr does not request background tracking.');
         return;
       }
       const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      if (!mounted.current || navigationOperationGeneration.current !== navigationGeneration) return;
       const origin = { latitude: current.coords.latitude, longitude: current.coords.longitude };
       setLocation(origin);
       automaticReroutingRef.current = false;
@@ -194,6 +223,7 @@ export default function NavigationScreen() {
       setMode(selectedMode);
       modeRef.current = selectedMode;
       const routed = await refreshRoute(origin, selectedMode);
+      if (!mounted.current || navigationOperationGeneration.current !== navigationGeneration) return;
       if (!routed) {
         modeRef.current = null;
         setMode(null);
@@ -202,10 +232,14 @@ export default function NavigationScreen() {
       trackingWanted.current = true;
       await beginWatching();
     } catch {
-      setMessage('Your current location could not be read. Check location services and try again.');
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        setMessage('Your current location could not be read. Check location services and try again.');
+      }
     } finally {
-      setBusy(false);
-      setPendingMode(null);
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        setBusy(false);
+        setPendingMode(null);
+      }
     }
   };
 
@@ -215,25 +249,34 @@ export default function NavigationScreen() {
       setMessage('Your current location is not available yet. Try changing travel mode again.');
       return;
     }
+    const navigationGeneration = ++navigationOperationGeneration.current;
+    routeRequestSequence.current += 1;
+    activeRouteRequest.current = null;
     setBusy(true);
     setPendingMode(selectedMode);
     setMessage(null);
     try {
       const routed = await refreshRoute(location, selectedMode);
+      if (!mounted.current || navigationOperationGeneration.current !== navigationGeneration) return;
       if (!routed) return;
       modeRef.current = selectedMode;
       setMode(selectedMode);
     } catch {
-      setMessage('Your route could not be updated. Check your connection and try again.');
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        setMessage('Your route could not be updated. Check your connection and try again.');
+      }
     } finally {
-      setBusy(false);
-      setPendingMode(null);
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        setBusy(false);
+        setPendingMode(null);
+      }
     }
   };
 
   const stopTracking = () => {
     trackingWanted.current = false;
     watcherGeneration.current += 1;
+    navigationOperationGeneration.current += 1;
     routeRequestSequence.current += 1;
     activeRouteRequest.current = null;
     watcher.current?.remove();
@@ -244,6 +287,8 @@ export default function NavigationScreen() {
     setLocation(null);
     automaticReroutingRef.current = false;
     setAutomaticRerouting(false);
+    setBusy(false);
+    setPendingMode(null);
     setMessage('Live tracking stopped.');
   };
 
@@ -261,7 +306,7 @@ export default function NavigationScreen() {
       return;
     }
     void Linking.openURL(url).catch(() => {
-      setMessage('Your maps app could not open this destination.');
+      if (mounted.current) setMessage('Your maps app could not open this destination.');
     });
   };
 

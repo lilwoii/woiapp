@@ -154,6 +154,11 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   const managedPlaceIdsRef = useRef<string[]>([]);
   const followedIdsRef = useRef<string[]>([]);
   const pendingPlaceIdsRef = useRef(new Set<string>());
+  // Follow writes are serialized across places.  A per-place pending set still
+  // prevents duplicate taps, but it is not enough to safely rebase optimistic
+  // updates when two different places finish out of order.
+  const activeFollowMutation = useRef<Promise<void> | null>(null);
+  const followMutationVersion = useRef(0);
   const lastOrigin = useRef<{
     latitude: number;
     longitude: number;
@@ -186,6 +191,11 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
     managedPlaceIdsRef.current = [];
     followedIdsRef.current = [];
     pendingPlaceIdsRef.current.clear();
+    // Do not make a new account wait on an in-flight mutation from the old
+    // account.  The old request remains harmless because its scope token is
+    // no longer current, and its local lock cleanup is identity-checked.
+    activeFollowMutation.current = null;
+    followMutationVersion.current += 1;
     lastOrigin.current = undefined;
     lastArea.current = undefined;
 
@@ -402,24 +412,51 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       return { ok: false, code: 'AUTH_REQUIRED', reason: 'Sign in to continue.' };
     }
 
-    const [followsResult, membershipsResult] = await Promise.all([
-      fetchFollowedIds(expectedUserId),
-      fetchManagedBusinessIds(expectedUserId),
-    ]);
-    if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
-    if (!followsResult.ok) return followsResult;
-    if (!membershipsResult.ok) return membershipsResult;
+    // A read started around an optimistic follow must never overwrite the
+    // newer local state with a stale server snapshot.  Waiting before the
+    // request handles an already-running write; the version/lock check after
+    // the request handles a write that began while the request was in flight.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
+      const priorFollow = activeFollowMutation.current;
+      if (priorFollow) await priorFollow;
+      if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
 
-    const followed = followsResult.data ?? [];
-    const ids = membershipsResult.data ?? [];
-    followedIdsRef.current = followed;
-    managedPlaceIdsRef.current = ids;
-    commitStore(token, (current) => ({
-      ...current,
-      followedIds: followed,
-      managedPlaceIds: ids,
-    }));
-    return refresh();
+      const versionAtRequestStart = followMutationVersion.current;
+      const [followsResult, membershipsResult] = await Promise.all([
+        fetchFollowedIds(expectedUserId),
+        fetchManagedBusinessIds(expectedUserId),
+      ]);
+      if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
+      if (!followsResult.ok) return followsResult;
+      if (!membershipsResult.ok) return membershipsResult;
+
+      const followStartedDuringRequest = activeFollowMutation.current;
+      if (
+        followStartedDuringRequest ||
+        followMutationVersion.current !== versionAtRequestStart
+      ) {
+        if (followStartedDuringRequest) await followStartedDuringRequest;
+        continue;
+      }
+
+      const followed = followsResult.data ?? [];
+      const ids = membershipsResult.data ?? [];
+      followedIdsRef.current = followed;
+      managedPlaceIdsRef.current = ids;
+      commitStore(token, (current) => ({
+        ...current,
+        followedIds: followed,
+        managedPlaceIds: ids,
+      }));
+      return refresh();
+    }
+
+    return {
+      ok: false,
+      code: 'CONFLICT',
+      reason: 'Saved places changed while Spottr was refreshing. Try again.',
+    };
   }, [commitStore, expectedUserId, refresh, requestGuard, scopeKey]);
 
   const ensurePlace = useCallback(
@@ -523,41 +560,70 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       const token = requestGuard.begin(scopeKey, `follow:${placeId}`);
       if (!token) return marketplaceSessionChanged;
 
-      const originalIds = followedIdsRef.current;
-      const wasFollowing = originalIds.includes(placeId);
-      const nextFollowing = !wasFollowing;
-      const nextIds = nextFollowing
-        ? [...new Set([...originalIds, placeId])]
-        : originalIds.filter((id) => id !== placeId);
       pendingPlaceIdsRef.current.add(placeId);
-      followedIdsRef.current = nextIds;
       commitStore(token, (current) => ({
         ...current,
         pendingPlaceIds: [...new Set([...current.pendingPlaceIds, placeId])],
-        followedIds: nextIds,
       }));
+
+      const priorFollow = activeFollowMutation.current;
+      let releaseFollow!: () => void;
+      const followOperation = new Promise<void>((resolve) => {
+        releaseFollow = resolve;
+      });
+      activeFollowMutation.current = followOperation;
 
       let result: ActionResult;
       try {
-        result = await setFollow(placeId, nextFollowing, expectedUserId);
-      } catch {
-        result = {
-          ok: false,
-          code: 'UNKNOWN',
-          reason: nextFollowing
-            ? 'This place could not be followed.'
-            : 'This place could not be unfollowed.',
-        };
+        if (priorFollow) await priorFollow;
+        if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
+
+        // Capture the base only after the previous write has settled.  This
+        // makes rollback/rebase lossless for different places.
+        const originalIds = [...followedIdsRef.current];
+        const wasFollowing = originalIds.includes(placeId);
+        const nextFollowing = !wasFollowing;
+        const nextIds = nextFollowing
+          ? [...new Set([...originalIds, placeId])]
+          : originalIds.filter((id) => id !== placeId);
+        followedIdsRef.current = nextIds;
+        commitStore(token, (current) => ({
+          ...current,
+          followedIds: nextIds,
+        }));
+
+        try {
+          result = await setFollow(placeId, nextFollowing, expectedUserId);
+        } catch {
+          result = {
+            ok: false,
+            code: 'UNKNOWN',
+            reason: nextFollowing
+              ? 'This place could not be followed.'
+              : 'This place could not be unfollowed.',
+          };
+        }
+        if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
+        if (!result.ok) followedIdsRef.current = originalIds;
+        followMutationVersion.current += 1;
+        commitStore(token, (current) => ({
+          ...current,
+          followedIds: result.ok ? nextIds : originalIds,
+        }));
+        return result;
+      } finally {
+        if (requestGuard.isCurrent(token)) {
+          pendingPlaceIdsRef.current.delete(placeId);
+          commitStore(token, (current) => ({
+            ...current,
+            pendingPlaceIds: current.pendingPlaceIds.filter((id) => id !== placeId),
+          }));
+        }
+        releaseFollow();
+        if (activeFollowMutation.current === followOperation) {
+          activeFollowMutation.current = null;
+        }
       }
-      if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
-      if (!result.ok) followedIdsRef.current = originalIds;
-      pendingPlaceIdsRef.current.delete(placeId);
-      commitStore(token, (current) => ({
-        ...current,
-        followedIds: result.ok ? nextIds : originalIds,
-        pendingPlaceIds: current.pendingPlaceIds.filter((id) => id !== placeId),
-      }));
-      return result;
     },
     [commitStore, expectedUserId, requestGuard, scopeKey]
   );

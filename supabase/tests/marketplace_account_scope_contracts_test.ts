@@ -11,8 +11,26 @@ const marketplaceStore = await Deno.readTextFile(
 const placeScreen = await Deno.readTextFile(
   new URL("../../app/place/[id].tsx", import.meta.url),
 );
+const conversationScreen = await Deno.readTextFile(
+  new URL("../../app/messages/[id].tsx", import.meta.url),
+);
+const discoverScreen = await Deno.readTextFile(
+  new URL("../../app/(tabs)/index.tsx", import.meta.url),
+);
+const navigationScreen = await Deno.readTextFile(
+  new URL("../../app/navigation/[id].tsx", import.meta.url),
+);
 const marketplaceApi = await Deno.readTextFile(
   new URL("../../lib/marketplace-api.ts", import.meta.url),
+);
+const marketplaceChat = await Deno.readTextFile(
+  new URL("../../lib/marketplace-chat.ts", import.meta.url),
+);
+const webSupabaseClient = await Deno.readTextFile(
+  new URL("../../lib/supabase.ts", import.meta.url),
+);
+const nativeSupabaseClient = await Deno.readTextFile(
+  new URL("../../lib/supabase.native.ts", import.meta.url),
 );
 
 Deno.test("marketplace request tokens fail closed across sign-out and account switches", () => {
@@ -51,6 +69,7 @@ Deno.test("marketplace store hides stale state synchronously and clears every se
   assertMatch(marketplaceStore, /managedPlaceIdsRef\.current = \[\]/);
   assertMatch(marketplaceStore, /followedIdsRef\.current = \[\]/);
   assertMatch(marketplaceStore, /pendingPlaceIdsRef\.current\.clear\(\)/);
+  assertMatch(marketplaceStore, /activeFollowMutation\.current = null/);
   assertMatch(marketplaceStore, /lastOrigin\.current = undefined/);
   assertMatch(marketplaceStore, /lastArea\.current = undefined/);
   assertMatch(marketplaceStore, /setStoreState\(createMarketplaceStoreState\(scopeKey\)\)/);
@@ -79,10 +98,65 @@ Deno.test("all private marketplace result lanes are account-bound before committ
   );
 });
 
+Deno.test("follow writes serialize and access refresh retries around optimistic changes", () => {
+  assertMatch(marketplaceStore, /activeFollowMutation = useRef<Promise<void> \| null>\(null\)/);
+  assertMatch(marketplaceStore, /const priorFollow = activeFollowMutation\.current/);
+  assertMatch(marketplaceStore, /if \(priorFollow\) await priorFollow/);
+  assertMatch(marketplaceStore, /const originalIds = \[\.\.\.followedIdsRef\.current\]/);
+  assertMatch(marketplaceStore, /followMutationVersion\.current !== versionAtRequestStart/);
+  assertMatch(marketplaceStore, /Saved places changed while Spottr was refreshing/);
+});
+
 Deno.test("listing details remount their local cache for every account and route scope", () => {
   assert(placeScreen.includes("key={`${scopeKey}:place:${id ?? ''}`}"));
   assertMatch(placeScreen, /mounted\.current = false/);
   assertMatch(placeScreen, /startMarketplaceConversation\(place\.id, expectedUserId\)/);
+});
+
+Deno.test("private conversations reject delayed account A results after a scope change", () => {
+  assertMatch(
+    conversationScreen,
+    /key=\{`\$\{scopeKey\}:conversation:\$\{id \?\? ""\}`\}/,
+  );
+  assertMatch(conversationScreen, /mounted\.current = false/);
+  assertMatch(
+    conversationScreen,
+    /refreshGeneration\.current !== generation/,
+  );
+  assertMatch(
+    conversationScreen,
+    /sendMarketplaceMessage\([\s\S]*?expectedUserId/,
+  );
+  assertMatch(
+    conversationScreen,
+    /markMarketplaceConversationRead\(id, latest, expectedUserId\)/,
+  );
+});
+
+Deno.test("discovery and live navigation remount precise location by account scope", () => {
+  assertMatch(discoverScreen, /key=\{`discover:\$\{scopeKey\}`\}/);
+  assertMatch(discoverScreen, /locationRequestGeneration\.current !== generation/);
+  assertMatch(
+    navigationScreen,
+    /key=\{`\$\{scopeKey\}:navigation:\$\{placeId \?\? ''\}`\}/,
+  );
+  assertMatch(navigationScreen, /watcher\.current\?\.remove\(\)/);
+  assertMatch(navigationScreen, /navigationOperationGeneration\.current \+= 1/);
+  assertMatch(navigationScreen, /routeRequestSequence\.current \+= 1/);
+});
+
+Deno.test("marketplace writes use a verified non-persisting account-bound token", () => {
+  for (const clientSource of [webSupabaseClient, nativeSupabaseClient]) {
+    assertMatch(clientSource, /createAccountBoundSupabaseClient/);
+    assertMatch(clientSource, /persistSession: false/);
+    assertMatch(clientSource, /autoRefreshToken: false/);
+    assertMatch(clientSource, /accessToken: async \(\) => accessToken/);
+    assertMatch(clientSource, /userData\.user\?\.id !== expectedUserId/);
+  }
+  assertMatch(marketplaceApi, /marketplaceMutationClient\(expectedUserId\)/);
+  assertMatch(marketplaceChat, /marketplaceMutationClient\(expectedUserId\)/);
+  assertMatch(marketplaceApi, /if \(!expectedUserId\) return null/);
+  assertMatch(marketplaceChat, /if \(!expectedUserId\) return null/);
 });
 
 Deno.test("scope resolution never treats a non-authenticated account object as authoritative", () => {

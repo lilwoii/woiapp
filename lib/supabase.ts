@@ -1,4 +1,9 @@
-import { createClient, processLock, type Session } from '@supabase/supabase-js';
+import {
+  createClient,
+  processLock,
+  type Session,
+  type SupabaseClient,
+} from '@supabase/supabase-js';
 
 import {
   decideLocalAuthSessionClear,
@@ -54,6 +59,9 @@ export async function clearLocalAuthSessionForUser(
     // so refresh cannot write the revoked session back after this removal.
     webAuthStorage.removeItem(authStorageKey);
     webAuthStorage.removeItem(`${authStorageKey}-user`);
+    if (accountBoundClientCache?.expectedUserId === expectedUserId) {
+      accountBoundClientCache = null;
+    }
     // The PKCE verifier is intentionally cross-tab and is not account-bound;
     // clearing account A must not cancel account B's active email flow.
     return 'cleared';
@@ -88,7 +96,79 @@ export const supabase = isSupabaseConfigured
     })
   : null;
 
+type AccountBoundClientCache = {
+  accessToken: string;
+  expectedUserId: string;
+  promise: Promise<SupabaseClient | null>;
+};
+
+let accountBoundClientCache: AccountBoundClientCache | null = null;
+
+/**
+ * Create a short-lived client whose requests are permanently tied to the
+ * session that was verified for the expected account.
+ *
+ * Marketplace mutations can outlive a sign-out/account switch while their
+ * promise is in flight.  The app's shared client is intentionally mutable and
+ * may refresh to a different account during that window, so callers that have
+ * an account identity must use this client for the complete mutation.  The
+ * client is memory-only and never writes the captured token to storage.
+ */
+export async function createAccountBoundSupabaseClient(
+  expectedUserId: string,
+): Promise<SupabaseClient | null> {
+  if (!supabase || !supabaseUrl || !supabaseAnonKey || !expectedUserId.trim()) {
+    return null;
+  }
+
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    const session = data.session;
+    const accessToken = session?.access_token;
+    if (error || !accessToken || session.user.id !== expectedUserId) {
+      accountBoundClientCache = null;
+      return null;
+    }
+
+    if (
+      accountBoundClientCache?.accessToken === accessToken &&
+      accountBoundClientCache.expectedUserId === expectedUserId
+    ) {
+      return await accountBoundClientCache.promise;
+    }
+
+    const promise = (async () => {
+      try {
+        const { data: userData, error: userError } =
+          await supabase.auth.getUser(accessToken);
+        if (userError || userData.user?.id !== expectedUserId) return null;
+        return createClient(supabaseUrl, supabaseAnonKey, {
+          accessToken: async () => accessToken,
+          auth: {
+            autoRefreshToken: false,
+            detectSessionInUrl: false,
+            persistSession: false,
+          },
+        });
+      } catch {
+        return null;
+      }
+    })();
+    const cacheEntry = { accessToken, expectedUserId, promise };
+    accountBoundClientCache = cacheEntry;
+    const verifiedClient = await promise;
+    if (!verifiedClient && accountBoundClientCache === cacheEntry) {
+      accountBoundClientCache = null;
+    }
+    return verifiedClient;
+  } catch {
+    accountBoundClientCache = null;
+    return null;
+  }
+}
+
 export async function resetRealtimeAuthToAnonymous(): Promise<void> {
+  accountBoundClientCache = null;
   if (!supabase || !supabaseAnonKey) return;
   await supabase.realtime.setAuth(supabaseAnonKey);
 }
