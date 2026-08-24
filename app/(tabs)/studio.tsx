@@ -73,6 +73,17 @@ const currency = new Intl.NumberFormat('en-US', {
   currency: 'USD',
 });
 
+type StudioFeedback = { type: 'error' | 'success'; text: string };
+type StudioWriteSession = { scope: string };
+type StudioWriteToken = {
+  accountId: string;
+  businessId: string;
+  busyKey: string;
+  lane: string;
+  session: StudioWriteSession;
+  scope: string;
+};
+
 export default function StudioScreen() {
   const auth = useAuth();
   const accountId =
@@ -88,15 +99,74 @@ export default function StudioScreen() {
   const place =
     managedPlaces.find((entry) => entry.id === selectedPlaceId) ??
     managedPlaces[0];
-  const [message, setMessage] = useState('');
-  const [updateType, setUpdateType] = useState<BusinessUpdate['type']>('availability');
+  const studioWriteScope =
+    accountId &&
+    place &&
+    auth.securityStatus === 'ready' &&
+    auth.mfaEnrolled &&
+    auth.assuranceLevel === 'aal2'
+      ? `account:${accountId}:business:${place.id}:aal2`
+      : null;
+  const studioWriteSession = useMemo<StudioWriteSession | null>(
+    () => (studioWriteScope ? { scope: studioWriteScope } : null),
+    [studioWriteScope]
+  );
+  const studioWriteSessionRef = useRef<StudioWriteSession | null>(
+    studioWriteSession
+  );
+  const studioWriteBusy = useRef(new Set<string>());
+  const [ownerUpdateDraft, setOwnerUpdateDraft] = useState<{
+    scope: string | null;
+    message: string;
+    type: BusinessUpdate['type'];
+  }>({ scope: null, message: '', type: 'availability' });
+  const message =
+    ownerUpdateDraft.scope === studioWriteScope ? ownerUpdateDraft.message : '';
+  const updateType =
+    ownerUpdateDraft.scope === studioWriteScope
+      ? ownerUpdateDraft.type
+      : 'availability';
+  const setMessage = (nextMessage: string) => {
+    if (!studioWriteScope) return;
+    setOwnerUpdateDraft((current) => ({
+      scope: studioWriteScope,
+      message: nextMessage,
+      type: current.scope === studioWriteScope ? current.type : 'availability',
+    }));
+  };
+  const setUpdateType = (nextType: BusinessUpdate['type']) => {
+    if (!studioWriteScope) return;
+    setOwnerUpdateDraft((current) => ({
+      scope: studioWriteScope,
+      message: current.scope === studioWriteScope ? current.message : '',
+      type: nextType,
+    }));
+  };
   const [soldOutState, setSoldOutState] = useState<{
-    placeId: string | null;
+    session: StudioWriteSession | null;
     ids: string[];
-  }>({ placeId: null, ids: [] });
-  const [publishing, setPublishing] = useState(false);
-  const [statusPending, setStatusPending] = useState<VenueStatus | null>(null);
-  const [menuPendingIds, setMenuPendingIds] = useState<string[]>([]);
+  }>({ session: null, ids: [] });
+  const [publishingSession, setPublishingSession] =
+    useState<StudioWriteSession | null>(null);
+  const publishing = Boolean(
+    studioWriteSession && publishingSession === studioWriteSession
+  );
+  const [statusPendingState, setStatusPendingState] = useState<{
+    session: StudioWriteSession;
+    status: VenueStatus;
+  } | null>(null);
+  const statusPending =
+    statusPendingState?.session === studioWriteSession
+      ? statusPendingState.status
+      : null;
+  const [menuPendingState, setMenuPendingState] = useState<{
+    session: StudioWriteSession;
+    ids: string[];
+  } | null>(null);
+  const menuPendingIds =
+    menuPendingState?.session === studioWriteSession
+      ? menuPendingState.ids
+      : [];
   const scheduleScope = accountId && place ? `${accountId}:${place.id}` : null;
   const [mobileScheduleSnapshot, setMobileScheduleSnapshot] = useState<{
     scope: string;
@@ -118,16 +188,15 @@ export default function StudioScreen() {
   const loadedScheduleScope = useRef<string | null>(null);
   const responseQueueRequest = useRef(0);
   const responseAttempts = useRef<Record<string, BusinessResponseAttempt>>({});
-  const ownerUpdateAttempt = useRef<{
-    fingerprint: string;
-    idempotencyKey: string;
-  } | null>(null);
+  const ownerUpdateAttempts = useRef(new Map<string, string>());
   const [responseQueue, setResponseQueue] = useState<{
+    session: StudioWriteSession | null;
     businessId: string | null;
     loading: boolean;
     records: BusinessResponseRecord[];
     error: string | null;
   }>({
+    session: null,
     businessId: null,
     loading: false,
     records: [],
@@ -135,10 +204,31 @@ export default function StudioScreen() {
   });
   const [responseDrafts, setResponseDrafts] = useState<Record<string, string>>({});
   const [responseOverrides, setResponseOverrides] = useState<
-    Record<string, BusinessResponseRecord>
+    Record<string, { scope: string; record: BusinessResponseRecord }>
   >({});
-  const [responseSavingId, setResponseSavingId] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+  const [responseSavingState, setResponseSavingState] = useState<{
+    session: StudioWriteSession;
+    reviewId: string;
+  } | null>(null);
+  const responseSavingId =
+    responseSavingState?.session === studioWriteSession
+      ? responseSavingState.reviewId
+      : null;
+  const [feedbackState, setFeedbackState] = useState<{
+    session: StudioWriteSession;
+    value: StudioFeedback;
+  } | null>(null);
+  const feedback =
+    feedbackState?.session === studioWriteSession
+      ? feedbackState.value
+      : null;
+  const setFeedback = (next: StudioFeedback | null) => {
+    setFeedbackState(
+      next && studioWriteSession
+        ? { session: studioWriteSession, value: next }
+        : null
+    );
+  };
   const canOperate = !place?.publicationState || place.publicationState === 'published';
   const needsSetup = place?.publicationState === 'draft';
   const publishedMobile =
@@ -154,17 +244,34 @@ export default function StudioScreen() {
     [place]
   );
   const soldOutIds =
-    soldOutState.placeId === place?.id ? soldOutState.ids : sourceSoldOutIds;
+    studioWriteSession && soldOutState.session === studioWriteSession
+      ? soldOutState.ids
+      : sourceSoldOutIds;
   const queuedResponses = useMemo(() => {
     const mapped = new Map<string, BusinessResponseRecord>();
-    if (responseQueue.businessId === place?.id) {
+    if (
+      studioWriteScope &&
+      responseQueue.session === studioWriteSession &&
+      responseQueue.businessId === place?.id
+    ) {
       for (const record of responseQueue.records) mapped.set(record.reviewId, record);
     }
-    for (const record of Object.values(responseOverrides)) {
-      if (record.businessId === place?.id) mapped.set(record.reviewId, record);
+    for (const override of Object.values(responseOverrides)) {
+      if (
+        override.scope === studioWriteScope &&
+        override.record.businessId === place?.id
+      ) {
+        mapped.set(override.record.reviewId, override.record);
+      }
     }
     return mapped;
-  }, [place?.id, responseOverrides, responseQueue]);
+  }, [
+    place?.id,
+    responseOverrides,
+    responseQueue,
+    studioWriteSession,
+    studioWriteScope,
+  ]);
 
   useEffect(() => {
     studioMounted.current = true;
@@ -179,13 +286,51 @@ export default function StudioScreen() {
     scheduleScopeRef.current = scheduleScope;
   }, [accountId, scheduleScope]);
 
+  useLayoutEffect(() => {
+    studioWriteSessionRef.current = studioWriteSession;
+  }, [studioWriteSession]);
+
+  const beginStudioWrite = (lane: string): StudioWriteToken | null => {
+    if (
+      !accountId ||
+      !place ||
+      !studioWriteScope ||
+      !studioWriteSession ||
+      studioWriteSessionRef.current !== studioWriteSession ||
+      studioWriteBusy.current.has(`${studioWriteScope}:${lane}`)
+    ) {
+      return null;
+    }
+    const busyKey = `${studioWriteScope}:${lane}`;
+    studioWriteBusy.current.add(busyKey);
+    return {
+      accountId,
+      businessId: place.id,
+      busyKey,
+      lane,
+      session: studioWriteSession,
+      scope: studioWriteScope,
+    };
+  };
+
+  const isCurrentStudioWrite = (token: StudioWriteToken) =>
+    studioMounted.current &&
+    studioWriteSessionRef.current === token.session;
+
+  const finishStudioWrite = (token: StudioWriteToken) => {
+    studioWriteBusy.current.delete(token.busyKey);
+    return isCurrentStudioWrite(token);
+  };
+
   const setItemSoldOut = (itemId: string, soldOut: boolean) => {
-    if (!place) return;
+    if (!place || !studioWriteSession) return;
     setSoldOutState((current) => {
       const currentIds =
-        current.placeId === place.id ? current.ids : sourceSoldOutIds;
+        current.session === studioWriteSession
+          ? current.ids
+          : sourceSoldOutIds;
       return {
-        placeId: place.id,
+        session: studioWriteSession,
         ids: soldOut
           ? [...new Set([...currentIds, itemId])]
           : currentIds.filter((entry) => entry !== itemId),
@@ -272,9 +417,13 @@ export default function StudioScreen() {
   const refreshResponseQueue = useCallback(async () => {
     const request = responseQueueRequest.current + 1;
     responseQueueRequest.current = request;
+    const requestSession = studioWriteSession;
     const businessId = place?.id;
     if (
       !businessId ||
+      !accountId ||
+      !studioWriteScope ||
+      !requestSession ||
       !canOperate ||
       !auth.isConfigured ||
       auth.status !== 'authenticated' ||
@@ -283,6 +432,7 @@ export default function StudioScreen() {
       auth.assuranceLevel !== 'aal2'
     ) {
       setResponseQueue({
+        session: requestSession,
         businessId: businessId ?? null,
         loading: false,
         records: [],
@@ -292,22 +442,31 @@ export default function StudioScreen() {
     }
 
     setResponseQueue({
+      session: requestSession,
       businessId,
       loading: true,
       records: [],
       error: null,
     });
-    const result = await loadBusinessResponseQueue(businessId);
-    if (responseQueueRequest.current !== request) return;
+    const result = await loadBusinessResponseQueue(businessId, accountId);
+    if (
+      !studioMounted.current ||
+      responseQueueRequest.current !== request ||
+      studioWriteSessionRef.current !== requestSession
+    ) {
+      return;
+    }
     setResponseQueue(
       result.ok
         ? {
+            session: requestSession,
             businessId,
             loading: false,
             records: result.data,
             error: null,
           }
         : {
+            session: requestSession,
             businessId,
             loading: false,
             records: [],
@@ -320,8 +479,11 @@ export default function StudioScreen() {
     auth.mfaEnrolled,
     auth.securityStatus,
     auth.status,
+    accountId,
     canOperate,
     place?.id,
+    studioWriteSession,
+    studioWriteScope,
   ]);
 
   useEffect(() => {
@@ -444,30 +606,29 @@ export default function StudioScreen() {
 
   const publish = async () => {
     if (!place || publishing || !canOperate) return;
-    const fingerprint = `${place.id}\u0000${updateType}\u0000${message}`;
-    const attempt =
-      ownerUpdateAttempt.current?.fingerprint === fingerprint
-        ? ownerUpdateAttempt.current
-        : {
-            fingerprint,
-            idempotencyKey: createMarketplaceIdempotencyKey('update'),
-          };
-    ownerUpdateAttempt.current = attempt;
-    setPublishing(true);
+    const token = beginStudioWrite('owner-update');
+    if (!token) return;
+    const fingerprint = `${token.scope}\u0000${updateType}\u0000${message}`;
+    const idempotencyKey =
+      ownerUpdateAttempts.current.get(fingerprint) ??
+      createMarketplaceIdempotencyKey('update');
+    ownerUpdateAttempts.current.set(fingerprint, idempotencyKey);
+    setPublishingSession(token.session);
     setFeedback(null);
     const result = await publishUpdate({
-      placeId: place.id,
+      placeId: token.businessId,
       type: updateType,
       message,
-      idempotencyKey: attempt.idempotencyKey,
+      idempotencyKey,
     });
-    setPublishing(false);
+    if (!finishStudioWrite(token)) return;
+    setPublishingSession(null);
     if (!result.ok) {
       setFeedback({ type: 'error', text: result.reason });
       return;
     }
 
-    ownerUpdateAttempt.current = null;
+    ownerUpdateAttempts.current.delete(fingerprint);
     setMessage('');
     setFeedback({
       type: 'success',
@@ -476,8 +637,8 @@ export default function StudioScreen() {
   };
 
   const submitReviewResponse = async (review: Review) => {
-    if (!place || responseSavingId || !canOperate) return;
-    const draftKey = `${place.id}:${review.id}`;
+    if (!place || !studioWriteScope || responseSavingId || !canOperate) return;
+    const draftKey = `${studioWriteScope}:${review.id}`;
     const existing =
       queuedResponses.get(review.id)?.body ?? review.ownerResponse ?? '';
     const body = responseDrafts[draftKey] ?? existing;
@@ -496,12 +657,21 @@ export default function StudioScreen() {
       return;
     }
 
+    const token = beginStudioWrite('review-response');
+    if (!token) return;
     responseAttempts.current[draftKey] = attempt;
-    setResponseSavingId(review.id);
+    setResponseSavingState({
+      session: token.session,
+      reviewId: review.id,
+    });
     setFeedback(null);
-    const businessId = place.id;
-    const result = await submitBusinessResponse(businessId, attempt);
-    setResponseSavingId(null);
+    const result = await submitBusinessResponse(
+      token.businessId,
+      attempt,
+      token.accountId
+    );
+    if (!finishStudioWrite(token)) return;
+    setResponseSavingState(null);
     if (!result.ok) {
       setFeedback({ type: 'error', text: result.reason });
       return;
@@ -510,7 +680,7 @@ export default function StudioScreen() {
     delete responseAttempts.current[draftKey];
     setResponseOverrides((current) => ({
       ...current,
-      [draftKey]: result.data,
+      [draftKey]: { scope: token.scope, record: result.data },
     }));
     setResponseDrafts((current) => ({
       ...current,
@@ -525,12 +695,14 @@ export default function StudioScreen() {
     });
   };
 
-  const applyStatus = async (status: VenueStatus) => {
-    if (!place || statusPending || !canOperate) return;
-    setStatusPending(status);
+  const applyStatus = async (
+    status: VenueStatus,
+    token: StudioWriteToken
+  ) => {
     setFeedback(null);
-    const result = await setVenueStatus(place.id, status);
-    setStatusPending(null);
+    const result = await setVenueStatus(token.businessId, status);
+    if (!finishStudioWrite(token)) return;
+    setStatusPendingState(null);
     if (!result.ok) {
       setFeedback({ type: 'error', text: result.reason });
       return;
@@ -539,6 +711,10 @@ export default function StudioScreen() {
   };
 
   const changeStatus = async (status: VenueStatus) => {
+    if (!place || statusPending || !canOperate) return;
+    const token = beginStudioWrite('venue-status');
+    if (!token) return;
+    setStatusPendingState({ session: token.session, status });
     if (status === 'closed' && place?.status !== 'closed') {
       const confirmed = await confirmAction({
         title: 'Close service early?',
@@ -546,19 +722,50 @@ export default function StudioScreen() {
         confirmLabel: 'Close service',
         destructive: true,
       });
-      if (!confirmed) return;
+      if (!isCurrentStudioWrite(token)) {
+        finishStudioWrite(token);
+        return;
+      }
+      if (!confirmed) {
+        finishStudioWrite(token);
+        setStatusPendingState(null);
+        return;
+      }
     }
-    await applyStatus(status);
+    if (!isCurrentStudioWrite(token)) {
+      finishStudioWrite(token);
+      return;
+    }
+    await applyStatus(status, token);
   };
 
   const toggleSoldOut = async (id: string) => {
     if (menuPendingIds.includes(id) || !canOperate) return;
+    const token = beginStudioWrite(`menu-availability:${id}`);
+    if (!token) return;
     const wasSoldOut = soldOutIds.includes(id);
     const nextSoldOut = !wasSoldOut;
-    setMenuPendingIds((current) => [...current, id]);
+    setMenuPendingState((current) => ({
+      session: token.session,
+      ids: [
+        ...new Set([
+          ...(current?.session === token.session ? current.ids : []),
+          id,
+        ]),
+      ],
+    }));
     setItemSoldOut(id, nextSoldOut);
-    const result = await setMenuItemAvailability(id, nextSoldOut);
-    setMenuPendingIds((current) => current.filter((item) => item !== id));
+    const result = await setMenuItemAvailability(
+      id,
+      nextSoldOut,
+      token.accountId
+    );
+    if (!finishStudioWrite(token)) return;
+    setMenuPendingState((current) =>
+      current?.session === token.session
+        ? { ...current, ids: current.ids.filter((item) => item !== id) }
+        : current
+    );
     if (!result.ok) {
       setItemSoldOut(id, wasSoldOut);
       setFeedback({ type: 'error', text: result.reason });
@@ -680,7 +887,6 @@ export default function StudioScreen() {
                   accessibilityState={{ checked: selected }}
                   key={business.id}
                   onPress={() => {
-                    ownerUpdateAttempt.current = null;
                     setSelectedPlaceId(business.id);
                     setFeedback(null);
                   }}
@@ -841,10 +1047,7 @@ export default function StudioScreen() {
                       aria-checked={active}
                       accessibilityState={{ checked: active }}
                       key={type.id}
-                      onPress={() => {
-                        ownerUpdateAttempt.current = null;
-                        setUpdateType(type.id);
-                      }}
+                      onPress={() => setUpdateType(type.id)}
                       style={[styles.typeChip, active && styles.typeChipActive]}>
                       <FontAwesome6 color={active ? '#FFFFFF' : palette.ink} name={type.icon} size={12} />
                       <Text style={[styles.typeText, active && styles.typeTextActive]}>{type.label}</Text>
@@ -859,10 +1062,7 @@ export default function StudioScreen() {
                    editable={canOperate}
                    maxLength={120}
                    multiline
-                   onChangeText={(value) => {
-                     ownerUpdateAttempt.current = null;
-                     setMessage(value);
-                   }}
+                   onChangeText={setMessage}
                   placeholder="Example: Brisket is sold out. Tacos and veggie bowls are still serving."
                   placeholderTextColor={palette.mutedLight}
                   style={styles.composerInput}
@@ -960,7 +1160,9 @@ export default function StudioScreen() {
                 title="Respond to reviews"
               />
 
-              {responseQueue.loading ? (
+              {studioWriteSession &&
+              responseQueue.session === studioWriteSession &&
+              responseQueue.loading ? (
                 <View
                   accessibilityLabel="Loading existing business responses"
                   style={styles.responseLoading}>
@@ -969,7 +1171,10 @@ export default function StudioScreen() {
                 </View>
               ) : null}
 
-              {responseQueue.businessId === place.id && responseQueue.error ? (
+              {studioWriteSession &&
+              responseQueue.session === studioWriteSession &&
+              responseQueue.businessId === place.id &&
+              responseQueue.error ? (
                 <View accessibilityRole="alert" style={styles.responseError}>
                   <FontAwesome6
                     color={palette.accentDeep}
@@ -991,7 +1196,7 @@ export default function StudioScreen() {
               {place.reviews.length ? (
                 <View style={styles.reviewList}>
                   {place.reviews.map((review) => {
-                    const draftKey = `${place.id}:${review.id}`;
+                    const draftKey = `${studioWriteScope}:${review.id}`;
                     const responseRecord = queuedResponses.get(review.id);
                     const responseBody = responseRecord?.body ?? review.ownerResponse;
                     const responseState =

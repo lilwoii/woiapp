@@ -218,6 +218,8 @@ begin
     from unnest(array[
       'submit_business_update',
       'submit_business_response',
+      'set_business_live_status',
+      'set_menu_item_availability',
       'list_pending_content_moderation',
       'decide_content_moderation',
       'nominate_business_logo',
@@ -264,7 +266,11 @@ begin
       'submit_business_revision',
       'submit_business_for_review',
       'schedule_mobile_stop',
-      'cancel_mobile_stop'
+      'cancel_mobile_stop',
+      'submit_business_update',
+      'submit_business_response',
+      'set_business_live_status',
+      'set_menu_item_availability'
     ]) required(name)
     where not exists (
       select 1

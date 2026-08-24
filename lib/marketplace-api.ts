@@ -1496,7 +1496,7 @@ export async function submitReview(
 
 export async function submitOwnerUpdate(
   input: OwnerUpdateInput,
-  expectedUserId?: string
+  expectedUserId: string
 ): Promise<ActionResult> {
   if (!supabase) {
     return {
@@ -1587,7 +1587,7 @@ export async function uploadBusinessLogo(
 export async function updateVenueStatus(
   placeId: string,
   status: VenueStatus,
-  expectedUserId?: string
+  expectedUserId: string
 ): Promise<ActionResult> {
   if (!supabase) {
     return {
@@ -1615,12 +1615,17 @@ export async function updateVenueStatus(
 
 export async function setMenuItemAvailability(
   itemId: string,
-  soldOut: boolean
+  soldOut: boolean,
+  expectedUserId: string
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return configurationRequired();
-  const user = await authenticatedUserId();
+  if (!supabase) return configurationRequired();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return accountChanged();
+  if (!uuidPattern.test(itemId)) {
+    return { ok: false, code: 'INVALID', reason: 'This menu item link is invalid.' };
+  }
 
   try {
     const { error } = await client.rpc('set_menu_item_availability', {

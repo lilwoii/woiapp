@@ -104,7 +104,7 @@ $contract$;
 
 do $business_core_acl$
 declare
-  expected_core_count constant integer := 11;
+  expected_core_count constant integer := 15;
   actual_core_count integer;
 begin
   select count(*)
@@ -124,7 +124,11 @@ begin
       'schedule_mobile_stop_core',
       'cancel_mobile_stop_core',
       'submit_business_revision_core',
-      'submit_business_for_review_core'
+      'submit_business_for_review_core',
+      'submit_business_update_core',
+      'submit_business_response_core',
+      'set_business_live_status_core',
+      'set_menu_item_availability_core'
     ]::text[]);
 
   if actual_core_count <> expected_core_count then
@@ -148,7 +152,11 @@ begin
         'schedule_mobile_stop_core',
         'cancel_mobile_stop_core',
         'submit_business_revision_core',
-        'submit_business_for_review_core'
+        'submit_business_for_review_core',
+        'submit_business_update_core',
+        'submit_business_response_core',
+        'set_business_live_status_core',
+        'set_menu_item_availability_core'
       ]::text[])
       and pg_catalog.has_function_privilege(
         'service_role',

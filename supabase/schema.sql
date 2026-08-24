@@ -3134,6 +3134,14 @@ declare
   ends_at timestamptz;
 begin
   perform private.require_aal2();
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(
     target_business_id,
     actor,
@@ -3306,7 +3314,24 @@ begin
     and r.moderation = 'approved'
     and r.deleted_at is null;
 
-  if target_business_id is null
+  if target_business_id is null then
+    raise exception using errcode = '42501', message = 'Eligible owner or manager role required';
+  end if;
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+
+  perform 1
+  from public.reviews r
+  where r.id = target_review_id
+    and r.business_id = target_business_id
+    and r.moderation = 'approved'
+    and r.deleted_at is null
+  for update;
+
+  if not found
     or not private.is_business_publicly_eligible(target_business_id)
     or not private.is_business_member(
       target_business_id,
@@ -4811,6 +4836,14 @@ declare
   status_expiry timestamptz;
 begin
   perform private.require_aal2();
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(target_business_id, actor) then
     raise exception using errcode = '42501', message = 'Business membership required';
   end if;
@@ -4883,10 +4916,29 @@ begin
   where mi.id = target_menu_item_id
     and mi.is_published
     and ms.is_published
+    and b.state = 'published';
+
+  if target_business_id is null then
+    raise exception using errcode = '42501', message = 'Published menu owner or manager role required';
+  end if;
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+
+  perform 1
+  from public.menu_items mi
+  join public.menu_sections ms on ms.id = mi.section_id
+  join public.businesses b on b.id = ms.business_id
+  where mi.id = target_menu_item_id
+    and ms.business_id = target_business_id
+    and mi.is_published
+    and ms.is_published
     and b.state = 'published'
   for update of mi;
 
-  if target_business_id is null
+  if not found
     or not private.is_business_member(
       target_business_id,
       actor,
