@@ -307,7 +307,15 @@ function ScopedPublicProfile({ id }: { id?: string }) {
                           <Pressable accessibilityLabel="Delete comment" accessibilityRole="button" onPress={() => void removeComment(review.id, comment.id)} style={styles.commentDelete}>
                             <FontAwesome6 color={palette.muted} name="xmark" size={10} />
                           </Pressable>
-                        ) : null}
+                        ) : (
+                          <Pressable
+                            accessibilityLabel={`Report comment by ${comment.authorDisplayName}`}
+                            accessibilityRole="button"
+                            onPress={() => router.push({ pathname: '/report', params: { targetId: comment.id, targetType: 'review_comment' } } as never)}
+                            style={styles.commentDelete}>
+                            <FontAwesome6 color={palette.muted} name="flag" size={9} />
+                          </Pressable>
+                        )}
                       </View>
                     ))}
                   </View>

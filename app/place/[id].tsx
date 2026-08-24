@@ -36,9 +36,11 @@ import { externalDirectionsUrl } from '@/lib/navigation';
 import {
   blockUser,
   createMarketplaceIdempotencyKey,
+  fetchBusinessReviewsPage,
+  type ReviewSort,
 } from '@/lib/marketplace-api';
 import { confirmAction, showMessage } from '@/lib/platform-dialog';
-import { ReviewPhotoInput } from '@/types/marketplace';
+import { ReviewPhotoInput, type Review } from '@/types/marketplace';
 
 const currency = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -75,6 +77,8 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   const [activeMenuSection, setActiveMenuSection] = useState(0);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [moreReviewsLoading, setMoreReviewsLoading] = useState(false);
+  const [reviewSort, setReviewSort] = useState<ReviewSort>('recent');
+  const [reviewView, setReviewView] = useState<{ reviews: Review[]; hasMore: boolean } | null>(null);
   const [chatAvailable, setChatAvailable] = useState(false);
   const [chatStarting, setChatStarting] = useState(false);
   const mounted = useRef(true);
@@ -380,11 +384,54 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   const showMoreReviews = async () => {
     if (moreReviewsLoading) return;
     setMoreReviewsLoading(true);
+    if (reviewView) {
+      const result = await fetchBusinessReviewsPage(
+        place.id,
+        reviewView.reviews.length,
+        auth.account?.id,
+        reviewSort
+      );
+      if (!mounted.current) return;
+      setMoreReviewsLoading(false);
+      if (!result.ok || !result.data) {
+        showMessage('Reviews could not load', result.ok ? 'More reviews are unavailable.' : result.reason);
+        return;
+      }
+      setReviewView((current) => {
+        if (!current) return current;
+        const byId = new Map(current.reviews.map((review) => [review.id, review]));
+        for (const review of result.data?.reviews ?? []) byId.set(review.id, review);
+        return { reviews: [...byId.values()], hasMore: result.data?.hasMore ?? false };
+      });
+      return;
+    }
     const result = await loadMoreReviews(place.id);
     if (!mounted.current) return;
     setMoreReviewsLoading(false);
     if (!result.ok) showMessage('Reviews could not load', result.reason);
   };
+
+  const changeReviewSort = async (nextSort: ReviewSort) => {
+    if (moreReviewsLoading || nextSort === reviewSort) return;
+    setReviewSort(nextSort);
+    if (nextSort === 'recent') {
+      setReviewView(null);
+      return;
+    }
+    setMoreReviewsLoading(true);
+    const result = await fetchBusinessReviewsPage(place.id, 0, auth.account?.id, nextSort);
+    if (!mounted.current) return;
+    setMoreReviewsLoading(false);
+    if (!result.ok || !result.data) {
+      setReviewSort('recent');
+      showMessage('Top reviews unavailable', result.ok ? 'Top reviews could not be loaded.' : result.reason);
+      return;
+    }
+    setReviewView({ reviews: result.data.reviews, hasMore: result.data.hasMore });
+  };
+
+  const displayedReviews = reviewView?.reviews ?? place.reviews;
+  const displayedReviewsHaveMore = reviewView?.hasMore ?? place.hasMoreReviews;
 
   return (
     <ScrollView
@@ -682,8 +729,28 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
                   <Text style={styles.reliabilityLabel}>Updated {place.lastConfirmedAt.toLowerCase()}</Text>
                 </View>
               </View>
+              <View style={styles.reviewOrdering}>
+                <Text style={styles.reviewOrderingLabel}>ORDER</Text>
+                <View accessibilityLabel="Review order" accessibilityRole="tablist" style={styles.reviewOrderTabs}>
+                  {(['recent', 'top'] as const).map((item) => {
+                    const selected = reviewSort === item;
+                    return (
+                      <Pressable
+                        accessibilityRole="tab"
+                        accessibilityState={{ selected, busy: moreReviewsLoading && selected }}
+                        disabled={moreReviewsLoading}
+                        key={item}
+                        onPress={() => void changeReviewSort(item)}
+                        style={[styles.reviewOrderTab, selected && styles.reviewOrderTabActive]}>
+                        <Text style={[styles.reviewOrderText, selected && styles.reviewOrderTextActive]}>{item === 'recent' ? 'Recent' : 'Top'}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+              {reviewSort === 'top' ? <Text style={styles.reviewOrderNote}>Top weighs eligible helpful votes and earned reviewer badges. Sponsored placement is never included.</Text> : null}
               <View style={styles.reviewList}>
-                {place.reviews
+                {displayedReviews
                   .filter((item) => !item.authorId || !blockedAuthorIds.includes(item.authorId))
                   .map((item) => (
                   <View key={item.id} style={styles.reviewCard}>
@@ -790,7 +857,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
                     ) : null}
                   </View>
                 ))}
-                {place.hasMoreReviews ? (
+                {displayedReviewsHaveMore ? (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityState={{ busy: moreReviewsLoading }}
@@ -807,7 +874,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
                     </Text>
                   </Pressable>
                 ) : null}
-                {!place.reviews.length ? (
+                {!displayedReviews.length ? (
                   <View style={styles.inlineEmpty}>
                     <FontAwesome6 color={palette.muted} name="comment" size={16} />
                     <Text style={styles.inlineEmptyText}>No approved reviews yet. Be the first to share a visit.</Text>
@@ -1375,6 +1442,21 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 10,
   },
+  reviewOrdering: {
+    alignItems: 'center',
+    borderBottomColor: palette.line,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingBottom: spacing.sm,
+  },
+  reviewOrderingLabel: { color: palette.muted, fontSize: 8, fontWeight: '900', letterSpacing: 1.1 },
+  reviewOrderTabs: { flexDirection: 'row', gap: 2 },
+  reviewOrderTab: { borderRadius: radii.pill, justifyContent: 'center', minHeight: 36, paddingHorizontal: 14 },
+  reviewOrderTabActive: { backgroundColor: palette.dark },
+  reviewOrderText: { color: palette.muted, fontSize: 10, fontWeight: '900', textTransform: 'capitalize' },
+  reviewOrderTextActive: { color: '#FFFFFF' },
+  reviewOrderNote: { color: palette.muted, fontSize: 9, lineHeight: 15, marginTop: -spacing.sm },
   reviewList: {
     gap: spacing.md,
   },

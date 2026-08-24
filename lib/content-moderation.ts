@@ -1,6 +1,6 @@
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 
-export type ModerationTargetType = 'review' | 'update' | 'response';
+export type ModerationTargetType = 'review' | 'review_comment' | 'update' | 'response';
 export type ModerationDecision = 'approved' | 'rejected';
 
 export type ModerationQueueItem = {
@@ -58,7 +58,7 @@ export function mapModerationQueuePage(value: unknown, offset = 0): ModerationQu
   const items = value.map((candidate): ModerationQueueItem => {
     if (!isRow(candidate)) throw new Error('Invalid moderation queue item');
     const targetType = candidate.target_type;
-    if (targetType !== 'review' && targetType !== 'update' && targetType !== 'response') {
+    if (targetType !== 'review' && targetType !== 'review_comment' && targetType !== 'update' && targetType !== 'response') {
       throw new Error('Invalid moderation target type');
     }
     const authorPublicId = candidate.author_public_id;
@@ -154,14 +154,27 @@ export async function decideModerationItem(
       return { ok: false, code: 'INVALID', reason: 'Record a moderation reason from 3 to 1,000 characters.' };
     }
     const client = await secureClient();
-    const { data, error } = await client.rpc('decide_content_moderation', {
-      target_type: item.targetType,
-      target_id: item.targetId,
-      decision,
-      moderation_reason: cleanReason,
-      expected_updated_at: item.updatedAt,
-    });
+    const { data, error } = item.targetType === 'review_comment'
+      ? await client.rpc('decide_reported_review_comment', {
+          target_comment_id: item.targetId,
+          decision,
+          moderation_reason: cleanReason,
+          expected_updated_at: item.updatedAt,
+        })
+      : await client.rpc('decide_content_moderation', {
+          target_type: item.targetType,
+          target_id: item.targetId,
+          decision,
+          moderation_reason: cleanReason,
+          expected_updated_at: item.updatedAt,
+        });
     if (error) throw error;
+    if (item.targetType === 'review_comment') {
+      if (typeof data !== 'string' || !Number.isFinite(new Date(data).getTime())) {
+        throw new Error('Invalid reported comment decision receipt');
+      }
+      return { ok: true, data: { updatedAt: data } };
+    }
     const row = Array.isArray(data) ? data[0] : data;
     if (!isRow(row)) throw new Error('Invalid moderation decision receipt');
     return { ok: true, data: { updatedAt: validDate(row, 'decided_updated_at', 'decision date') } };

@@ -61,6 +61,8 @@ export type MarketplacePage = {
   nextOffset: number;
 };
 
+export type ReviewSort = 'recent' | 'top';
+
 type MarketplaceFetchOptions = {
   expectedUserId?: string;
   includeDetails?: boolean;
@@ -1467,7 +1469,8 @@ export async function recordSponsoredInteraction(
 export async function fetchBusinessReviewsPage(
   businessId: string,
   resultOffset: number,
-  expectedUserId?: string
+  expectedUserId?: string,
+  sort: ReviewSort = 'recent'
 ): Promise<
   ActionResult<{ reviews: Review[]; hasMore: boolean; nextOffset: number }>
 > {
@@ -1481,6 +1484,7 @@ export async function fetchBusinessReviewsPage(
   }
   if (
     !uuidPattern.test(businessId) ||
+    !['recent', 'top'].includes(sort) ||
     !Number.isInteger(resultOffset) ||
     resultOffset < 0 ||
     resultOffset > 10_000
@@ -1494,12 +1498,21 @@ export async function fetchBusinessReviewsPage(
 
   const pageSize = 20;
   try {
-    const { data: reviewData, error: reviewError } = await client
+    let reviewQuery = client
       .from('public_reviews')
       .select('*')
-      .eq('business_id', businessId)
-      .order('created_at', { ascending: false })
-      .range(resultOffset, resultOffset + pageSize);
+      .eq('business_id', businessId);
+    if (sort === 'top') {
+      reviewQuery = reviewQuery
+        .order('top_score', { ascending: false })
+        .order('created_at', { ascending: false });
+    } else {
+      reviewQuery = reviewQuery.order('created_at', { ascending: false });
+    }
+    const { data: reviewData, error: reviewError } = await reviewQuery.range(
+      resultOffset,
+      resultOffset + pageSize
+    );
     if (reviewError) throw reviewError;
     const reviewRows = rows(reviewData);
     const hasMore = reviewRows.length > pageSize;
@@ -1959,7 +1972,7 @@ export async function setMenuItemAvailability(
 }
 
 export async function submitContentReport(input: {
-  targetType: 'business' | 'review' | 'response' | 'update' | 'media' | 'user';
+  targetType: 'business' | 'review' | 'review_comment' | 'response' | 'update' | 'media' | 'user';
   targetId: string;
   reason: string;
   detail?: string;
