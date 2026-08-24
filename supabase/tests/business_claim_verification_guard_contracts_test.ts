@@ -49,7 +49,8 @@ Deno.test("client and production release hide claims until verified proof exists
   const clientGuard = marketplaceApi.indexOf("if (!featureFlags.businessClaims)");
   const rpc = marketplaceApi.indexOf("client.rpc('submit_business_claim'", clientGuard);
   assert(clientGuard >= 0 && rpc > clientGuard);
-  assertMatch(onboarding, /featureFlags\.businessClaims && claimParams\.claim === '1'/);
+  assertMatch(onboarding, /const claimRequested = value\(claimParams\.claim\) === '1'/);
+  assertMatch(onboarding, /featureFlags\.businessClaims && claimRequested/);
   assertMatch(place, /featureFlags\.businessClaims[\s\S]*Claim this place/);
   assertMatch(releaseWorkflow, /EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED: "false"/);
 });
