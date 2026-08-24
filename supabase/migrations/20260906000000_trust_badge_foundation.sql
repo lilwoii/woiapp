@@ -257,7 +257,7 @@ create or replace view public.public_business_badges
 with (security_barrier = true, security_invoker = false)
 as
 select
-  b.public_id as business_public_id,
+  b.id as business_id,
   a.badge_code,
   a.earned_at,
   a.expires_at

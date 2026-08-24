@@ -55,9 +55,18 @@ export const TRUST_BADGES: readonly BadgeDefinition[] = [
 
 export const BADGE_BY_CODE = new Map(TRUST_BADGES.map((badge) => [badge.code, badge]));
 
-export function publicBadgeFromCode(code: string, earnedAt?: string, expiresAt?: string) {
+export function publicBadgeFromCode(
+  code: string,
+  earnedAt?: string,
+  expiresAt?: string
+): PublicBadge | null {
   const definition = BADGE_BY_CODE.get(code);
-  return definition ? { ...definition, earnedAt, expiresAt } : null;
+  if (!definition) return null;
+  return {
+    ...definition,
+    ...(earnedAt ? { earnedAt } : {}),
+    ...(expiresAt ? { expiresAt } : {}),
+  };
 }
 
 export function badgeAccessibilityLabel(badge: PublicBadge) {
