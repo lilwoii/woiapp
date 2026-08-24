@@ -292,27 +292,46 @@ export async function fetchPublicProfile(
     const pageRows = reviewRows.slice(0, pageSize);
     const reviewIds = pageRows.map((row) => stringValue(row.review_id)).filter((id) => uuidPattern.test(id));
     const businessIds = [...new Set(pageRows.map((row) => stringValue(row.business_id)).filter((id) => uuidPattern.test(id)))];
-    const [businessesResult, mediaResult] = await Promise.all([
+    const [businessesResult, mediaResult, reactionsResult, commentsResult] = await Promise.all([
       businessIds.length
         ? client.from('public_business_directory').select('business_id,name,slug').in('business_id', businessIds)
         : Promise.resolve({ data: [], error: null }),
       reviewIds.length
         ? client.from('public_review_media').select('*').in('review_id', reviewIds)
         : Promise.resolve({ data: [], error: null }),
+      reviewIds.length
+        ? client.from('public_review_reaction_summary').select('*').in('review_id', reviewIds)
+        : Promise.resolve({ data: [], error: null }),
+      reviewIds.length
+        ? client
+            .from('public_profile_review_comments')
+            .select('*')
+            .eq('review_author_public_id', publicId)
+            .in('review_id', reviewIds)
+            .order('created_at', { ascending: true })
+            .limit(200)
+        : Promise.resolve({ data: [], error: null }),
     ]);
     if (businessesResult.error) throw businessesResult.error;
     if (mediaResult.error) throw mediaResult.error;
+    if (reactionsResult.error) throw reactionsResult.error;
+    if (commentsResult.error) throw commentsResult.error;
     const mediaRows = rows(mediaResult.data);
+    const reactionRows = rows(reactionsResult.data);
+    const commentRows = rows(commentsResult.data);
     const mediaUrls = await createSignedMediaUrls([
       stringValue(profile.avatar_path),
       stringValue(profile.banner_path),
       ...mediaRows.map((row) => stringValue(row.storage_path)),
+      ...commentRows.map((row) => stringValue(row.author_avatar_path)),
     ]);
     const businesses = new Map(rows(businessesResult.data).map((row) => [stringValue(row.business_id), row]));
     const profileReviews: PublicProfileReview[] = pageRows.map((review) => {
       const reviewId = stringValue(review.review_id);
       const businessId = stringValue(review.business_id);
       const business = businesses.get(businessId);
+      const reaction = reactionRows.find((row) => stringValue(row.review_id) === reviewId);
+      const viewerReaction = numberValue(reaction?.viewer_reaction);
       return {
         id: reviewId,
         businessId,
@@ -328,6 +347,22 @@ export async function fetchPublicProfile(
           .map((row) => mediaUrls.get(stringValue(row.storage_path)))
           .filter((url): url is string => Boolean(url)),
         helpfulCount: numberValue(review.helpful_count),
+        upCount: numberValue(reaction?.up_count),
+        downCount: numberValue(reaction?.down_count),
+        viewerReaction: viewerReaction === -1 || viewerReaction === 1 ? viewerReaction : 0,
+        comments: commentRows
+          .filter((row) => stringValue(row.review_id) === reviewId)
+          .map((row) => ({
+            id: stringValue(row.comment_id),
+            authorId: stringValue(row.author_public_id),
+            authorUsername: stringValue(row.author_username),
+            authorDisplayName: stringValue(row.author_display_name, 'Spottr member'),
+            authorAvatarUrl: mediaUrls.get(stringValue(row.author_avatar_path)),
+            body: stringValue(row.body),
+            postedAt: stringValue(row.created_at),
+            postedLabel: relativeTime(row.created_at),
+            viewerCanDelete: booleanValue(row.viewer_can_delete),
+          })),
       };
     });
     const badges = rows(badgesResult.data)
@@ -385,6 +420,82 @@ export async function setProfileFollow(
     return { ok: true, data: data === true };
   } catch (error) {
     return toActionError(error, shouldFollow ? 'This profile could not be followed.' : 'This profile could not be unfollowed.');
+  }
+}
+
+export async function setReviewReaction(
+  reviewId: string,
+  reaction: -1 | 0 | 1,
+  expectedUserId: string
+): Promise<ActionResult<{ upCount: number; downCount: number; viewerReaction: -1 | 0 | 1 }>> {
+  if (!uuidPattern.test(reviewId) || !uuidPattern.test(expectedUserId) || ![-1, 0, 1].includes(reaction)) {
+    return { ok: false, code: 'INVALID', reason: 'This review reaction is invalid.' };
+  }
+  try {
+    const client = await createAccountBoundSupabaseClient(expectedUserId);
+    if (!client) return configurationRequired();
+    const { data, error } = await client.rpc('set_review_reaction', {
+      target_review_id: reviewId,
+      next_reaction: reaction,
+    });
+    if (error) throw error;
+    const row = rows(data)[0];
+    const viewerReaction = numberValue(row?.viewer_reaction);
+    return {
+      ok: true,
+      data: {
+        upCount: numberValue(row?.up_count),
+        downCount: numberValue(row?.down_count),
+        viewerReaction: viewerReaction === -1 || viewerReaction === 1 ? viewerReaction : 0,
+      },
+    };
+  } catch (error) {
+    return toActionError(error, 'Your reaction could not be saved.');
+  }
+}
+
+export async function addReviewProfileComment(
+  reviewId: string,
+  body: string,
+  expectedUserId: string
+): Promise<ActionResult<string>> {
+  const normalized = body.replace(/\s+/g, ' ').trim();
+  if (!uuidPattern.test(reviewId) || !uuidPattern.test(expectedUserId) || normalized.length < 1 || normalized.length > 500) {
+    return { ok: false, code: 'INVALID', reason: 'Write a comment up to 500 characters.' };
+  }
+  try {
+    const client = await createAccountBoundSupabaseClient(expectedUserId);
+    if (!client) return configurationRequired();
+    const { data, error } = await client.rpc('add_review_profile_comment', {
+      target_review_id: reviewId,
+      comment_body: normalized,
+    });
+    if (error) throw error;
+    const commentId = stringValue(data);
+    if (!uuidPattern.test(commentId)) throw new Error('INVALID_COMMENT_RECEIPT');
+    return { ok: true, data: commentId };
+  } catch (error) {
+    return toActionError(error, 'Your comment could not be posted.');
+  }
+}
+
+export async function deleteReviewProfileComment(
+  commentId: string,
+  expectedUserId: string
+): Promise<ActionResult<boolean>> {
+  if (!uuidPattern.test(commentId) || !uuidPattern.test(expectedUserId)) {
+    return { ok: false, code: 'INVALID', reason: 'This comment request is invalid.' };
+  }
+  try {
+    const client = await createAccountBoundSupabaseClient(expectedUserId);
+    if (!client) return configurationRequired();
+    const { data, error } = await client.rpc('delete_own_review_profile_comment', {
+      target_comment_id: commentId,
+    });
+    if (error) throw error;
+    return { ok: true, data: data === true };
+  } catch (error) {
+    return toActionError(error, 'Your comment could not be deleted.');
   }
 }
 

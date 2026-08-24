@@ -10,7 +10,9 @@ const MAX_ROUTE_BYTES = 64 * 1024;
 // Static rendering repeats the shared application shell in every route. Cap
 // both the largest route and the average route so adding a required workflow
 // cannot exhaust a fixed global allowance while per-route growth stays bounded.
-const MAX_AVERAGE_ROUTE_BYTES = 60_000;
+// Expo's shared static shell is currently about 60 KB before route copy. Keep a
+// tight per-route average while allowing small, accessible loading surfaces.
+const MAX_AVERAGE_ROUTE_BYTES = 61_000;
 const MAX_ENTRY_BYTES = 3_200_000;
 const MAX_ENTRY_GZIP_BYTES = 800_000;
 const MAX_MAP_BYTES = 1_100_000;

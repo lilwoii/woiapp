@@ -27,10 +27,12 @@ const tierColor: Record<BadgeTier, string> = {
 
 export default function BadgesScreen() {
   const [filter, setFilter] = useState<BadgeFilter>('reviewer');
+  const [expanded, setExpanded] = useState(false);
   const badges = useMemo(
     () => TRUST_BADGES.filter((badge) => filter === 'all' || badge.audience === filter),
     [filter]
   );
+  const visibleBadges = expanded ? badges : badges.slice(0, 4);
 
   return (
     <FocusAwareScreen>
@@ -61,7 +63,7 @@ export default function BadgesScreen() {
                     accessibilityRole="tab"
                     accessibilityState={{ selected }}
                     key={item.id}
-                    onPress={() => setFilter(item.id)}
+                    onPress={() => { setFilter(item.id); setExpanded(false); }}
                     style={[styles.filter, selected && styles.filterActive]}>
                     <Text style={[styles.filterText, selected && styles.filterTextActive]}>{item.label}</Text>
                   </Pressable>
@@ -76,7 +78,7 @@ export default function BadgesScreen() {
           </View>
 
           <View style={styles.catalog}>
-            {badges.map((badge) => (
+            {visibleBadges.map((badge) => (
               <View accessibilityLabel={`${badge.title}. ${badge.description} Requirement: ${badge.requirement}`} key={badge.code} style={styles.badgeRow}>
                 <View style={[styles.badgeIcon, { borderColor: tierColor[badge.tier] }]}>
                   <FontAwesome6 color={tierColor[badge.tier]} name={badge.icon} size={13} />
@@ -92,6 +94,12 @@ export default function BadgesScreen() {
               </View>
             ))}
           </View>
+          {badges.length > visibleBadges.length ? (
+            <Pressable accessibilityRole="button" onPress={() => setExpanded(true)} style={styles.showAllButton}>
+              <Text style={styles.showAllText}>Show all {badges.length} badges</Text>
+              <FontAwesome6 color={palette.accentDeep} name="chevron-down" size={10} />
+            </Pressable>
+          ) : null}
 
           <View style={styles.integrityNote}>
             <FontAwesome6 color={palette.success} name="shield-halved" size={14} />
@@ -132,6 +140,8 @@ const styles = StyleSheet.create({
   tier: { fontSize: 8, fontWeight: '900', letterSpacing: 0.7, textTransform: 'uppercase' },
   badgeDescription: { color: palette.muted, fontSize: 10, lineHeight: 15 },
   badgeRequirement: { color: palette.ink, fontSize: 9, fontWeight: '800', lineHeight: 14 },
+  showAllButton: { alignItems: 'center', alignSelf: 'center', flexDirection: 'row', gap: 7, minHeight: 44, paddingHorizontal: spacing.lg },
+  showAllText: { color: palette.accentDeep, fontSize: 10, fontWeight: '900' },
   integrityNote: { alignItems: 'flex-start', backgroundColor: palette.successSoft, borderRadius: radii.lg, flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xl, padding: spacing.md },
   integrityText: { color: palette.success, flex: 1, fontSize: 10, fontWeight: '700', lineHeight: 16 },
 });

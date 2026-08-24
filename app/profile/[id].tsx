@@ -2,14 +2,14 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { PageShell } from '@/components/page-shell';
 import { TrustBadgeStrip } from '@/components/trust-badge-strip';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
-import { fetchPublicProfile, setProfileFollow } from '@/lib/marketplace-api';
+import { addReviewProfileComment, deleteReviewProfileComment, fetchPublicProfile, setProfileFollow, setReviewReaction } from '@/lib/marketplace-api';
 import { showMessage } from '@/lib/platform-dialog';
 import type { PublicProfile } from '@/types/social';
 
@@ -23,6 +23,8 @@ function ScopedPublicProfile({ id }: { id?: string }) {
   const [snapshot, setSnapshot] = useState<{ id: string; profile: PublicProfile } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState<string | null>(null);
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const profile = id && snapshot?.id === id ? snapshot.profile : null;
 
   useEffect(() => {
@@ -56,6 +58,81 @@ function ScopedPublicProfile({ id }: { id?: string }) {
         ...current.profile,
         followedByViewer: next,
         followerCount: Math.max(0, current.profile.followerCount + (next ? 1 : -1)),
+      },
+    } : current);
+  };
+
+  const reactToReview = async (reviewId: string, reaction: -1 | 1) => {
+    if (!profile || reviewBusy) return;
+    if (auth.status !== 'authenticated' || !auth.account?.id) {
+      router.push('/auth');
+      return;
+    }
+    const review = profile.reviews.find((candidate) => candidate.id === reviewId);
+    if (!review) return;
+    const nextReaction = review.viewerReaction === reaction ? 0 : reaction;
+    setReviewBusy(reviewId);
+    const result = await setReviewReaction(reviewId, nextReaction, auth.account.id);
+    setReviewBusy(null);
+    if (!result.ok || !result.data) {
+      showMessage('Reaction unavailable', result.ok ? 'Your reaction could not be saved.' : result.reason);
+      return;
+    }
+    setSnapshot((current) => current?.id === profile.id ? {
+      ...current,
+      profile: {
+        ...current.profile,
+        reviews: current.profile.reviews.map((candidate) => candidate.id === reviewId ? {
+          ...candidate,
+          helpfulCount: result.data.upCount,
+          upCount: result.data.upCount,
+          downCount: result.data.downCount,
+          viewerReaction: result.data.viewerReaction,
+        } : candidate),
+      },
+    } : current);
+  };
+
+  const postComment = async (reviewId: string) => {
+    if (!profile || reviewBusy) return;
+    if (auth.status !== 'authenticated' || !auth.account?.id) {
+      router.push('/auth');
+      return;
+    }
+    const body = (commentDrafts[reviewId] ?? '').trim();
+    if (!body) return;
+    setReviewBusy(reviewId);
+    const result = await addReviewProfileComment(reviewId, body, auth.account.id);
+    if (!result.ok) {
+      setReviewBusy(null);
+      showMessage('Comment unavailable', result.reason);
+      return;
+    }
+    const refreshed = await fetchPublicProfile(profile.id);
+    setReviewBusy(null);
+    if (refreshed.ok && refreshed.data) {
+      setSnapshot({ id: profile.id, profile: refreshed.data });
+      setCommentDrafts((current) => ({ ...current, [reviewId]: '' }));
+    }
+  };
+
+  const removeComment = async (reviewId: string, commentId: string) => {
+    if (!profile || reviewBusy || auth.status !== 'authenticated' || !auth.account?.id) return;
+    setReviewBusy(reviewId);
+    const result = await deleteReviewProfileComment(commentId, auth.account.id);
+    setReviewBusy(null);
+    if (!result.ok || !result.data) {
+      showMessage('Delete unavailable', result.ok ? 'This comment was already removed.' : result.reason);
+      return;
+    }
+    setSnapshot((current) => current?.id === profile.id ? {
+      ...current,
+      profile: {
+        ...current.profile,
+        reviews: current.profile.reviews.map((review) => review.id === reviewId ? {
+          ...review,
+          comments: review.comments.filter((comment) => comment.id !== commentId),
+        } : review),
       },
     } : current);
   };
@@ -184,11 +261,75 @@ function ScopedPublicProfile({ id }: { id?: string }) {
                     <View style={styles.reviewPhotos}>{review.photos.map((photo) => <Image key={photo} source={{ uri: photo }} style={styles.reviewPhoto} />)}</View>
                   </ScrollView>
                 ) : null}
-                <View style={styles.reviewMeta}>
-                  <FontAwesome6 color={palette.muted} name="thumbs-up" size={10} />
-                  <Text style={styles.reviewMetaText}>{review.helpfulCount} helpful</Text>
-                  <Text style={styles.reviewMetaDivider}>•</Text>
-                  <Text style={styles.reviewMetaText}>Discussion appears here on the author’s profile</Text>
+                <View style={styles.reviewActions}>
+                  <Pressable
+                    accessibilityLabel={`${review.upCount} helpful votes`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: review.viewerReaction === 1, busy: reviewBusy === review.id }}
+                    disabled={reviewBusy === review.id}
+                    onPress={() => void reactToReview(review.id, 1)}
+                    style={[styles.reactionButton, review.viewerReaction === 1 && styles.reactionButtonActive]}>
+                    <FontAwesome6 color={review.viewerReaction === 1 ? palette.accentDeep : palette.muted} name="thumbs-up" size={11} />
+                    <Text style={[styles.reactionCount, review.viewerReaction === 1 && styles.reactionCountActive]}>{review.upCount}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel={`${review.downCount} not helpful votes`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: review.viewerReaction === -1, busy: reviewBusy === review.id }}
+                    disabled={reviewBusy === review.id}
+                    onPress={() => void reactToReview(review.id, -1)}
+                    style={[styles.reactionButton, review.viewerReaction === -1 && styles.reactionButtonActive]}>
+                    <FontAwesome6 color={review.viewerReaction === -1 ? palette.accentDeep : palette.muted} name="thumbs-down" size={11} />
+                    <Text style={[styles.reactionCount, review.viewerReaction === -1 && styles.reactionCountActive]}>{review.downCount}</Text>
+                  </Pressable>
+                  <Text style={styles.profileOnlyLabel}>PROFILE DISCUSSION · {review.comments.length}</Text>
+                </View>
+                {review.comments.length ? (
+                  <View style={styles.commentList}>
+                    {review.comments.map((comment) => (
+                      <View key={comment.id} style={styles.commentRow}>
+                        <Pressable
+                          accessibilityRole="link"
+                          onPress={() => router.push({ pathname: '/profile/[id]', params: { id: comment.authorId } })}
+                          style={styles.commentAvatar}>
+                          {comment.authorAvatarUrl ? <Image source={{ uri: comment.authorAvatarUrl }} style={styles.commentAvatarImage} /> : <Text style={styles.commentAvatarText}>{comment.authorDisplayName.slice(0, 1).toUpperCase()}</Text>}
+                        </Pressable>
+                        <View style={styles.commentCopy}>
+                          <View style={styles.commentNameRow}>
+                            <Text style={styles.commentName}>{comment.authorDisplayName}</Text>
+                            <Text style={styles.commentTime}>{comment.postedLabel}</Text>
+                          </View>
+                          <Text style={styles.commentUsername}>@{comment.authorUsername}</Text>
+                          <Text style={styles.commentBody}>{comment.body}</Text>
+                        </View>
+                        {comment.viewerCanDelete ? (
+                          <Pressable accessibilityLabel="Delete comment" accessibilityRole="button" onPress={() => void removeComment(review.id, comment.id)} style={styles.commentDelete}>
+                            <FontAwesome6 color={palette.muted} name="xmark" size={10} />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+                <View style={styles.commentComposer}>
+                  <TextInput
+                    accessibilityLabel={`Comment on review of ${review.businessName}`}
+                    editable={reviewBusy !== review.id}
+                    maxLength={500}
+                    onChangeText={(value) => setCommentDrafts((current) => ({ ...current, [review.id]: value }))}
+                    placeholder="Ask about this experience…"
+                    placeholderTextColor={palette.muted}
+                    style={styles.commentInput}
+                    value={commentDrafts[review.id] ?? ''}
+                  />
+                  <Pressable
+                    accessibilityLabel="Post comment"
+                    accessibilityRole="button"
+                    disabled={reviewBusy === review.id || !(commentDrafts[review.id] ?? '').trim()}
+                    onPress={() => void postComment(review.id)}
+                    style={styles.commentSend}>
+                    {reviewBusy === review.id ? <ActivityIndicator color="#FFFFFF" size="small" /> : <FontAwesome6 color="#FFFFFF" name="arrow-up" size={11} />}
+                  </Pressable>
                 </View>
               </View>
             ))}
@@ -253,9 +394,27 @@ const styles = StyleSheet.create({
   reviewBody: { color: palette.ink, fontSize: 13, lineHeight: 20 },
   reviewPhotos: { flexDirection: 'row', gap: spacing.sm },
   reviewPhoto: { borderRadius: radii.md, height: 126, width: 158 },
-  reviewMeta: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  reviewMetaText: { color: palette.muted, fontSize: 9, fontWeight: '700' },
-  reviewMetaDivider: { color: palette.line, fontSize: 9 },
+  reviewActions: { alignItems: 'center', flexDirection: 'row', gap: 7 },
+  reactionButton: { alignItems: 'center', backgroundColor: palette.bg, borderColor: palette.line, borderRadius: radii.pill, borderWidth: 1, flexDirection: 'row', gap: 5, minHeight: 34, paddingHorizontal: 11 },
+  reactionButtonActive: { backgroundColor: palette.accentSoft, borderColor: palette.accent },
+  reactionCount: { color: palette.muted, fontSize: 9, fontWeight: '900' },
+  reactionCountActive: { color: palette.accentDeep },
+  profileOnlyLabel: { color: palette.muted, fontSize: 8, fontWeight: '900', letterSpacing: 0.6, marginLeft: 'auto' },
+  commentList: { borderTopColor: palette.line, borderTopWidth: 1, gap: spacing.md, paddingTop: spacing.md },
+  commentRow: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.sm },
+  commentAvatar: { alignItems: 'center', backgroundColor: palette.accentSoft, borderRadius: 999, height: 30, justifyContent: 'center', overflow: 'hidden', width: 30 },
+  commentAvatarImage: { height: '100%', width: '100%' },
+  commentAvatarText: { color: palette.accentDeep, fontSize: 10, fontWeight: '900' },
+  commentCopy: { flex: 1 },
+  commentNameRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
+  commentName: { color: palette.ink, fontSize: 10, fontWeight: '900' },
+  commentTime: { color: palette.muted, fontSize: 8 },
+  commentUsername: { color: palette.muted, fontSize: 8, marginTop: 1 },
+  commentBody: { color: palette.ink, fontSize: 11, lineHeight: 17, marginTop: 4 },
+  commentDelete: { alignItems: 'center', height: 28, justifyContent: 'center', width: 28 },
+  commentComposer: { alignItems: 'center', backgroundColor: palette.bg, borderColor: palette.line, borderRadius: radii.pill, borderWidth: 1, flexDirection: 'row', padding: 4, paddingLeft: 14 },
+  commentInput: { color: palette.ink, flex: 1, fontSize: 10, minHeight: 34 },
+  commentSend: { alignItems: 'center', backgroundColor: palette.dark, borderRadius: 999, height: 34, justifyContent: 'center', width: 34 },
   noReviews: { alignItems: 'center', backgroundColor: palette.surface, borderColor: palette.line, borderRadius: radii.lg, borderWidth: 1, gap: 5, padding: spacing.xxl },
   noReviewsTitle: { color: palette.ink, fontSize: 13, fontWeight: '900' },
   noReviewsBody: { color: palette.muted, fontSize: 10 },

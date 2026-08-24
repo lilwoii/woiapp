@@ -5,6 +5,18 @@ export type PublicProfileLink = {
   url: string;
 };
 
+export type ReviewProfileComment = {
+  id: string;
+  authorId: string;
+  authorUsername: string;
+  authorDisplayName: string;
+  authorAvatarUrl?: string;
+  body: string;
+  postedAt: string;
+  postedLabel: string;
+  viewerCanDelete: boolean;
+};
+
 export type PublicProfileReview = {
   id: string;
   businessId: string;
@@ -16,6 +28,10 @@ export type PublicProfileReview = {
   postedLabel: string;
   photos: string[];
   helpfulCount: number;
+  upCount: number;
+  downCount: number;
+  viewerReaction: -1 | 0 | 1;
+  comments: ReviewProfileComment[];
 };
 
 export type PublicProfile = {
