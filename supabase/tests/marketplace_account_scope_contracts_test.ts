@@ -135,7 +135,10 @@ Deno.test("private conversations reject delayed account A results after a scope 
 
 Deno.test("discovery and live navigation remount precise location by account scope", () => {
   assertMatch(discoverScreen, /key=\{`discover:\$\{scopeKey\}`\}/);
-  assertMatch(discoverScreen, /locationRequestGeneration\.current !== generation/);
+  assertMatch(
+    discoverScreen,
+    /mounted\.current && locationRequestGeneration\.current === generation/,
+  );
   assertMatch(
     navigationScreen,
     /key=\{`\$\{scopeKey\}:navigation:\$\{placeId \?\? ''\}`\}/,
