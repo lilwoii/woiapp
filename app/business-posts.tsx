@@ -111,7 +111,7 @@ export default function BusinessPostsScreen() {
     setPosts((current) => current.filter((item) => item.id !== post.id));
   };
 
-  if (!canManage) {
+  if (!canManage || !business) {
     return (
       <FocusAwareScreen>
         <View style={styles.gate}>

@@ -146,7 +146,7 @@ function toDiscoveryActionError<T>(error: unknown, fallback: string): ActionResu
 }
 
 export function createMarketplaceIdempotencyKey(
-  scope: 'review' | 'update' | 'response' | 'sponsor'
+  scope: 'review' | 'update' | 'response' | 'sponsor' | 'post'
 ) {
   const cryptoApi = globalThis.crypto;
   let nonce: string | undefined = cryptoApi?.randomUUID?.();
@@ -164,7 +164,7 @@ export function createMarketplaceIdempotencyKey(
 
 function actionIdempotencyKey(
   supplied: string | undefined,
-  scope: 'review' | 'update' | 'response' | 'sponsor'
+  scope: 'review' | 'update' | 'response' | 'sponsor' | 'post'
 ) {
   const key = supplied ?? createMarketplaceIdempotencyKey(scope);
   if (!idempotencyPattern.test(key)) {

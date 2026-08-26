@@ -197,10 +197,10 @@ begin
   if asset_count > 0 and (
     select count(*)
     from public.media_assets asset
-    join private.media_stage_grants grant
-      on grant.registered_asset_id = asset.id
-     and grant.purpose = 'business_post'
-     and grant.state = 'registered'
+    join private.media_stage_grants stage_grant
+      on stage_grant.registered_asset_id = asset.id
+     and stage_grant.purpose = 'business_post'
+     and stage_grant.state = 'registered'
     where asset.id = any(normalized_assets)
       and asset.owner_id = actor
       and asset.business_id = target_business_id
@@ -310,10 +310,10 @@ begin
   return query
   select asset.id, asset.processed_storage_path, asset.width, asset.height, asset.created_at
   from public.media_assets asset
-  join private.media_stage_grants grant
-    on grant.registered_asset_id = asset.id
-   and grant.purpose = 'business_post'
-   and grant.state = 'registered'
+  join private.media_stage_grants stage_grant
+    on stage_grant.registered_asset_id = asset.id
+   and stage_grant.purpose = 'business_post'
+   and stage_grant.state = 'registered'
   where asset.owner_id = actor
     and asset.business_id = target_business_id
     and asset.source = 'owner_upload'
