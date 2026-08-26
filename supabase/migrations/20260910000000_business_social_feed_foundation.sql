@@ -110,8 +110,8 @@ begin
       where item.storage_path = new.storage_path and item.state <> 'finalized'
     )
     or exists (
-      select 1 from private.account_deletion_freezes freeze
-      where freeze.user_id = new.owner_id
+      select 1 from private.account_deletion_freezes deletion_freeze
+      where deletion_freeze.user_id = new.owner_id
     )
   then
     raise exception using errcode = '55000', message = 'MEDIA_STAGE_GRANT_UNAVAILABLE';

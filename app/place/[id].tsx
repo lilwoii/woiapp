@@ -613,7 +613,16 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
                 <View style={styles.businessPosts}>
                   {businessPosts.map((post) => (
                     <View key={post.id} style={styles.businessPost}>
-                      <View style={styles.businessPostMeta}><Text style={styles.businessPostName}>{place.name}</Text><Text style={styles.businessPostTime}>{post.createdLabel} · {post.createdDateTimeLabel}</Text></View>
+                      <View style={styles.businessPostMeta}>
+                        <Text style={styles.businessPostName}>{place.name}</Text>
+                        <View style={styles.businessPostMetaActions}>
+                          <Text style={styles.businessPostTime}>{post.createdLabel} · {post.createdDateTimeLabel}</Text>
+                          <Pressable accessibilityLabel={`Report post from ${place.name}`} accessibilityRole="button" onPress={() => router.push({ pathname: '/report', params: { targetId: post.id, targetType: 'business_post' } } as never)} style={styles.businessPostReport}>
+                            <FontAwesome6 color={palette.muted} name="flag" size={8} />
+                            <Text style={styles.businessPostReportText}>Report</Text>
+                          </Pressable>
+                        </View>
+                      </View>
                       {post.body ? <Text style={styles.businessPostBody}>{post.body}</Text> : null}
                       {post.photos.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}><View style={styles.businessPostPhotos}>{post.photos.map((photo) => <Image key={photo} source={{ uri: photo }} style={styles.businessPostPhoto} />)}</View></ScrollView> : null}
                     </View>
@@ -1439,8 +1448,11 @@ const styles = StyleSheet.create({
   businessPosts: { borderTopColor: palette.line, borderTopWidth: 1 },
   businessPost: { borderBottomColor: palette.line, borderBottomWidth: 1, gap: spacing.md, paddingVertical: spacing.lg },
   businessPostMeta: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  businessPostMetaActions: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
   businessPostName: { color: palette.ink, fontSize: 11, fontWeight: '900' },
   businessPostTime: { color: palette.muted, fontSize: 8 },
+  businessPostReport: { alignItems: 'center', flexDirection: 'row', gap: 4, minHeight: 34, paddingHorizontal: spacing.xs },
+  businessPostReportText: { color: palette.muted, fontSize: 8, fontWeight: '800' },
   businessPostBody: { color: palette.ink, fontSize: 12, lineHeight: 19 },
   businessPostPhotos: { flexDirection: 'row', gap: spacing.sm },
   businessPostPhoto: { borderRadius: radii.md, height: 164, width: 220 },

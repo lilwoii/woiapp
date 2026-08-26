@@ -1,6 +1,6 @@
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 
-export type ModerationTargetType = 'review' | 'review_comment' | 'update' | 'response';
+export type ModerationTargetType = 'review' | 'review_comment' | 'business_post' | 'update' | 'response';
 export type ModerationDecision = 'approved' | 'rejected';
 
 export type ModerationQueueItem = {
@@ -58,7 +58,7 @@ export function mapModerationQueuePage(value: unknown, offset = 0): ModerationQu
   const items = value.map((candidate): ModerationQueueItem => {
     if (!isRow(candidate)) throw new Error('Invalid moderation queue item');
     const targetType = candidate.target_type;
-    if (targetType !== 'review' && targetType !== 'review_comment' && targetType !== 'update' && targetType !== 'response') {
+    if (targetType !== 'review' && targetType !== 'review_comment' && targetType !== 'business_post' && targetType !== 'update' && targetType !== 'response') {
       throw new Error('Invalid moderation target type');
     }
     const authorPublicId = candidate.author_public_id;
@@ -132,12 +132,26 @@ async function secureClient() {
 export async function loadModerationQueue(offset = 0, limit = 30): Promise<ModerationResult<ModerationQueuePage>> {
   try {
     const client = await secureClient();
-    const { data, error } = await client.rpc('list_pending_content_moderation', {
-      result_limit: Math.min(Math.max(Math.floor(limit), 1), 100),
-      result_offset: Math.min(Math.max(Math.floor(offset), 0), 10000),
-    });
-    if (error) throw error;
-    return { ok: true, data: mapModerationQueuePage(data, offset) };
+    const safeOffset = Math.min(Math.max(Math.floor(offset), 0), 100);
+    const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
+    const queueArgs = {
+      result_limit: Math.min(safeOffset + safeLimit + 1, 100),
+      result_offset: 0,
+    };
+    const [standard, posts] = await Promise.all([
+      client.rpc('list_pending_content_moderation', queueArgs),
+      client.rpc('list_reported_business_posts', queueArgs),
+    ]);
+    if (standard.error) throw standard.error;
+    if (posts.error) throw posts.error;
+    const combined = [...(Array.isArray(standard.data) ? standard.data : []), ...(Array.isArray(posts.data) ? posts.data : [])]
+      .sort((left, right) => String(left.submitted_at).localeCompare(String(right.submitted_at)));
+    const sourceHasMore = combined.some((row) => isRow(row) && row.has_more === true);
+    const page = combined.slice(safeOffset, safeOffset + safeLimit);
+    if (page.length && (sourceHasMore || combined.length > safeOffset + safeLimit)) {
+      page[0] = { ...page[0], has_more: true };
+    }
+    return { ok: true, data: mapModerationQueuePage(page, safeOffset) };
   } catch (error) {
     return failure(error, 'The moderation queue could not be loaded.');
   }
@@ -161,6 +175,13 @@ export async function decideModerationItem(
           moderation_reason: cleanReason,
           expected_updated_at: item.updatedAt,
         })
+      : item.targetType === 'business_post'
+        ? await client.rpc('decide_reported_business_post', {
+            target_post_id: item.targetId,
+            decision,
+            moderation_reason: cleanReason,
+            expected_updated_at: item.updatedAt,
+          })
       : await client.rpc('decide_content_moderation', {
           target_type: item.targetType,
           target_id: item.targetId,
@@ -169,7 +190,7 @@ export async function decideModerationItem(
           expected_updated_at: item.updatedAt,
         });
     if (error) throw error;
-    if (item.targetType === 'review_comment') {
+    if (item.targetType === 'review_comment' || item.targetType === 'business_post') {
       if (typeof data !== 'string' || !Number.isFinite(new Date(data).getTime())) {
         throw new Error('Invalid reported comment decision receipt');
       }

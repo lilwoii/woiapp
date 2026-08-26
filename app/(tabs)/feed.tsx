@@ -145,10 +145,18 @@ function FeedRow({ item }: { item: FeedItem }) {
       </View>
       {item.body ? <Text style={styles.itemBody}>{item.body}</Text> : null}
       {item.photos.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}><View style={styles.photos}>{item.photos.map((photo) => <Image key={photo} source={{ uri: photo }} style={styles.photo} />)}</View></ScrollView> : null}
-      <Pressable accessibilityRole="link" onPress={() => router.push({ pathname: '/place/[id]', params: { id: item.businessId } })} style={styles.placeLink}>
-        <Text style={styles.placeLinkText}>View {item.businessName}</Text>
-        <FontAwesome6 color={palette.ink} name="arrow-right" size={9} />
-      </Pressable>
+      <View style={styles.itemActions}>
+        <Pressable accessibilityRole="link" onPress={() => router.push({ pathname: '/place/[id]', params: { id: item.businessId } })} style={styles.placeLink}>
+          <Text style={styles.placeLinkText}>View {item.businessName}</Text>
+          <FontAwesome6 color={palette.ink} name="arrow-right" size={9} />
+        </Pressable>
+        {isBusiness ? (
+          <Pressable accessibilityLabel={`Report post from ${item.businessName}`} accessibilityRole="button" onPress={() => router.push({ pathname: '/report', params: { targetId: item.id, targetType: 'business_post' } })} style={styles.reportLink}>
+            <FontAwesome6 color={palette.muted} name="flag" size={8} />
+            <Text style={styles.reportText}>Report</Text>
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -180,6 +188,9 @@ const styles = StyleSheet.create({
   photo: { backgroundColor: palette.line, borderRadius: radii.md, height: 180, width: 230 },
   placeLink: { alignItems: 'center', alignSelf: 'flex-start', flexDirection: 'row', gap: 7, minHeight: 38 },
   placeLinkText: { color: palette.ink, fontSize: 9, fontWeight: '900' },
+  itemActions: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  reportLink: { alignItems: 'center', flexDirection: 'row', gap: 5, minHeight: 38, paddingHorizontal: spacing.sm },
+  reportText: { color: palette.muted, fontSize: 8, fontWeight: '800' },
   loadMore: { alignItems: 'center', alignSelf: 'center', flexDirection: 'row', gap: spacing.sm, minHeight: 46, paddingHorizontal: spacing.lg },
   loadMoreText: { color: palette.ink, fontSize: 10, fontWeight: '900' },
   loading: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, minHeight: 180 },

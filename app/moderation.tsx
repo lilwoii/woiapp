@@ -92,7 +92,7 @@ export default function ModerationScreen() {
     setReason('');
     setMessage({
       tone: 'success',
-      text: item.targetType === 'review_comment'
+      text: item.targetType === 'review_comment' || item.targetType === 'business_post'
         ? decision === 'approved' ? 'Comment kept and reports dismissed with an audit receipt.' : 'Comment removed and reports resolved with an audit receipt.'
         : decision === 'approved' ? 'Content approved and audit receipt recorded.' : 'Content rejected and audit receipt recorded.',
     });
@@ -145,7 +145,7 @@ export default function ModerationScreen() {
           {loading ? (
             <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={palette.accentDeep} /><Text style={styles.loadingText}>Loading the oldest pending content…</Text></View>
           ) : !items.length ? (
-            <View style={styles.empty}><FontAwesome6 color={palette.success} name="circle-check" size={21} /><Text accessibilityRole="header" style={styles.emptyTitle}>Queue clear</Text><Text style={styles.emptyBody}>No pending content or reported profile comments are available to this operator.</Text></View>
+            <View style={styles.empty}><FontAwesome6 color={palette.success} name="circle-check" size={21} /><Text accessibilityRole="header" style={styles.emptyTitle}>Queue clear</Text><Text style={styles.emptyBody}>No pending content, reported profile comments, or reported business posts are available to this operator.</Text></View>
           ) : (
             <View style={styles.queue}>
               {items.map((item) => {
@@ -156,7 +156,7 @@ export default function ModerationScreen() {
                   <View key={key} style={styles.item}>
                     <View style={styles.itemHeader}>
                       <View style={styles.itemCopy}>
-                        <Text style={styles.itemType}>{item.targetType}</Text>
+                        <Text style={styles.itemType}>{item.targetType.replaceAll('_', ' ')}</Text>
                         <Text style={styles.businessName}>{item.businessName}</Text>
                         <Text style={styles.author}>By {item.authorDisplayName} · {new Date(item.submittedAt).toLocaleString()}</Text>
                       </View>
@@ -171,8 +171,8 @@ export default function ModerationScreen() {
                         <TextInput accessibilityLabel="Internal moderation reason" maxLength={1000} multiline onChangeText={setReason} placeholder="Reason recorded in the restricted audit log" placeholderTextColor={palette.mutedLight} style={styles.reasonInput} textAlignVertical="top" value={reason} />
                         <View style={styles.decisionActions}>
                           <Pressable accessibilityRole="button" disabled={Boolean(savingId)} onPress={() => { setSelectedId(null); setReason(''); }} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel</Text></Pressable>
-                          <Pressable accessibilityRole="button" accessibilityState={{ busy: savingId === key, disabled: Boolean(savingId) }} disabled={Boolean(savingId)} onPress={() => void decide(item, 'rejected')} style={styles.rejectButton}><Text style={styles.rejectText}>{item.targetType === 'review_comment' ? 'Remove' : 'Reject'}</Text></Pressable>
-                          <Pressable accessibilityRole="button" accessibilityState={{ busy: savingId === key, disabled: Boolean(savingId) || !mediaReady }} disabled={Boolean(savingId) || !mediaReady} onPress={() => void decide(item, 'approved')} style={[styles.approveButton, (!mediaReady || Boolean(savingId)) && styles.disabled]}>{savingId === key ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}<Text style={styles.approveText}>{item.targetType === 'review_comment' ? 'Keep' : 'Approve'}</Text></Pressable>
+                          <Pressable accessibilityRole="button" accessibilityState={{ busy: savingId === key, disabled: Boolean(savingId) }} disabled={Boolean(savingId)} onPress={() => void decide(item, 'rejected')} style={styles.rejectButton}><Text style={styles.rejectText}>{item.targetType === 'review_comment' || item.targetType === 'business_post' ? 'Remove' : 'Reject'}</Text></Pressable>
+                          <Pressable accessibilityRole="button" accessibilityState={{ busy: savingId === key, disabled: Boolean(savingId) || !mediaReady }} disabled={Boolean(savingId) || !mediaReady} onPress={() => void decide(item, 'approved')} style={[styles.approveButton, (!mediaReady || Boolean(savingId)) && styles.disabled]}>{savingId === key ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}<Text style={styles.approveText}>{item.targetType === 'review_comment' || item.targetType === 'business_post' ? 'Keep' : 'Approve'}</Text></Pressable>
                         </View>
                       </View>
                     ) : (

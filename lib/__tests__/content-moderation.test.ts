@@ -47,4 +47,22 @@ describe('content moderation queue contracts', () => {
     expect(() => mapModerationQueuePage([{ ...valid, rating: 6 }])).toThrow();
     expect(() => mapModerationQueuePage([{ ...valid, updated_at: 'never' }])).toThrow();
   });
+
+  it('accepts reported business posts in the shared moderation queue', () => {
+    const page = mapModerationQueuePage([{
+      target_type: 'business_post',
+      target_id: targetId,
+      business_id: businessId,
+      business_name: 'Copper Coyote',
+      author_public_id: null,
+      author_display_name: 'Owner',
+      body: '[Photo post]',
+      rating: null,
+      context: { report_count: 2 },
+      submitted_at: '2026-08-01T10:00:00.000Z',
+      updated_at: '2026-08-01T10:00:00.000Z',
+      has_more: false,
+    }]);
+    expect(page.items[0]?.targetType).toBe('business_post');
+  });
 });

@@ -1972,7 +1972,7 @@ export async function setMenuItemAvailability(
 }
 
 export async function submitContentReport(input: {
-  targetType: 'business' | 'review' | 'review_comment' | 'response' | 'update' | 'media' | 'user';
+  targetType: 'business' | 'business_post' | 'review' | 'review_comment' | 'response' | 'update' | 'media' | 'user';
   targetId: string;
   reason: string;
   detail?: string;
