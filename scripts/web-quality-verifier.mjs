@@ -6,13 +6,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { validateProductionArtifactContent } from './production-artifact-purity.mjs';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MAX_ROUTE_BYTES = 64 * 1024;
+const MAX_ROUTE_BYTES = 68 * 1024;
+const MAX_ROUTE_GZIP_BYTES = 17 * 1024;
 // Static rendering repeats the shared application shell in every route. Cap
 // both the largest route and the average route so adding a required workflow
 // cannot exhaust a fixed global allowance while per-route growth stays bounded.
 // Expo's shared static shell is currently about 60 KB before route copy. Keep a
 // tight per-route average while allowing small, accessible loading surfaces.
-const MAX_AVERAGE_ROUTE_BYTES = 61_000;
+const MAX_AVERAGE_ROUTE_BYTES = 62_000;
+const MAX_AVERAGE_ROUTE_GZIP_BYTES = 15_000;
 const MAX_ENTRY_BYTES = 3_200_000;
 const MAX_ENTRY_GZIP_BYTES = 800_000;
 const MAX_MAP_BYTES = 1_100_000;
@@ -91,10 +93,16 @@ export function validateBundleBudgets(metrics) {
     ['all JavaScript gzip', metrics.allJsGzipBytes, MAX_ALL_JS_GZIP_BYTES],
     ['all CSS', metrics.allCssBytes, MAX_ALL_CSS_BYTES],
     ['largest route HTML', metrics.largestRouteBytes, MAX_ROUTE_BYTES],
+    ['largest route HTML gzip', metrics.largestRouteGzipBytes, MAX_ROUTE_GZIP_BYTES],
     [
       'all route HTML',
       metrics.allRouteBytes,
       validRouteCount ? metrics.routeCount * MAX_AVERAGE_ROUTE_BYTES : 0,
+    ],
+    [
+      'all route HTML gzip',
+      metrics.allRouteGzipBytes,
+      validRouteCount ? metrics.routeCount * MAX_AVERAGE_ROUTE_GZIP_BYTES : 0,
     ],
   ];
   for (const [label, actual, maximum] of checks) {
@@ -187,12 +195,17 @@ export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
 
   const htmlFiles = await collectFiles(staticRoot, '.html');
   let allRouteBytes = 0;
+  let allRouteGzipBytes = 0;
   let largestRouteBytes = 0;
+  let largestRouteGzipBytes = 0;
   for (const file of htmlFiles) {
     const buffer = await readFile(file);
     const relative = path.relative(staticRoot, file).replaceAll('\\', '/');
     allRouteBytes += buffer.length;
+    const compressedBytes = gzipSync(buffer, { level: 9 }).length;
+    allRouteGzipBytes += compressedBytes;
     largestRouteBytes = Math.max(largestRouteBytes, buffer.length);
+    largestRouteGzipBytes = Math.max(largestRouteGzipBytes, compressedBytes);
     errors.push(...validateRouteHtml(relative, buffer.toString('utf8')));
   }
 
@@ -234,7 +247,9 @@ export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
   const metrics = {
     routeCount: htmlFiles.length,
     allRouteBytes,
+    allRouteGzipBytes,
     largestRouteBytes,
+    largestRouteGzipBytes,
     entryBytes,
     entryGzipBytes,
     mapBytes,

@@ -67,7 +67,7 @@ export default function FeedScreen() {
   if (auth.status !== 'authenticated') {
     return (
       <FocusAwareScreen>
-        <View style={styles.gate}>
+        <View role="main" style={styles.gate}>
           <View style={styles.gateIcon}><FontAwesome6 color={palette.accentDeep} name="newspaper" size={20} /></View>
           <Text accessibilityRole="header" style={styles.gateTitle}>Your local food feed</Text>
           <Text style={styles.gateBody}>Sign in to see new posts from saved places and reviews from people you follow.</Text>

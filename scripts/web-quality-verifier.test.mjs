@@ -61,7 +61,9 @@ test('bundle budgets fail closed when a JavaScript regression crosses a ceiling'
     allJsGzipBytes: 1_000_000,
     allCssBytes: 80_000,
     largestRouteBytes: 60_000,
+    largestRouteGzipBytes: 14_000,
     allRouteBytes: 1_500_000,
+    allRouteGzipBytes: 420_000,
   });
   assert.ok(errors.some((error) => error.includes('entry JavaScript exceeds')));
 });
@@ -77,7 +79,9 @@ test('route HTML aggregate budget scales only with verified route count', () => 
     allJsGzipBytes: 1_000_000,
     allCssBytes: 80_000,
     largestRouteBytes: 60_000,
-    allRouteBytes: 1_830_001,
+    largestRouteGzipBytes: 14_000,
+    allRouteBytes: 1_860_001,
+    allRouteGzipBytes: 440_000,
   };
   assert.ok(
     validateBundleBudgets(metrics).some((error) => error.includes('all route HTML exceeds')),
