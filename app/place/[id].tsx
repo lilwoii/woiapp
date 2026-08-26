@@ -40,6 +40,8 @@ import {
   type ReviewSort,
 } from '@/lib/marketplace-api';
 import { confirmAction, showMessage } from '@/lib/platform-dialog';
+import { fetchBusinessPosts } from '@/lib/social-feed';
+import type { FeedItem } from '@/types/feed';
 import { ReviewPhotoInput, type Review } from '@/types/marketplace';
 
 const currency = new Intl.NumberFormat('en-US', {
@@ -81,6 +83,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   const [reviewView, setReviewView] = useState<{ reviews: Review[]; hasMore: boolean } | null>(null);
   const [chatAvailable, setChatAvailable] = useState(false);
   const [chatStarting, setChatStarting] = useState(false);
+  const [businessPosts, setBusinessPosts] = useState<FeedItem[]>([]);
   const mounted = useRef(true);
   const reviewIntent = useRef<{ fingerprint: string; key: string } | null>(null);
   const [listingLoading, setListingLoading] = useState(
@@ -129,6 +132,15 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
     });
     return () => { active = false; };
   }, [chatEligibleCategory, place]);
+
+  useEffect(() => {
+    let active = true;
+    if (!place) return () => { active = false; };
+    void fetchBusinessPosts(place.id).then((result) => {
+      if (active && result.ok && result.data) setBusinessPosts(result.data.items.slice(0, 5));
+    });
+    return () => { active = false; };
+  }, [place]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined' || !place) return;
@@ -592,6 +604,21 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
                   }
                   update={place.update}
                 />
+              </View>
+            ) : null}
+
+            {businessPosts.length ? (
+              <View style={styles.section}>
+                <SectionHeading detail="Photos and notes published by this business." eyebrow="From the business" title="Latest posts" />
+                <View style={styles.businessPosts}>
+                  {businessPosts.map((post) => (
+                    <View key={post.id} style={styles.businessPost}>
+                      <View style={styles.businessPostMeta}><Text style={styles.businessPostName}>{place.name}</Text><Text style={styles.businessPostTime}>{post.createdLabel} · {post.createdDateTimeLabel}</Text></View>
+                      {post.body ? <Text style={styles.businessPostBody}>{post.body}</Text> : null}
+                      {post.photos.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}><View style={styles.businessPostPhotos}>{post.photos.map((photo) => <Image key={photo} source={{ uri: photo }} style={styles.businessPostPhoto} />)}</View></ScrollView> : null}
+                    </View>
+                  ))}
+                </View>
               </View>
             ) : null}
 
@@ -1409,6 +1436,14 @@ const styles = StyleSheet.create({
     height: 220,
     width: 300,
   },
+  businessPosts: { borderTopColor: palette.line, borderTopWidth: 1 },
+  businessPost: { borderBottomColor: palette.line, borderBottomWidth: 1, gap: spacing.md, paddingVertical: spacing.lg },
+  businessPostMeta: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  businessPostName: { color: palette.ink, fontSize: 11, fontWeight: '900' },
+  businessPostTime: { color: palette.muted, fontSize: 8 },
+  businessPostBody: { color: palette.ink, fontSize: 12, lineHeight: 19 },
+  businessPostPhotos: { flexDirection: 'row', gap: spacing.sm },
+  businessPostPhoto: { borderRadius: radii.md, height: 164, width: 220 },
   reviewSummary: {
     alignItems: 'center',
     backgroundColor: palette.surface,

@@ -235,9 +235,18 @@ function tableRows(table: string, role: 'anonymous' | 'customer' | 'business') {
         created_at: now,
         helpful_count: 14,
       }];
+    case 'public_profile_badges':
+      return [{
+        subject_public_id: ids.counterpart,
+        badge_code: 'first_bite',
+        earned_at: now,
+        expires_at: null,
+      }];
     case 'mobile_stops':
     case 'special_hours':
     case 'public_business_media':
+    case 'public_business_posts':
+    case 'public_business_post_media':
     case 'public_business_responses':
     case 'public_review_media':
     case 'business_responses':
@@ -299,6 +308,12 @@ function protectedTableAllowed(
   }
   if (table === 'public_business_responses' || table === 'public_review_media') {
     return exactFilter(url, 'review_id', `in.(${ids.review})`);
+  }
+  if (table === 'public_profile_badges') {
+    return exactFilter(url, 'subject_public_id', `in.(${ids.counterpart})`);
+  }
+  if (table === 'public_business_posts') {
+    return exactFilter(url, 'business_id', `eq.${ids.business}`);
   }
   if (
     table === 'public_business_directory' || table === 'public_business_locations' ||

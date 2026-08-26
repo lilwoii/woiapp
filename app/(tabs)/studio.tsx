@@ -930,7 +930,18 @@ export default function StudioScreen() {
               </Text>
             </View>
           </View>
-          {canOperate ? <StatusPill status={place.status} /> : null}
+          {canOperate ? (
+            <View style={styles.headerActions}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push({ pathname: '/business-posts', params: { businessId: place.id } })}
+                style={styles.postsButton}>
+                <FontAwesome6 color={palette.ink} name="newspaper" size={10} />
+                <Text style={styles.postsButtonText}>Posts</Text>
+              </Pressable>
+              <StatusPill status={place.status} />
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.hero}>
@@ -1917,6 +1928,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.md,
   },
+  headerActions: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  postsButton: { alignItems: 'center', borderColor: palette.line, borderRadius: radii.pill, borderWidth: 1, flexDirection: 'row', gap: 6, minHeight: 40, paddingHorizontal: 13 },
+  postsButtonText: { color: palette.ink, fontSize: 9, fontWeight: '900' },
   logoFallback: {
     alignItems: 'center',
     backgroundColor: palette.accent,

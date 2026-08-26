@@ -85,6 +85,7 @@ export default function RootLayout() {
                 <Stack.Screen name="business-setup" options={{ headerShown: false }} />
                 <Stack.Screen name="business-team" options={{ headerShown: false }} />
                 <Stack.Screen name="business-profile" options={{ headerShown: false }} />
+                <Stack.Screen name="business-posts" options={{ headerShown: false }} />
                 <Stack.Screen name="business-marketplace" options={{ headerShown: false }} />
                 <Stack.Screen name="badges" options={{ headerShown: false }} />
                 <Stack.Screen name="report" options={{ headerShown: false, presentation: 'modal' }} />

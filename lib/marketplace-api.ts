@@ -770,7 +770,7 @@ function serverHoursSummary(business: Row) {
   return opens && closes ? `${opens}–${closes}` : 'Hours unavailable';
 }
 
-async function createSignedMediaUrls(
+export async function createSignedMediaUrls(
   paths: string[]
 ): Promise<Map<string, string>> {
   const client = supabase;

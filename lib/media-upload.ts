@@ -11,6 +11,7 @@ export type MediaPurpose =
   | 'profile_banner'
   | 'business_logo'
   | 'business_gallery'
+  | 'business_post'
   | 'review_photo'
   | 'chat_photo';
 
@@ -88,6 +89,7 @@ export async function stageMediaUpload(
   if (
     (purpose === 'business_logo' ||
       purpose === 'business_gallery' ||
+      purpose === 'business_post' ||
       purpose === 'review_photo' ||
       purpose === 'chat_photo') &&
     !businessId

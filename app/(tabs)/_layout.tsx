@@ -60,6 +60,16 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="feed"
+        options={{
+          title: 'Feed',
+          tabBarAccessibilityLabel: 'Updates from followed places and people',
+          tabBarIcon: ({ color, focused }) => (
+            <FontAwesome6 accessibilityElementsHidden color={color} name="newspaper" size={focused ? 20 : 18} solid={focused} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="saved"
         options={{
           title: 'Saved',
