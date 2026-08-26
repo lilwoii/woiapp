@@ -30,18 +30,21 @@ export default function FeedScreen() {
   useEffect(() => {
     let active = true;
     if (auth.status !== 'authenticated') return () => { active = false; };
-    setLoading(true);
-    setError(null);
-    void fetchFollowedFeed(filter).then((result) => {
+    const timer = setTimeout(() => {
       if (!active) return;
-      setLoading(false);
-      if (!result.ok || !result.data) {
-        setError(result.ok ? 'Your feed is unavailable.' : result.reason);
-        return;
-      }
-      setSnapshot({ filter, items: result.data.items, hasMore: result.data.hasMore });
-    });
-    return () => { active = false; };
+      setLoading(true);
+      setError(null);
+      void fetchFollowedFeed(filter).then((result) => {
+        if (!active) return;
+        setLoading(false);
+        if (!result.ok || !result.data) {
+          setError(result.ok ? 'Your feed is unavailable.' : result.reason);
+          return;
+        }
+        setSnapshot({ filter, items: result.data.items, hasMore: result.data.hasMore });
+      });
+    }, 0);
+    return () => { active = false; clearTimeout(timer); };
   }, [auth.status, filter]);
 
   const loadMore = async () => {
