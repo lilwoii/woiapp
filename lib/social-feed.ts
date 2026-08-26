@@ -59,19 +59,22 @@ async function hydrateFeedRows(feedRows: Row[]): Promise<FeedItem[]> {
   const reviewIds = feedRows.filter((row) => text(row.feed_type) === 'user_review').map((row) => text(row.content_id)).filter((id) => uuidPattern.test(id));
   const authorIds = [...new Set(feedRows.map((row) => text(row.author_public_id)).filter((id) => uuidPattern.test(id)))];
   const businessIds = [...new Set(feedRows.map((row) => text(row.business_id)).filter((id) => uuidPattern.test(id)))];
-  const [postMediaResult, reviewMediaResult, badgesResult, businessMediaResult] = await Promise.all([
+  const [postMediaResult, reviewMediaResult, badgesResult, businessBadgesResult, businessMediaResult] = await Promise.all([
     postIds.length ? client.from('public_business_post_media').select('*').in('post_id', postIds) : Promise.resolve({ data: [], error: null }),
     reviewIds.length ? client.from('public_review_media').select('*').in('review_id', reviewIds) : Promise.resolve({ data: [], error: null }),
     authorIds.length ? client.from('public_profile_badges').select('*').in('subject_public_id', authorIds) : Promise.resolve({ data: [], error: null }),
+    businessIds.length ? client.from('public_business_badges').select('*').in('business_id', businessIds) : Promise.resolve({ data: [], error: null }),
     businessIds.length ? client.from('public_business_media').select('*').in('business_id', businessIds).eq('media_role', 'logo') : Promise.resolve({ data: [], error: null }),
   ]);
   if (postMediaResult.error) throw postMediaResult.error;
   if (reviewMediaResult.error) throw reviewMediaResult.error;
   if (badgesResult.error) throw badgesResult.error;
+  if (businessBadgesResult.error) throw businessBadgesResult.error;
   if (businessMediaResult.error) throw businessMediaResult.error;
   const postMedia = rows(postMediaResult.data);
   const reviewMedia = rows(reviewMediaResult.data);
   const badges = rows(badgesResult.data);
+  const businessBadges = rows(businessBadgesResult.data);
   const businessMedia = rows(businessMediaResult.data);
   const urls = await createSignedMediaUrls([...postMedia, ...reviewMedia, ...businessMedia].map((row) => text(row.storage_path)));
 
@@ -82,8 +85,10 @@ async function hydrateFeedRows(feedRows: Row[]): Promise<FeedItem[]> {
     const media = type === 'business_post'
       ? postMedia.filter((item) => text(item.post_id) === id)
       : reviewMedia.filter((item) => text(item.review_id) === id);
-    const itemBadges = badges
-      .filter((item) => text(item.subject_public_id) === authorId)
+    const badgeRows = type === 'business_post'
+      ? businessBadges.filter((item) => text(item.business_id) === text(row.business_id))
+      : badges.filter((item) => text(item.subject_public_id) === authorId);
+    const itemBadges = badgeRows
       .map((item) => publicBadgeFromCode(text(item.badge_code), text(item.earned_at) || undefined, text(item.expires_at) || undefined))
       .filter((badge): badge is PublicBadge => Boolean(badge));
     return {
@@ -108,6 +113,24 @@ async function hydrateFeedRows(feedRows: Row[]): Promise<FeedItem[]> {
       badges: itemBadges,
     } satisfies FeedItem;
   });
+}
+
+export async function fetchBusinessBadges(businessId: string): Promise<ActionResult<PublicBadge[]>> {
+  const client = supabase;
+  if (!client) return configurationRequired();
+  if (!uuidPattern.test(businessId)) return { ok: false, code: 'INVALID', reason: 'This business reference is invalid.' };
+  try {
+    const { data, error } = await client.from('public_business_badges').select('*').eq('business_id', businessId);
+    if (error) throw error;
+    return {
+      ok: true,
+      data: rows(data)
+        .map((row) => publicBadgeFromCode(text(row.badge_code), text(row.earned_at) || undefined, text(row.expires_at) || undefined))
+        .filter((badge): badge is PublicBadge => Boolean(badge)),
+    };
+  } catch (error) {
+    return toActionError(error, 'Business achievements could not be loaded.');
+  }
 }
 
 export async function fetchFollowedFeed(

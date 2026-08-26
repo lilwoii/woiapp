@@ -134,7 +134,7 @@ function FeedRow({ item }: { item: FeedItem }) {
           {item.businessLogoUrl ? <Image accessibilityLabel={`${item.businessName} logo`} source={{ uri: item.businessLogoUrl }} style={styles.identityLogo} /> : <FontAwesome6 color={palette.accentDeep} name={isBusiness ? 'store' : 'utensils'} size={11} />}
         </Pressable>
         <View style={styles.itemIdentity}>
-          {isBusiness ? <Text style={styles.identityName}>{item.businessName}</Text> : (
+          {isBusiness ? <View style={styles.authorLine}><Text style={styles.identityName}>{item.businessName}</Text><TrustBadgeStrip badges={item.badges} limit={3} /></View> : (
             <View style={styles.authorLine}>
               <Pressable accessibilityRole="link" onPress={() => item.authorId && router.push({ pathname: '/profile/[id]', params: { id: item.authorId } })}>
                 <Text style={styles.identityName}>{item.authorDisplayName ?? 'Spottr member'}</Text>

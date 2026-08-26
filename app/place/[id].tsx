@@ -40,7 +40,8 @@ import {
   type ReviewSort,
 } from '@/lib/marketplace-api';
 import { confirmAction, showMessage } from '@/lib/platform-dialog';
-import { fetchBusinessPosts } from '@/lib/social-feed';
+import { fetchBusinessBadges, fetchBusinessPosts } from '@/lib/social-feed';
+import type { PublicBadge } from '@/lib/trust-badges';
 import type { FeedItem } from '@/types/feed';
 import { ReviewPhotoInput, type Review } from '@/types/marketplace';
 
@@ -84,6 +85,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   const [chatAvailable, setChatAvailable] = useState(false);
   const [chatStarting, setChatStarting] = useState(false);
   const [businessPosts, setBusinessPosts] = useState<FeedItem[]>([]);
+  const [businessBadges, setBusinessBadges] = useState<PublicBadge[]>([]);
   const mounted = useRef(true);
   const reviewIntent = useRef<{ fingerprint: string; key: string } | null>(null);
   const [listingLoading, setListingLoading] = useState(
@@ -136,8 +138,10 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   useEffect(() => {
     let active = true;
     if (!place) return () => { active = false; };
-    void fetchBusinessPosts(place.id).then((result) => {
-      if (active && result.ok && result.data) setBusinessPosts(result.data.items.slice(0, 5));
+    void Promise.all([fetchBusinessPosts(place.id), fetchBusinessBadges(place.id)]).then(([postResult, badgeResult]) => {
+      if (!active) return;
+      if (postResult.ok && postResult.data) setBusinessPosts(postResult.data.items.slice(0, 5));
+      if (badgeResult.ok && badgeResult.data) setBusinessBadges(badgeResult.data);
     });
     return () => { active = false; };
   }, [place]);
@@ -497,6 +501,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
               </View>
             </View>
             <Text style={[styles.heroTitle, wide && styles.heroTitleWide]}>{place.name}</Text>
+            <TrustBadgeStrip badges={businessBadges} limit={4} showLabels />
             <Text style={styles.heroCategory}>
               {place.categoryLabel} · {place.cuisines.join(' · ')} · {'$'.repeat(place.priceLevel)}
             </Text>

@@ -245,6 +245,7 @@ function tableRows(table: string, role: 'anonymous' | 'customer' | 'business') {
     case 'mobile_stops':
     case 'special_hours':
     case 'public_business_media':
+    case 'public_business_badges':
     case 'public_business_posts':
     case 'public_business_post_media':
     case 'public_business_responses':
@@ -312,8 +313,8 @@ function protectedTableAllowed(
   if (table === 'public_profile_badges') {
     return exactFilter(url, 'subject_public_id', `in.(${ids.counterpart})`);
   }
-  if (table === 'public_business_posts') {
-    return exactFilter(url, 'business_id', `eq.${ids.business}`);
+  if (table === 'public_business_posts' || table === 'public_business_badges') {
+    return exactFilter(url, 'business_id', `eq.${ids.business}`, `in.(${ids.business})`);
   }
   if (
     table === 'public_business_directory' || table === 'public_business_locations' ||
