@@ -459,6 +459,10 @@ function ScopedDiscoverScreen() {
     if (category === 'all') return permittedMapInventory;
     return filterMapInventoryCategories(permittedMapInventory, new Set([category]));
   }, [category, detailedMapFiltersActive, permittedMapInventory]);
+  const mapInventoryMayBeCapped = useMemo(
+    () => visibleMapInventory.reduce((total, feature) => total + feature.count, 0) >= 1_200,
+    [visibleMapInventory],
+  );
 
   const selectPlace = useCallback((place: Place) => setSelectedId(place.id), []);
   const selectBusinessId = useCallback(async (businessId: string, locationId?: string) => {
@@ -905,6 +909,12 @@ function ScopedDiscoverScreen() {
                   <Text style={styles.legendText}>Area</Text>
                 </View>
               </View>
+              {mapInventoryMayBeCapped ? (
+                <View accessibilityLiveRegion="polite" style={styles.mapLimitNotice}>
+                  <FontAwesome6 color={palette.accentDeep} name="layer-group" size={10} />
+                  <Text style={styles.mapLimitText}>Dense area · zoom in or search this area to load local detail.</Text>
+                </View>
+              ) : null}
               {selected ? (
                 <View style={styles.mapPreview}>
                   <View style={styles.mapPreviewCopy}>
@@ -1531,6 +1541,25 @@ const styles = StyleSheet.create({
   legendText: {
     color: palette.muted,
     fontSize: 9,
+    fontWeight: '800',
+  },
+  mapLimitNotice: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 253, 248, 0.94)',
+    borderColor: palette.line,
+    borderRadius: 999,
+    borderWidth: 1,
+    bottom: 104,
+    flexDirection: 'row',
+    gap: 6,
+    left: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    position: 'absolute',
+  },
+  mapLimitText: {
+    color: palette.muted,
+    fontSize: 8,
     fontWeight: '800',
   },
   mapPreview: {

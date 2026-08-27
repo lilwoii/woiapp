@@ -750,6 +750,7 @@ declare
   decision private.ad_serving_decisions%rowtype;
   config private.ad_runtime_config%rowtype;
   event_id uuid;
+  reservation_id uuid;
   existing_event boolean := false;
   event_valid boolean := true;
   invalid_reason_value text;
@@ -810,20 +811,29 @@ begin
     where decision_id = decision.id and event_type = interaction_type;
   elsif interaction_type = 'open' then
     if event_valid and not decision.shadow and not config.shadow_only then
-      insert into private.billing_ledger (
-        business_id, campaign_id, entry_kind, amount_minor, currency,
-        source_type, source_id, metadata, effective_at
-      ) values (
-        decision.business_id, decision.campaign_id, 'debit',
-        decision.reserved_minor, decision.currency,
-        'sponsored_open', event_id,
-        pg_catalog.jsonb_build_object('decision_id', decision.id), now_value
-      )
-      on conflict (source_type, source_id) do nothing;
-      billed := found;
       update private.ad_budget_reservations
       set state = 'consumed', updated_at = now_value
-      where decision_id = decision.id and state = 'held';
+      where decision_id = decision.id and state = 'held'
+      returning id into reservation_id;
+      if reservation_id is null then
+        event_valid := false;
+        invalid_reason_value := 'reservation_unavailable';
+        update private.ad_events
+        set valid = false, invalid_reason = invalid_reason_value
+        where id = event_id;
+      else
+        insert into private.billing_ledger (
+          business_id, campaign_id, entry_kind, amount_minor, currency,
+          source_type, source_id, metadata, effective_at
+        ) values (
+          decision.business_id, decision.campaign_id, 'debit',
+          decision.reserved_minor, decision.currency,
+          'sponsored_open', event_id,
+          pg_catalog.jsonb_build_object('decision_id', decision.id), now_value
+        )
+        on conflict (source_type, source_id) do nothing;
+        billed := found;
+      end if;
     else
       update private.ad_budget_reservations
       set state = 'released', updated_at = now_value

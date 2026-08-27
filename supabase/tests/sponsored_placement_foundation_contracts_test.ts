@@ -63,6 +63,12 @@ Deno.test("interaction receipts are token-bound, idempotent, and never trust cli
     migration,
     /grant execute on function public\.record_sponsored_interaction\(text, text, text\)[\s\S]*to anon, authenticated/,
   );
+  assertMatch(migration, /where decision_id = decision\.id and state = 'held'[\s\S]*returning id into reservation_id/);
+  assertMatch(migration, /reservation_unavailable/);
+  assert(
+    migration.indexOf("returning id into reservation_id") < migration.indexOf("'sponsored_open', event_id"),
+    "A real-money debit must only be inserted after consuming a held reservation",
+  );
   assertMatch(marketplace, /recordSponsoredInteraction/);
 });
 

@@ -68,6 +68,7 @@ test('populated discovery renders real results and bounds a 1,200-feature map re
   });
   expect(fixture?.calls.some((call) => call.startsWith('POST /functions/v1/public-discovery'))).toBe(true);
   await expect(page.locator('.maplibregl-marker[aria-label="1196 food places in this area. Food truck: 299, Restaurant: 299, Pop-up: 299, Café or bakery: 299. Zoom in to explore."]')).toHaveCount(1);
+  await expect(page.getByText('Dense area · zoom in or search this area to load local detail.')).toBeVisible();
   expect(await page.locator('.maplibregl-marker').count()).toBeLessThan(80);
   for (const category of ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery']) {
     await expect(page.locator(`button[data-category="${category}"]`).first()).toBeVisible();
