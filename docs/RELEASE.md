@@ -1,5 +1,9 @@
 # Spottr release and operations runbook
 
+The current evidence snapshot and unresolved owner/external requirements are in
+[LAUNCH_STATUS.md](LAUNCH_STATUS.md). This runbook remains the authoritative
+acceptance procedure.
+
 Spottr is release-ready only when every required item below is supported by
 evidence for the exact source commit and target environment. A green local
 build, preview URL, schema file, or unsigned native export is not sufficient on
