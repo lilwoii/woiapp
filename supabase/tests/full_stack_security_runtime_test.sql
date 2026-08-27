@@ -571,6 +571,160 @@ insert into public.pricing_versions (
   'runtime pricing approval', now() - interval '1 day'
 );
 
+insert into public.business_members (
+  business_id, user_id, role, status, accepted_at
+) values
+  (
+    '70000000-0000-4000-8000-000000000007',
+    '10000000-0000-4000-8000-000000000001',
+    'owner', 'active', now()
+  ),
+  (
+    '70000000-0000-4000-8000-000000000007',
+    '20000000-0000-4000-8000-000000000002',
+    'staff', 'active', now()
+  );
+
+-- Exercise merchant authoring as an AAL2 owner. This stays inside the
+-- rollback-only runtime fixture so it cannot create production data.
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $sponsored_authoring$
+declare
+  quote jsonb;
+  draft_public_id uuid;
+  replay_public_id uuid;
+  expected_updated_at timestamptz;
+  submit_result text;
+begin
+  quote := public.get_sponsored_campaign_quote(
+    '70000000-0000-4000-8000-000000000007'
+  );
+  if quote->>'currency' <> 'USD'
+    or quote->>'disclosure' <> 'Sponsored ad'
+    or quote->>'term_days' <> '30'
+  then
+    raise exception 'Sponsored campaign quote was not server-authoritative';
+  end if;
+
+  draft_public_id := public.create_sponsored_campaign_draft(
+    '70000000-0000-4000-8000-000000000007',
+    15000, 1609, now() + interval '1 hour',
+    'spottr:sponsor:runtime-authoring-0001'
+  );
+  replay_public_id := public.create_sponsored_campaign_draft(
+    '70000000-0000-4000-8000-000000000007',
+    15000, 1609, now() + interval '1 hour',
+    'spottr:sponsor:runtime-authoring-0001'
+  );
+  if replay_public_id <> draft_public_id then
+    raise exception 'Sponsored draft replay was not idempotent';
+  end if;
+
+  begin
+    perform public.create_sponsored_campaign_draft(
+      '70000000-0000-4000-8000-000000000007',
+      15000, 3218, now() + interval '1 hour',
+      'spottr:sponsor:runtime-authoring-0001'
+    );
+    raise exception 'Sponsored idempotency key was accepted for a different payload';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'IDEMPOTENCY_KEY_REUSED' then raise; end if;
+  end;
+
+  begin
+    perform public.create_sponsored_campaign_draft(
+      '70000000-0000-4000-8000-000000000007',
+      15000, 1609, null,
+      'spottr:sponsor:runtime-authoring-null'
+    );
+    raise exception 'Sponsored authoring accepted a NULL campaign start';
+  exception
+    when sqlstate '22023' then null;
+  end;
+
+  select campaign.updated_at into expected_updated_at
+  from public.ad_campaigns campaign
+  where campaign.public_id = draft_public_id;
+  submit_result := public.submit_sponsored_campaign(
+    draft_public_id, expected_updated_at
+  );
+  if submit_result <> 'submitted' then
+    raise exception 'Sponsored campaign did not submit from a valid draft';
+  end if;
+  perform pg_catalog.set_config(
+    'spottr.runtime.sponsor_campaign_id', draft_public_id::text, true
+  );
+  select campaign.updated_at into expected_updated_at
+  from public.ad_campaigns campaign
+  where campaign.public_id = draft_public_id;
+  perform pg_catalog.set_config(
+    'spottr.runtime.sponsor_campaign_updated_at', expected_updated_at::text, true
+  );
+end;
+$sponsored_authoring$;
+
+reset role;
+
+-- A staff member may not read campaign financials or terminate a campaign.
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $sponsored_staff_boundary$
+declare
+  visible_campaigns integer;
+begin
+  select count(*) into visible_campaigns from public.ad_campaigns;
+  if visible_campaigns <> 0 then
+    raise exception 'Staff unexpectedly read sponsored campaign financials';
+  end if;
+  begin
+    perform public.end_sponsored_campaign(
+      current_setting('spottr.runtime.sponsor_campaign_id')::uuid,
+      current_setting('spottr.runtime.sponsor_campaign_updated_at')::timestamptz
+    );
+    raise exception 'Staff unexpectedly terminated a sponsored campaign';
+  exception
+    when sqlstate '42501' then null;
+  end;
+end;
+$sponsored_staff_boundary$;
+
+reset role;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $sponsored_owner_end$
+declare
+  end_result text;
+begin
+  end_result := public.end_sponsored_campaign(
+    current_setting('spottr.runtime.sponsor_campaign_id')::uuid,
+    current_setting('spottr.runtime.sponsor_campaign_updated_at')::timestamptz
+  );
+  if end_result <> 'ended' then
+    raise exception 'Owner could not end a submitted sponsored campaign';
+  end if;
+end;
+$sponsored_owner_end$;
+
+reset role;
+
 insert into public.ad_campaigns (
   id, business_id, billing_model, state, currency, bid_cap_minor,
   daily_budget_minor, lifetime_budget_minor, pricing_version_id,

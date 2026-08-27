@@ -1,6 +1,7 @@
 import { assertMatch, assertNotMatch } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 
 const migration = await Deno.readTextFile(new URL('../migrations/20260916000000_sponsored_campaign_authoring.sql', import.meta.url));
+const runtime = await Deno.readTextFile(new URL('./full_stack_security_runtime_test.sql', import.meta.url));
 
 Deno.test('campaign authoring keeps pricing and activation server-authoritative', () => {
   assertMatch(migration, /pricing\.state = 'approved'/);
@@ -37,4 +38,14 @@ Deno.test('campaign authoring rejects nulls, uses the hardened hash helper, and 
   assertMatch(migration, /Campaign pricing, dates, or location must be refreshed/);
   assertMatch(migration, /owners and managers read campaign rollups/);
   assertMatch(migration, /spottr-sponsor-authoring/);
+});
+
+Deno.test('full-stack runtime fixture exercises authoring replay and staff boundaries', () => {
+  assertMatch(runtime, /sponsored_authoring/);
+  assertMatch(runtime, /runtime-authoring-0001/);
+  assertMatch(runtime, /runtime-authoring-null/);
+  assertMatch(runtime, /Sponsored draft replay was not idempotent/);
+  assertMatch(runtime, /Sponsored authoring accepted a NULL campaign start/);
+  assertMatch(runtime, /sponsored_staff_boundary/);
+  assertMatch(runtime, /Staff unexpectedly terminated a sponsored campaign/);
 });

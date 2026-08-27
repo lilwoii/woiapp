@@ -206,12 +206,16 @@ begin
         )
     )
     or not exists (
-      select 1 from public.business_locations location
-      where location.business_id = target.business_id
-        and location.publication_state = 'published'
-        and location.point is not null
-        and location.public_address
-        and not location.is_approximate
+      select 1
+      from public.ad_targets target_filter
+      join public.business_locations location
+        on location.business_id = target.business_id
+       and location.publication_state = 'published'
+       and location.point is not null
+       and location.public_address
+       and not location.is_approximate
+      where target_filter.campaign_id = target.id
+        and public.st_dwithin(target_filter.center, location.point, 1)
     )
   then raise exception using errcode = '22023', message = 'Campaign pricing, dates, or location must be refreshed'; end if;
   if not exists (select 1 from public.ad_targets where campaign_id = target.id)
