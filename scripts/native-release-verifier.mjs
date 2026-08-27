@@ -21,6 +21,16 @@ const ALLOWED_ANDROID_PERMISSIONS = new Set([
   'ACCESS_FINE_LOCATION',
 ]);
 
+const HIGH_RISK_FEATURE_FLAGS = [
+  'EXPO_PUBLIC_HOME_KITCHENS_ENABLED',
+  'EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED',
+  'EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED',
+  'EXPO_PUBLIC_PICKUP_ORDERING_ENABLED',
+  'EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED',
+  'EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED',
+  'EXPO_PUBLIC_SPONSORED_PLACEMENTS_ENABLED',
+];
+
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -145,8 +155,9 @@ export function validateNativeConfiguration(appBase, eas, sdkRequirements) {
     'NSLocationWhenInUseUsageDescription',
     errors,
   );
+  const photoUsageDescription = ios.infoPlist?.NSPhotoLibraryUsageDescription;
   validateUsageDescription(
-    ios.infoPlist?.NSPhotoLibraryUsageDescription,
+    photoUsageDescription,
     'NSPhotoLibraryUsageDescription',
     errors,
   );
@@ -181,6 +192,14 @@ export function validateNativeConfiguration(appBase, eas, sdkRequirements) {
   }
   const pickerPlugin = findPlugin(expo.plugins ?? [], 'expo-image-picker');
   const pickerOptions = Array.isArray(pickerPlugin) ? pickerPlugin[1] : null;
+  if (pickerOptions?.photosPermission !== photoUsageDescription) {
+    errors.push('iOS photo-library and image-picker permission descriptions must remain identical.');
+  }
+  for (const purpose of ['profile', 'banner', 'business', 'review']) {
+    if (!photoUsageDescription?.toLocaleLowerCase('en-US').includes(purpose)) {
+      errors.push(`Photo permission description must disclose the ${purpose} image purpose.`);
+    }
+  }
   if (pickerOptions?.cameraPermission !== false || pickerOptions?.microphonePermission !== false) {
     errors.push('Image picker camera and microphone permissions must remain disabled.');
   }
@@ -206,6 +225,11 @@ export function validateNativeConfiguration(appBase, eas, sdkRequirements) {
   if (production?.environment !== 'production') errors.push('Production EAS environment must be production.');
   if (production?.env?.EXPO_PUBLIC_APP_ENV !== 'production') {
     errors.push('Production EAS builds must set EXPO_PUBLIC_APP_ENV=production.');
+  }
+  for (const name of HIGH_RISK_FEATURE_FLAGS) {
+    if (production?.env?.[name] !== 'false') {
+      errors.push(`Production EAS builds must explicitly set ${name}=false.`);
+    }
   }
   if (!isRecord(eas?.submit?.production)) errors.push('A production EAS submit profile is required.');
 

@@ -55,3 +55,8 @@ export function placeShareUrl(placeId: string) {
   const path = `/place/${encodeURIComponent(placeId)}`;
   return appRouteUrl(path);
 }
+
+export function profileShareUrl(profileId: string) {
+  const path = `/profile/${encodeURIComponent(profileId)}`;
+  return appRouteUrl(path);
+}

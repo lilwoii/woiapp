@@ -42,7 +42,7 @@
     "verify:text-integrity": "node scripts/verify-text-integrity.mjs",
     "test:build-asset-tools": "node --test scripts/verify-build-assets.test.mjs",
     "test:text-integrity-tools": "node --test scripts/verify-text-integrity.test.mjs",
-    "test:web-quality-tools": "node --test scripts/prepare-sites-build.test.mjs scripts/web-quality-verifier.test.mjs",
+    "test:web-quality-tools": "node --test scripts/hosting-worker.test.mjs scripts/prepare-sites-build.test.mjs scripts/web-quality-verifier.test.mjs",
     "verify:web-quality": "node scripts/web-quality-verifier.mjs",
     "test:web-e2e": "npm run build:web-e2e-fixture && playwright test",
     "test:workflow-tools": "node --test scripts/quality-workflow-verifier.test.mjs && node scripts/quality-workflow-verifier.mjs",

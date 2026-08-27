@@ -43,6 +43,41 @@ test('native configuration rejects newly introduced privileged permissions', () 
   assert.ok(errors.some((error) => error.includes('Unexpected Android permission')));
 });
 
+test('native configuration rejects enabled or implicit high-risk production features', () => {
+  const enabledFeature = structuredClone(eas);
+  enabledFeature.build.production.env.EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED = 'true';
+  assert.ok(
+    validateNativeConfiguration(appBase, enabledFeature, new Map())
+      .some((error) => error.includes('EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED=false')),
+  );
+
+  const missingFeature = structuredClone(eas);
+  delete missingFeature.build.production.env.EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED;
+  assert.ok(
+    validateNativeConfiguration(appBase, missingFeature, new Map())
+      .some((error) => error.includes('EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED=false')),
+  );
+});
+
+test('native configuration keeps photo permission disclosures complete and aligned', () => {
+  const drifted = structuredClone(appBase);
+  const driftedPicker = drifted.expo.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-image-picker');
+  driftedPicker[1].photosPermission = 'Spottr uses your photos for review images, but this text has drifted from iOS.';
+  assert.ok(
+    validateNativeConfiguration(drifted, eas, new Map())
+      .some((error) => error.includes('must remain identical')),
+  );
+
+  const incomplete = structuredClone(appBase);
+  const incompleteText = 'Spottr uses photo access for business and review images when you choose them.';
+  incomplete.expo.ios.infoPlist.NSPhotoLibraryUsageDescription = incompleteText;
+  const incompletePicker = incomplete.expo.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-image-picker');
+  incompletePicker[1].photosPermission = incompleteText;
+  const errors = validateNativeConfiguration(incomplete, eas, new Map());
+  assert.ok(errors.some((error) => error.includes('profile image purpose')));
+  assert.ok(errors.some((error) => error.includes('banner image purpose')));
+});
+
 test('artifact metadata rejects traversal and non-Hermes bundles', () => {
   const errors = validateArtifactMetadata({
     bundler: 'metro',

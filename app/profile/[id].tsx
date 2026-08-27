@@ -2,7 +2,7 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { PageShell } from '@/components/page-shell';
@@ -10,6 +10,7 @@ import { TrustBadgeStrip } from '@/components/trust-badge-strip';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
+import { profileShareUrl, safeHttpsUrl } from '@/lib/links';
 import { addReviewProfileComment, deleteReviewProfileComment, fetchPublicProfile, setProfileFollow, setReviewReaction } from '@/lib/marketplace-api';
 import { showMessage } from '@/lib/platform-dialog';
 import type { PublicProfile } from '@/types/social';
@@ -39,6 +40,36 @@ function ScopedPublicProfile({ id }: { id?: string }) {
     });
     return () => { current = false; };
   }, [id]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || !profile) return;
+    const previousTitle = document.title;
+    const description = profile.bio?.trim() ||
+      `See reviews, badges, and local food discoveries from @${profile.username} on Spottr.`;
+    const avatarUrl = safeHttpsUrl(profile.avatarUrl);
+    document.title = `${profile.displayName} (@${profile.username}) | Spottr`;
+    const values = [
+      ['meta[name="description"]', description],
+      ['meta[property="og:title"]', `${profile.displayName} (@${profile.username}) | Spottr`],
+      ['meta[property="og:description"]', description],
+      ['meta[property="og:type"]', 'profile'],
+      ['meta[property="og:url"]', profileShareUrl(profile.id)],
+      ['meta[property="og:image"]', avatarUrl ?? ''],
+      ['meta[name="twitter:image"]', avatarUrl ?? ''],
+    ] as const;
+    const previous = values.map(([selector, value]) => {
+      const element = document.querySelector<HTMLMetaElement>(selector);
+      const prior = element?.content;
+      if (element) element.content = value.slice(0, 300);
+      return [element, prior] as const;
+    });
+    return () => {
+      document.title = previousTitle;
+      for (const [element, value] of previous) {
+        if (element && value !== undefined) element.content = value;
+      }
+    };
+  }, [profile]);
 
   const toggleFollow = async () => {
     if (!profile || followBusy) return;
@@ -140,6 +171,19 @@ function ScopedPublicProfile({ id }: { id?: string }) {
     } : current);
   };
 
+  const shareProfile = async () => {
+    if (!profile) return;
+    try {
+      await Share.share({
+        message: `See ${profile.displayName} (@${profile.username}) on Spottr: ${profileShareUrl(profile.id)}`,
+        title: `${profile.displayName} on Spottr`,
+        url: profileShareUrl(profile.id),
+      });
+    } catch {
+      showMessage('Sharing unavailable', 'This profile could not be shared right now.');
+    }
+  };
+
   if (!profile && !error) {
     return (
       <FocusAwareScreen>
@@ -171,17 +215,28 @@ function ScopedPublicProfile({ id }: { id?: string }) {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
         <PageShell narrow>
           <View style={styles.topbar}>
-            <Pressable accessibilityLabel="Go back" accessibilityRole="button" onPress={() => router.back()} style={styles.iconButton}>
-              <FontAwesome6 color={palette.ink} name="arrow-left" size={13} />
-            </Pressable>
+            <View style={styles.topbarLeading}>
+              <Pressable accessibilityLabel="Go back" accessibilityRole="button" onPress={() => router.back()} style={styles.iconButton}>
+                <FontAwesome6 color={palette.ink} name="arrow-left" size={13} />
+              </Pressable>
+            </View>
             <Text numberOfLines={1} style={styles.topbarName}>@{profile.username}</Text>
-            <Pressable
-              accessibilityLabel={`Report ${profile.displayName}`}
-              accessibilityRole="button"
-              onPress={() => router.push({ pathname: '/report', params: { targetId: profile.id, targetType: 'user' } } as never)}
-              style={styles.iconButton}>
-              <FontAwesome6 color={palette.muted} name="flag" size={12} />
-            </Pressable>
+            <View style={styles.topbarActions}>
+              <Pressable
+                accessibilityLabel={`Share ${profile.displayName}'s profile`}
+                accessibilityRole="button"
+                onPress={() => void shareProfile()}
+                style={styles.iconButton}>
+                <FontAwesome6 color={palette.ink} name="arrow-up-from-bracket" size={12} />
+              </Pressable>
+              <Pressable
+                accessibilityLabel={`Report ${profile.displayName}`}
+                accessibilityRole="button"
+                onPress={() => router.push({ pathname: '/report', params: { targetId: profile.id, targetType: 'user' } } as never)}
+                style={styles.iconButton}>
+                <FontAwesome6 color={palette.muted} name="flag" size={12} />
+              </Pressable>
+            </View>
           </View>
 
           <View style={styles.banner}>
@@ -369,6 +424,8 @@ const styles = StyleSheet.create({
   backAction: { backgroundColor: palette.dark, borderRadius: radii.pill, marginTop: spacing.sm, paddingHorizontal: spacing.xl, paddingVertical: 13 },
   backActionText: { color: '#FFFFFF', fontSize: 11, fontWeight: '900' },
   topbar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  topbarLeading: { alignItems: 'flex-start', width: 92 },
+  topbarActions: { flexDirection: 'row', gap: spacing.sm },
   iconButton: { alignItems: 'center', backgroundColor: palette.surface, borderColor: palette.line, borderRadius: radii.pill, borderWidth: 1, height: 42, justifyContent: 'center', width: 42 },
   topbarName: { color: palette.ink, flex: 1, fontSize: 12, fontWeight: '900', marginHorizontal: spacing.md, textAlign: 'center' },
   banner: { borderRadius: radii.xl, height: 178, marginTop: spacing.xl, overflow: 'hidden' },

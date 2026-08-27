@@ -1,4 +1,5 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
+import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -356,7 +357,7 @@ export default function ProfileScreen() {
           )}
         </Pressable>
 
-        <Text style={styles.version}>Spottr · Version 0.2</Text>
+        <Text style={styles.version}>Spottr · Version {Constants.expoConfig?.version ?? 'unavailable'}</Text>
       </PageShell>
       </ScrollView>
     </FocusAwareScreen>

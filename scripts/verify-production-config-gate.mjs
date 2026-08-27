@@ -52,6 +52,13 @@ const syntheticProductionValues = {
   EXPO_PUBLIC_TERMS_URL: 'https://release-check.spottr.app/terms',
   EXPO_PUBLIC_COMMUNITY_RULES_URL: 'https://release-check.spottr.app/community-rules',
   EXPO_PUBLIC_SUPPORT_URL: 'https://release-check.spottr.app/support',
+  EXPO_PUBLIC_HOME_KITCHENS_ENABLED: 'false',
+  EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED: 'false',
+  EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED: 'false',
+  EXPO_PUBLIC_PICKUP_ORDERING_ENABLED: 'false',
+  EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED: 'false',
+  EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED: 'false',
+  EXPO_PUBLIC_SPONSORED_PLACEMENTS_ENABLED: 'false',
 };
 const configuredProductionResult = runConfig('production', syntheticProductionValues);
 if (configuredProductionResult.status !== 0) {
@@ -76,7 +83,7 @@ if (
   !Array.isArray(deepLinkData) ||
   deepLinkData.some((entry) => entry.host !== 'release-check.spottr.app') ||
   JSON.stringify(deepLinkPaths) !==
-    JSON.stringify(['/auth', '/navigation', '/place', '/reset-password'])
+    JSON.stringify(['/auth', '/navigation', '/place', '/profile', '/reset-password'])
 ) {
   throw new Error('Synthetic production configuration did not preserve legal URLs or verified deep links.');
 }
@@ -89,6 +96,13 @@ const rejectedConfigurations = [
   ['placeholder legal URL', { EXPO_PUBLIC_PRIVACY_POLICY_URL: 'https://example.com/privacy' }],
   ['credential-bearing map URL', { EXPO_PUBLIC_MAP_STYLE_URL: 'https://token:secret@tiles-release-check.spottr.app/style.json' }],
   ['non-public support URL', { EXPO_PUBLIC_SUPPORT_URL: 'https://127.0.0.1/support' }],
+  ['unverified home kitchens', { EXPO_PUBLIC_HOME_KITCHENS_ENABLED: 'true' }],
+  ['unverified media uploads', { EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED: 'TRUE' }],
+  ['unimplemented push delivery', { EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED: 'true' }],
+  ['unverified pickup ordering', { EXPO_PUBLIC_PICKUP_ORDERING_ENABLED: 'true' }],
+  ['unverified in-app navigation', { EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED: 'true' }],
+  ['unverified business claims', { EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED: 'true' }],
+  ['unverified sponsored serving', { EXPO_PUBLIC_SPONSORED_PLACEMENTS_ENABLED: 'true' }],
 ];
 for (const [label, override] of rejectedConfigurations) {
   const result = runConfig('production', { ...syntheticProductionValues, ...override });

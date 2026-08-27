@@ -16,6 +16,15 @@ export default () => {
   const termsUrl = process.env.EXPO_PUBLIC_TERMS_URL?.trim();
   const communityRulesUrl = process.env.EXPO_PUBLIC_COMMUNITY_RULES_URL?.trim();
   const supportUrl = process.env.EXPO_PUBLIC_SUPPORT_URL?.trim();
+  const highRiskFeatureFlags = [
+    'EXPO_PUBLIC_HOME_KITCHENS_ENABLED',
+    'EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED',
+    'EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED',
+    'EXPO_PUBLIC_PICKUP_ORDERING_ENABLED',
+    'EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED',
+    'EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED',
+    'EXPO_PUBLIC_SPONSORED_PLACEMENTS_ENABLED',
+  ] as const;
   const placeholderPattern =
     /(?:your-|example|\.test(?:[/:]|$)|\.invalid(?:[/:]|$)|00000000-0000-0000-0000-000000000000)/i;
   const isPlaceholder = (value?: string) =>
@@ -77,6 +86,9 @@ export default () => {
   }
 
   if (productionBuild) {
+    const enabledHighRiskFlags = highRiskFeatureFlags.filter(
+      (name) => process.env[name]?.trim().toLocaleLowerCase('en-US') === 'true'
+    );
     const missing = [
       !isSupabaseProjectOrigin(supabaseUrl) && 'EXPO_PUBLIC_SUPABASE_URL (canonical Supabase project origin)',
       (isPlaceholder(supabaseAnonKey) || (supabaseAnonKey?.length ?? 0) < 20) &&
@@ -95,6 +107,8 @@ export default () => {
       !isHttpsUrl(termsUrl) && 'EXPO_PUBLIC_TERMS_URL (public HTTPS URL)',
       !isHttpsUrl(communityRulesUrl) && 'EXPO_PUBLIC_COMMUNITY_RULES_URL (public HTTPS URL)',
       !isHttpsUrl(supportUrl) && 'EXPO_PUBLIC_SUPPORT_URL (public HTTPS URL)',
+      enabledHighRiskFlags.length > 0 &&
+        `high-risk feature gates must remain false (${enabledHighRiskFlags.join(', ')})`,
     ].filter(Boolean);
     if (missing.length) {
       throw new Error(`Spottr production configuration is incomplete: ${missing.join(', ')}`);
@@ -132,6 +146,11 @@ export default () => {
                     scheme: 'https',
                     host: universalLinkHost,
                     pathPrefix: '/place',
+                  },
+                  {
+                    scheme: 'https',
+                    host: universalLinkHost,
+                    pathPrefix: '/profile',
                   },
                   {
                     scheme: 'https',

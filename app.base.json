@@ -42,7 +42,7 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSLocationWhenInUseUsageDescription": "Spottr uses your location while the app is open to show nearby food trucks and restaurants. Your precise location is not saved to your profile.",
-        "NSPhotoLibraryUsageDescription": "Spottr uses photo access only when you choose a business logo or attach a photo to a review."
+        "NSPhotoLibraryUsageDescription": "Spottr uses photo access only when you choose a profile photo or banner, business logo, business post image, or review photo."
       }
     },
     "android": {
@@ -79,7 +79,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Spottr uses photo access only when you choose a business logo or attach a photo to a review.",
+          "photosPermission": "Spottr uses photo access only when you choose a profile photo or banner, business logo, business post image, or review photo.",
           "cameraPermission": false,
           "microphonePermission": false
         }
