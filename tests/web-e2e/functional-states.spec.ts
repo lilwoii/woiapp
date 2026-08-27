@@ -67,13 +67,13 @@ test('populated discovery renders real results and bounds a 1,200-feature map re
     requested_kinds: ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery'],
   });
   expect(fixture?.calls.some((call) => call.startsWith('POST /functions/v1/public-discovery'))).toBe(true);
-  await expect(page.locator('.maplibregl-marker[aria-label="1196 food places in this area. Zoom in to explore."]')).toHaveCount(1);
+  await expect(page.locator('.maplibregl-marker[aria-label="1196 food places in this area. Food truck: 299, Restaurant: 299, Pop-up: 299, Café or bakery: 299. Zoom in to explore."]')).toHaveCount(1);
   expect(await page.locator('.maplibregl-marker').count()).toBeLessThan(80);
   for (const category of ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery']) {
     await expect(page.locator(`button[data-category="${category}"]`).first()).toBeVisible();
   }
   await expect(page.locator('[data-category="home_kitchen"]')).toHaveCount(0);
-  const perspective = page.getByRole('button', { name: 'Use 3D map perspective' });
+  const perspective = page.getByRole('button', { name: 'Use tilted map perspective' });
   await perspective.click();
   await expect(page.getByRole('button', { name: 'Use flat map view' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.maplibregl-marker[tabindex="0"]')).toHaveCount(0);

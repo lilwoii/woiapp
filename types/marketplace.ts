@@ -70,6 +70,7 @@ export type Review = {
 
 export type Place = {
   id: string;
+  locationId?: string;
   slug: string;
   name: string;
   category: BusinessCategory;

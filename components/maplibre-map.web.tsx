@@ -11,7 +11,7 @@ import {
   normalizeLongitude,
   viewportIsLiveInventoryEligible,
 } from '@/lib/map-clustering';
-import { categoryMarkerLabel, mapCategoryPresentation } from '@/lib/map-presentation';
+import { categoryMarkerLabel, mapCategoryPresentation, mapClusterCategorySignature, mapClusterCategorySummary } from '@/lib/map-presentation';
 import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 import type { NavigationCoordinate, TravelMode } from '@/types/navigation';
@@ -21,7 +21,7 @@ export type Props = {
   places: Place[];
   selectedId?: string;
   onSelect?: (place: Place) => void;
-  onSelectBusinessId?: (businessId: string) => void;
+  onSelectBusinessId?: (businessId: string, locationId?: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
   onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
   inventoryFeatures?: MapInventoryFeature[];
@@ -113,16 +113,7 @@ function markerElement(
   element.style.transition = 'transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease';
   element.style.width = presentation.shape === 'capsule' ? '56px' : '46px';
 
-  if (place.logoUrl) {
-    const image = document.createElement('img');
-    image.alt = '';
-    image.src = place.logoUrl;
-    image.style.borderRadius = presentation.shape === 'circle' ? '999px' : '8px';
-    image.style.height = '36px';
-    image.style.objectFit = 'cover';
-    image.style.width = presentation.shape === 'capsule' ? '46px' : '36px';
-    element.appendChild(image);
-  } else {
+  const appendFallbackSymbol = () => {
     const symbol = document.createElement('span');
     symbol.setAttribute('aria-hidden', 'true');
     symbol.textContent = presentation.badge;
@@ -131,6 +122,23 @@ function markerElement(
     symbol.style.fontSize = presentation.badge.length > 2 ? '10px' : '14px';
     symbol.style.fontWeight = '900';
     element.appendChild(symbol);
+  };
+
+  if (place.logoUrl) {
+    const image = document.createElement('img');
+    image.alt = '';
+    image.src = place.logoUrl;
+    image.style.borderRadius = presentation.shape === 'circle' ? '999px' : '8px';
+    image.style.height = '36px';
+    image.style.objectFit = 'cover';
+    image.style.width = presentation.shape === 'capsule' ? '46px' : '36px';
+    image.addEventListener('error', () => {
+      image.remove();
+      appendFallbackSymbol();
+    }, { once: true });
+    element.appendChild(image);
+  } else {
+    appendFallbackSymbol();
   }
 
   const badge = document.createElement('span');
@@ -166,11 +174,12 @@ function updateMarkerSelection(element: HTMLButtonElement, selected: boolean) {
   element.style.transform = selected ? 'translateY(-3px) scale(1.1)' : 'none';
 }
 
-function clusterElement(feature: { count: number }) {
+function clusterElement(feature: { count: number; categories: Partial<Record<Place['category'], number>> }) {
+  const summary = mapClusterCategorySummary(feature.categories);
   const element = document.createElement('button');
   element.type = 'button';
   element.tabIndex = -1;
-  element.setAttribute('aria-label', `${feature.count} food places in this area. Zoom in to explore.`);
+  element.setAttribute('aria-label', `${feature.count} food places in this area. ${summary.accessibilityLabel}. Zoom in to explore.`);
   element.style.alignItems = 'center';
   element.style.background = palette.accentDeep;
   element.style.border = '4px solid rgba(255, 255, 255, 0.94)';
@@ -179,13 +188,24 @@ function clusterElement(feature: { count: number }) {
   element.style.color = '#FFFFFF';
   element.style.cursor = 'pointer';
   element.style.display = 'flex';
+  element.style.flexDirection = 'column';
   element.style.fontFamily = 'system-ui, sans-serif';
   element.style.fontSize = feature.count > 99 ? '12px' : '13px';
   element.style.fontWeight = '900';
-  element.style.height = feature.count > 99 ? '56px' : '50px';
+  element.style.height = '56px';
   element.style.justifyContent = 'center';
-  element.style.width = feature.count > 99 ? '56px' : '50px';
-  element.textContent = feature.count > 999 ? '999+' : String(feature.count);
+  element.style.width = '56px';
+  const count = document.createElement('span');
+  count.textContent = feature.count > 999 ? '999+' : String(feature.count);
+  element.appendChild(count);
+  const kinds = document.createElement('span');
+  kinds.setAttribute('aria-hidden', 'true');
+  kinds.textContent = summary.badges.join(' · ');
+  kinds.style.color = 'rgba(255,255,255,0.82)';
+  kinds.style.fontSize = '8px';
+  kinds.style.letterSpacing = '-0.2px';
+  kinds.style.marginTop = '1px';
+  element.appendChild(kinds);
   return element;
 }
 
@@ -245,10 +265,13 @@ export default function MapLibreMapView({
   const userMarkerRef = useRef<Marker | null>(null);
   const fittedRouteKey = useRef('');
   const initialPlaces = useRef(places);
+  const mapWasInteracted = useRef(false);
+  const hasCenteredOnUser = useRef(false);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [perspective, setPerspective] = useState(false);
+  const [supports3D, setSupports3D] = useState(false);
   const [mapZoom, setMapZoom] = useState(11.5);
   const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
   const userMovedMap = useRef(false);
@@ -304,16 +327,19 @@ export default function MapLibreMapView({
       });
       mapRef.current = map;
       map.on('load', () => {
+        setSupports3D(Boolean(map.getStyle().layers?.some((layer) => layer.type === 'fill-extrusion')));
         setReady(true);
         map.resize();
       });
       map.on('dragstart', () => {
         if (inventoryTimer) clearTimeout(inventoryTimer);
+        mapWasInteracted.current = true;
         userMovedMap.current = true;
       });
       map.on('zoomstart', (event) => {
         if (event.originalEvent) {
           if (inventoryTimer) clearTimeout(inventoryTimer);
+          mapWasInteracted.current = true;
           userMovedMap.current = true;
         }
       });
@@ -368,7 +394,7 @@ export default function MapLibreMapView({
     });
     for (const inventoryFeature of renderedInventoryFeatures) {
       const signature = inventoryFeature.type === 'cluster'
-        ? `cluster:${inventoryFeature.count}:${inventoryFeature.dominantCategory}`
+        ? `cluster:${inventoryFeature.count}:${inventoryFeature.dominantCategory}:${mapClusterCategorySignature(inventoryFeature.categoryCounts)}`
         : `place:${inventoryFeature.businessId ?? ''}:${inventoryFeature.name ?? ''}:${inventoryFeature.logoUrl ?? ''}`;
       const existing = markerRefs.current.get(inventoryFeature.id);
       if (existing?.signature === signature) {
@@ -383,7 +409,7 @@ export default function MapLibreMapView({
         ? currentPlaces.current.get(inventoryFeature.businessId)
         : undefined;
       const element = inventoryFeature.type === 'cluster'
-        ? clusterElement(inventoryFeature)
+        ? clusterElement({ count: inventoryFeature.count, categories: inventoryFeature.categoryCounts })
         : markerElement(
             loadedPlace ?? {
               name: inventoryFeature.name ?? categoryLabels[inventoryFeature.dominantCategory],
@@ -407,8 +433,11 @@ export default function MapLibreMapView({
         const selectedPlace = inventoryFeature.businessId
           ? currentPlaces.current.get(inventoryFeature.businessId)
           : undefined;
-        if (selectedPlace) onSelectRef.current?.(selectedPlace);
-        else if (inventoryFeature.businessId) onSelectBusinessIdRef.current?.(inventoryFeature.businessId);
+        if (selectedPlace && (!inventoryFeature.locationId || selectedPlace.locationId === inventoryFeature.locationId)) {
+          onSelectRef.current?.(selectedPlace);
+        } else if (inventoryFeature.businessId) {
+          onSelectBusinessIdRef.current?.(inventoryFeature.businessId, inventoryFeature.locationId);
+        }
       });
       const marker = new maplibregl.Marker({ anchor: 'bottom', element })
         .setLngLat([inventoryFeature.longitude, inventoryFeature.latitude])
@@ -428,7 +457,7 @@ export default function MapLibreMapView({
         continue;
       }
       const element = feature.kind === 'cluster'
-        ? clusterElement(feature)
+        ? clusterElement({ count: feature.count, categories: feature.categories })
         : markerElement(feature.place, false);
       element.addEventListener('click', () => {
         if (feature.kind === 'cluster') {
@@ -532,7 +561,15 @@ export default function MapLibreMapView({
     userMarkerRef.current = new maplibregl.Marker({ element: dot })
       .setLngLat([userCoordinates.longitude, userCoordinates.latitude])
       .addTo(map);
-  }, [navigationMode, ready, userCoordinates]);
+    if (!hasCenteredOnUser.current && !initialPlaces.current.length && !mapWasInteracted.current) {
+      hasCenteredOnUser.current = true;
+      map.easeTo({
+        center: [userCoordinates.longitude, userCoordinates.latitude],
+        duration: motionDuration(reduceMotion, 380),
+        zoom: Math.max(map.getZoom(), 13),
+      });
+    }
+  }, [navigationMode, ready, reduceMotion, userCoordinates]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -595,6 +632,7 @@ export default function MapLibreMapView({
           accessibilityLabel="Zoom in"
           accessibilityRole="button"
           onPress={() => {
+            mapWasInteracted.current = true;
             userMovedMap.current = true;
             mapRef.current?.zoomIn({ duration: motionDuration(reduceMotion, 180) });
           }}
@@ -605,6 +643,7 @@ export default function MapLibreMapView({
           accessibilityLabel="Zoom out"
           accessibilityRole="button"
           onPress={() => {
+            mapWasInteracted.current = true;
             userMovedMap.current = true;
             mapRef.current?.zoomOut({ duration: motionDuration(reduceMotion, 180) });
           }}
@@ -612,10 +651,11 @@ export default function MapLibreMapView({
           <FontAwesome6 color={palette.ink} name="minus" size={13} />
         </Pressable>
         <Pressable
-          accessibilityLabel={perspective ? 'Use flat map view' : 'Use 3D map perspective'}
+          accessibilityLabel={perspective ? 'Use flat map view' : supports3D ? 'Use 3D map perspective' : 'Use tilted map perspective'}
           accessibilityRole="button"
           aria-pressed={perspective}
           onPress={() => {
+            mapWasInteracted.current = true;
             const next = !perspective;
             setPerspective(next);
             mapRef.current?.easeTo({
@@ -626,7 +666,7 @@ export default function MapLibreMapView({
           }}
           style={[styles.controlButton, perspective && styles.controlButtonActive]}>
           <FontAwesome6 color={perspective ? '#FFFFFF' : palette.ink} name="cube" size={12} />
-          <Text style={[styles.controlText, perspective && styles.controlTextActive]}>3D</Text>
+          <Text style={[styles.controlText, perspective && styles.controlTextActive]}>{supports3D ? '3D' : 'Tilt'}</Text>
         </Pressable>
       </View>
       {pendingViewport && onSearchArea ? (

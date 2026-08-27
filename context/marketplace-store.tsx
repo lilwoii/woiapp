@@ -56,7 +56,7 @@ type MarketplaceStoreValue = {
   publishUpdate: (input: OwnerUpdateInput) => Promise<ActionResult>;
   setVenueStatus: (placeId: string, status: VenueStatus) => Promise<ActionResult>;
   refreshAccess: () => Promise<ActionResult>;
-  ensurePlace: (placeId: string) => Promise<ActionResult>;
+  ensurePlace: (placeId: string, preferredLocationId?: string) => Promise<ActionResult>;
   searchArea: (searchText: string) => Promise<ActionResult>;
   loadMoreResults: () => Promise<ActionResult>;
   loadMoreReviews: (placeId: string) => Promise<ActionResult>;
@@ -460,14 +460,14 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   }, [commitStore, expectedUserId, refresh, requestGuard, scopeKey]);
 
   const ensurePlace = useCallback(
-    async (placeId: string): Promise<ActionResult> => {
+    async (placeId: string, preferredLocationId?: string): Promise<ActionResult> => {
       const existingPlace = places.find((place) => place.id === placeId);
-      if (existingPlace?.detailsLoaded) return { ok: true };
+      if (existingPlace?.detailsLoaded && (!preferredLocationId || existingPlace.locationId === preferredLocationId)) return { ok: true };
       if (!isSupabaseConfigured) return liveServicesRequired;
 
       const token = requestGuard.begin(scopeKey, `place:${placeId}`);
       if (!token) return marketplaceSessionChanged;
-      const result = await fetchMarketplacePlaceById(placeId, expectedUserId ?? undefined);
+      const result = await fetchMarketplacePlaceById(placeId, expectedUserId ?? undefined, preferredLocationId);
       if (!requestGuard.isCurrent(token)) return marketplaceSessionChanged;
       if (!result.ok) {
         return { ok: false, code: result.code, reason: result.reason };

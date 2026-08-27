@@ -79,7 +79,12 @@ begin
   if not private.is_active_user(actor) then
     raise exception using errcode = '42501', message = 'Active verified account required';
   end if;
-  if monthly_budget_minor not between 15000 and 300000
+  if target_business_id is null
+    or monthly_budget_minor is null
+    or radius_meters is null
+    or campaign_starts_at is null
+    or idempotency_key is null
+    or monthly_budget_minor not between 15000 and 300000
     or radius_meters not between 1609 and 80467
     or campaign_starts_at < now() + interval '15 minutes'
     or campaign_starts_at > now() + interval '60 days'
@@ -117,9 +122,9 @@ begin
     raise exception using errcode = '22023', message = 'Approved campaign pricing is unavailable';
   end if;
 
-  key_hash := encode(digest(idempotency_key, 'sha256'), 'hex');
-  payload_hash := encode(digest(concat_ws('|', target_business_id, monthly_budget_minor,
-    radius_meters, campaign_starts_at, pricing_row.id), 'sha256'), 'hex');
+  key_hash := private.ad_sha256_hex(idempotency_key);
+  payload_hash := private.ad_sha256_hex(concat_ws('|', target_business_id, monthly_budget_minor,
+    radius_meters, campaign_starts_at, pricing_row.id));
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(actor::text || key_hash, 916160));
   select campaign.public_id, campaign.request_hash into campaign_public_id, prior_hash
   from public.ad_campaigns campaign
@@ -172,7 +177,10 @@ begin
   if not private.is_active_user(actor) then
     raise exception using errcode = '42501', message = 'Active verified account required';
   end if;
-  select campaign.id, campaign.business_id, campaign.state, campaign.updated_at into target
+  select campaign.id, campaign.business_id, campaign.state, campaign.updated_at,
+    campaign.starts_at, campaign.ends_at, campaign.pricing_version_id,
+    campaign.currency, campaign.lifetime_budget_minor
+  into target
   from public.ad_campaigns campaign join public.business_members member
     on member.business_id = campaign.business_id and member.user_id = actor
     and member.status = 'active' and member.role in ('owner', 'manager')
@@ -183,6 +191,29 @@ begin
   if target.state <> 'draft' or target.updated_at is distinct from expected_updated_at then
     raise exception using errcode = '40001', message = 'Campaign changed; refresh and try again';
   end if;
+  if target.starts_at <= now() or target.ends_at <= now()
+    or not exists (
+      select 1 from public.pricing_versions pricing
+      where pricing.id = target.pricing_version_id
+        and pricing.currency = target.currency
+        and pricing.state = 'approved'
+        and pricing.effective_at <= now()
+        and (pricing.expires_at is null or pricing.expires_at > now())
+        and target.lifetime_budget_minor >= greatest(15000::bigint, pricing.click_floor_minor::bigint * 30)
+        and target.lifetime_budget_minor <= greatest(
+          greatest(15000::bigint, pricing.click_floor_minor::bigint * 30),
+          least(300000::bigint, pricing.click_ceiling_minor::bigint * 400)
+        )
+    )
+    or not exists (
+      select 1 from public.business_locations location
+      where location.business_id = target.business_id
+        and location.publication_state = 'published'
+        and location.point is not null
+        and location.public_address
+        and not location.is_approximate
+    )
+  then raise exception using errcode = '22023', message = 'Campaign pricing, dates, or location must be refreshed'; end if;
   if not exists (select 1 from public.ad_targets where campaign_id = target.id)
     or not exists (select 1 from public.ad_creatives where campaign_id = target.id and moderation = 'approved')
   then raise exception using errcode = '22023', message = 'Campaign setup is incomplete'; end if;
@@ -229,3 +260,71 @@ grant execute on function public.get_sponsored_campaign_quote(uuid) to authentic
 grant execute on function public.create_sponsored_campaign_draft(uuid, integer, integer, timestamptz, text) to authenticated;
 grant execute on function public.submit_sponsored_campaign(uuid, timestamptz) to authenticated;
 grant execute on function public.end_sponsored_campaign(uuid, timestamptz) to authenticated;
+
+-- Promotion budgets and performance are owner/manager financial data. Replace
+-- the broader foundation reads before merchant-authored campaigns are exposed.
+drop policy if exists "members read campaign pricing" on public.pricing_versions;
+create policy "owners and managers read campaign pricing" on public.pricing_versions
+  for select to authenticated using (
+    private.has_aal2() and exists (
+      select 1 from public.ad_campaigns campaign
+      join public.business_members member on member.business_id = campaign.business_id
+        and member.user_id = auth.uid() and member.status = 'active'
+        and member.role in ('owner', 'manager')
+      where campaign.pricing_version_id = pricing_versions.id
+    )
+  );
+
+drop policy if exists "members read campaigns" on public.ad_campaigns;
+create policy "owners and managers read campaigns" on public.ad_campaigns
+  for select to authenticated using (
+    private.has_aal2() and exists (
+      select 1 from public.business_members member
+      where member.business_id = ad_campaigns.business_id
+        and member.user_id = auth.uid() and member.status = 'active'
+        and member.role in ('owner', 'manager')
+    )
+  );
+
+drop policy if exists "members read campaign targets" on public.ad_targets;
+create policy "owners and managers read campaign targets" on public.ad_targets
+  for select to authenticated using (
+    private.has_aal2() and exists (
+      select 1 from public.ad_campaigns campaign
+      join public.business_members member on member.business_id = campaign.business_id
+        and member.user_id = auth.uid() and member.status = 'active'
+        and member.role in ('owner', 'manager')
+      where campaign.id = ad_targets.campaign_id
+    )
+  );
+
+drop policy if exists "members read campaign creatives" on public.ad_creatives;
+create policy "owners and managers read campaign creatives" on public.ad_creatives
+  for select to authenticated using (
+    private.has_aal2() and exists (
+      select 1 from public.business_members member
+      where member.business_id = ad_creatives.business_id
+        and member.user_id = auth.uid() and member.status = 'active'
+        and member.role in ('owner', 'manager')
+    )
+  );
+
+drop policy if exists "members read campaign rollups" on public.ad_campaign_daily_rollups;
+create policy "owners and managers read campaign rollups" on public.ad_campaign_daily_rollups
+  for select to authenticated using (
+    private.has_aal2() and exists (
+      select 1 from public.ad_campaigns campaign
+      join public.business_members member on member.business_id = campaign.business_id
+        and member.user_id = auth.uid() and member.status = 'active'
+        and member.role in ('owner', 'manager')
+      where campaign.id = ad_campaign_daily_rollups.campaign_id
+    )
+  );
+
+do $verify_hash$
+begin
+  if private.ad_sha256_hex('spottr-sponsor-authoring') !~ '^[0-9a-f]{64}$' then
+    raise exception 'Sponsored authoring SHA-256 helper is unavailable';
+  end if;
+end;
+$verify_hash$;

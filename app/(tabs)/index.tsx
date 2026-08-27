@@ -440,14 +440,29 @@ function ScopedDiscoverScreen() {
     ),
     [enabledMapCategories, mapInventoryFeatures],
   );
+  const detailedMapFiltersActive = Boolean(
+    deferredQuery.trim()
+      || openOnly
+      || cuisine
+      || dietary.length
+      || payments.length
+      || priceLevels.length
+      || maxDistanceMiles !== null
+      || minimumRating > 0
+      || pickupOnly
+  );
   const visibleMapInventory = useMemo(() => {
+    // The high-volume viewport feed contains only map-safe location metadata.
+    // When a filter needs full listing details, render the already filtered
+    // discovery results so the map never contradicts the result list.
+    if (detailedMapFiltersActive) return [];
     if (category === 'all') return permittedMapInventory;
     return filterMapInventoryCategories(permittedMapInventory, new Set([category]));
-  }, [category, permittedMapInventory]);
+  }, [category, detailedMapFiltersActive, permittedMapInventory]);
 
   const selectPlace = useCallback((place: Place) => setSelectedId(place.id), []);
-  const selectBusinessId = useCallback(async (businessId: string) => {
-    const result = await ensurePlace(businessId);
+  const selectBusinessId = useCallback(async (businessId: string, locationId?: string) => {
+    const result = await ensurePlace(businessId, locationId);
     if (mounted.current && result.ok) setSelectedId(businessId);
   }, [ensurePlace]);
 
@@ -855,7 +870,7 @@ function ScopedDiscoverScreen() {
               <LiveMap
                 inventoryFeatures={visibleMapInventory}
                 onSelect={selectPlace}
-                onSelectBusinessId={(businessId) => void selectBusinessId(businessId)}
+                onSelectBusinessId={(businessId, locationId) => void selectBusinessId(businessId, locationId)}
                 onSearchArea={searchVisibleMap}
                 onViewportChange={(viewport) => void loadMapInventory(viewport)}
                 places={mappedPlaces}

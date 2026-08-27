@@ -11,7 +11,7 @@ type Props = {
   places: Place[];
   selectedId?: string;
   onSelect?: (place: Place) => void;
-  onSelectBusinessId?: (businessId: string) => void;
+  onSelectBusinessId?: (businessId: string, locationId?: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
   onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
   inventoryFeatures?: MapInventoryFeature[];

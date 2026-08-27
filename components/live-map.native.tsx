@@ -11,7 +11,7 @@ import {
   viewportIsLiveInventoryEligible,
   zoomFromLongitudeDelta,
 } from '@/lib/map-clustering';
-import { mapCategoryPresentation } from '@/lib/map-presentation';
+import { mapCategoryPresentation, mapClusterCategorySummary } from '@/lib/map-presentation';
 import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 import type { NavigationCoordinate, TravelMode } from '@/types/navigation';
@@ -21,7 +21,7 @@ type Props = {
   places: Place[];
   selectedId?: string;
   onSelect?: (place: Place) => void;
-  onSelectBusinessId?: (businessId: string) => void;
+  onSelectBusinessId?: (businessId: string, locationId?: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
   onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
   inventoryFeatures?: MapInventoryFeature[];
@@ -105,6 +105,14 @@ function VenueMapMarker({
       />
     </Marker>
   );
+}
+
+function ClusterPin({ count, categories }: { count: number; categories: Partial<Record<Place['category'], number>> }) {
+  const summary = mapClusterCategorySummary(categories);
+  return <View accessible accessibilityHint="Zooms in to show individual places" accessibilityLabel={`${count} food places in this area. ${summary.accessibilityLabel}.`} accessibilityRole="button" style={styles.clusterPin}>
+    <Text style={styles.clusterCount}>{count > 999 ? '999+' : count}</Text>
+    <Text numberOfLines={1} style={styles.clusterKinds}>{summary.badges.join(' · ')}</Text>
+  </View>;
 }
 
 function viewportFromRegion(region: Region): MapViewport {
@@ -256,9 +264,7 @@ export function LiveMap({
                 );
               }}
               tracksViewChanges={false}>
-              <View accessibilityLabel={`${feature.count} food places in this area`} style={styles.clusterPin}>
-                <Text style={styles.clusterCount}>{feature.count > 999 ? '999+' : feature.count}</Text>
-              </View>
+              <ClusterPin categories={feature.categoryCounts} count={feature.count} />
             </Marker>
           );
         }
@@ -271,8 +277,8 @@ export function LiveMap({
             key={`${feature.id}:${feature.logoUrl ?? ''}:${feature.businessId === selectedId}`}
             logoUrl={feature.logoUrl}
             onPress={() => {
-              if (place) onSelect?.(place);
-              else if (feature.businessId) onSelectBusinessId?.(feature.businessId);
+              if (place && (!feature.locationId || place.locationId === feature.locationId)) onSelect?.(place);
+              else if (feature.businessId) onSelectBusinessId?.(feature.businessId, feature.locationId);
             }}
             selected={feature.businessId === selectedId}
             title={place?.name ?? feature.name ?? 'Food place'}
@@ -293,9 +299,7 @@ export function LiveMap({
                 );
               }}
               tracksViewChanges={false}>
-              <View accessibilityLabel={`${feature.count} food places in this area`} style={styles.clusterPin}>
-                <Text style={styles.clusterCount}>{feature.count > 999 ? '999+' : feature.count}</Text>
-              </View>
+              <ClusterPin categories={feature.categories} count={feature.count} />
             </Marker>
           );
         }
@@ -367,14 +371,22 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 4,
     elevation: 5,
-    height: 52,
+    height: 56,
     justifyContent: 'center',
-    width: 52,
+    width: 56,
   },
   clusterCount: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '900',
+  },
+  clusterKinds: {
+    color: 'rgba(255,255,255,0.82)',
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: -0.2,
+    marginTop: 1,
+    maxWidth: 46,
   },
   searchAreaButton: {
     alignItems: 'center',

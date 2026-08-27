@@ -264,10 +264,10 @@ test('requires the security-fixed SBOM generator and lockfile identity', () => {
       'test:production-sbom-tools': 'node --test scripts/verify-production-sbom.test.mjs',
     },
   };
-  manifest.devDependencies['@react-native/metro-config'] = '0.86.2';
+  manifest.devDependencies['@react-native/metro-config'] = '^0.86.3';
   manifest.devDependencies['@testing-library/dom'] = '10.4.1';
   const lockfile = { packages: {
-    'node_modules/@react-native/metro-config': { version: '0.86.2', dev: true },
+    'node_modules/@react-native/metro-config': { version: '0.86.3', dev: true },
     'node_modules/@testing-library/dom': { version: '10.4.1', dev: true },
     'node_modules/ajv': { version: '8.20.0', dev: true },
     'node_modules/ajv-formats': { version: '3.0.1', dev: true },

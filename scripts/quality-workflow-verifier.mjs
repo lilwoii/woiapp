@@ -284,7 +284,7 @@ export function validateSbomPackageContract(manifest, lockfile) {
     || manifest?.devDependencies?.['ajv-formats-draft2019'] !== '1.6.1') {
     errors.push('Official CycloneDX schema validators must remain exactly pinned.');
   }
-  if (manifest?.devDependencies?.['@react-native/metro-config'] !== '0.86.2'
+  if (manifest?.devDependencies?.['@react-native/metro-config'] !== '^0.86.3'
     || manifest?.devDependencies?.['@testing-library/dom'] !== '10.4.1'
     || manifest?.dependencies?.['react-native-gesture-handler'] !== '~2.32.0') {
     errors.push('Production dependency graph peers must remain present in their reviewed runtime/tooling scopes.');
@@ -310,7 +310,7 @@ export function validateSbomPackageContract(manifest, lockfile) {
   const metro = lockfile?.packages?.['node_modules/@react-native/metro-config'];
   const testingDom = lockfile?.packages?.['node_modules/@testing-library/dom'];
   const gestureHandler = lockfile?.packages?.['node_modules/react-native-gesture-handler'];
-  if (metro?.version !== '0.86.2' || metro?.dev !== true
+  if (metro?.version !== '0.86.3' || metro?.dev !== true
     || testingDom?.version !== '10.4.1' || testingDom?.dev !== true
     || gestureHandler?.version !== '2.32.0' || gestureHandler?.dev === true) {
     errors.push('Lockfile must satisfy the reviewed production graph peers without moving tooling into runtime scope.');

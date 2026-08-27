@@ -69,6 +69,7 @@ type MarketplaceFetchOptions = {
   includeBusinessIds?: string[];
   managedBusinessIds?: string[];
   onlyIncludedBusinesses?: boolean;
+  preferredLocationId?: string;
   resultLimit?: number;
   resultOffset?: number;
   origin?: {
@@ -1192,6 +1193,7 @@ export async function fetchMarketplacePlaces(
 
     const places = displayableBusinesses.map((business): Place => {
       const id = businessIdOf(business);
+      const businessLocations = locations.filter((location) => location.business_id === id);
       const distanceMeters = distanceByBusiness.get(id);
       const kind = (
         Object.hasOwn(categoryLabels, stringValue(business.kind)) ? business.kind : 'restaurant'
@@ -1210,6 +1212,10 @@ export async function fetchMarketplacePlaces(
         nearbyRows.find((entry) => entry.business_id === id)?.location_id
       );
       const selectedLocationId =
+        (uuidPattern.test(options.preferredLocationId ?? '')
+          && businessLocations.some((entry) => locationIdOf(entry) === options.preferredLocationId)
+          ? options.preferredLocationId
+          : '') ||
         nearbyLocationId ||
         stringValue(activeStop?.location_id) ||
         stringValue(upcomingStop?.location_id);
@@ -1330,6 +1336,7 @@ export async function fetchMarketplacePlaces(
 
       return {
         id,
+        ...(location ? { locationId: locationIdOf(location) } : {}),
         slug: stringValue(business.slug, id),
         name: stringValue(business.name, 'Local business'),
         category: kind,
@@ -1404,7 +1411,8 @@ export async function fetchMarketplacePlaces(
 
 export async function fetchMarketplacePlaceById(
   businessId: string,
-  expectedUserId?: string
+  expectedUserId?: string,
+  preferredLocationId?: string,
 ): Promise<ActionResult<Place>> {
   if (!uuidPattern.test(businessId)) {
     return { ok: false, code: 'INVALID', reason: 'This listing link is invalid.' };
@@ -1415,6 +1423,7 @@ export async function fetchMarketplacePlaceById(
     includeDetails: true,
     includeBusinessIds: [businessId],
     onlyIncludedBusinesses: true,
+    preferredLocationId,
   });
   if (!result.ok) return result;
   const place = result.data?.places.find((entry) => entry.id === businessId);
