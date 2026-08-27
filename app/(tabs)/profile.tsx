@@ -233,6 +233,14 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <SectionHeading eyebrow="Settings" title="Account & privacy" />
           <View style={styles.settingGroup}>
+            {account.role === 'business' ? (
+              <SettingsRow
+                detail="Create, review, and measure clearly labelled sponsored campaigns"
+                icon="bullhorn"
+                onPress={() => router.push('/promotion-studio')}
+                title="Promotion Studio"
+              />
+            ) : null}
             <SettingsRow
               detail="See every reviewer, business, and seller achievement"
               icon="award"

@@ -22,6 +22,7 @@ const acceptanceRoutes = [
   '/profile',
   '/creator-invite',
   '/creator-invitations',
+  '/promotion-studio',
   '/place/acceptance-place',
   '/navigation/acceptance-place',
   '/order/acceptance-order',

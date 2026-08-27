@@ -37,6 +37,7 @@ const REQUIRED_ROUTES = [
   'profile-edit.html',
   'creator-invite.html',
   'creator-invitations.html',
+  'promotion-studio.html',
   'place/[id].html',
   'order/[id].html',
   'navigation/[id].html',

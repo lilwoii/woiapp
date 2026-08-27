@@ -227,9 +227,13 @@ selection, verified-listing and geography eligibility, concurrent budget
 reservations, signed short-lived tokens, idempotent interaction receipts, an
 append-only debit/credit ledger, merchant-readable RLS projections, and bounded
 reservation cleanup. Both the client and Edge serving gates default to off, and
-the runtime is shadow-only by default. Merchant campaign authoring, payment
-onboarding, real-money enablement, rollup/reconciliation jobs, and finance
-approval UI remain blocked by the external requirements below.
+the runtime is shadow-only by default. Migration
+`20260916000000_sponsored_campaign_authoring.sql` and the web-only Promotion
+Studio add server-priced, idempotent 30-day drafts, review submission, merchant
+ending controls, and separate sponsored reporting. Draft creation never
+activates serving or creates a charge. Payment onboarding, real-money
+enablement, rollup/reconciliation jobs, and finance approval UI remain blocked
+by the external requirements below.
 
 This is a new migration program, not a patch to append blindly to
 `supabase/schema.sql`. Use integer minor units, ISO 4217 currency, UTC
@@ -372,6 +376,9 @@ Therefore the safe first release is:
 - Build schema/RLS/RPCs, contextual eligibility, one sponsored lane, disclosure,
   hide/report, CPC for non-orderable listings, budget caps, ledger, dashboard,
   and finance reconciliation.
+- The merchant-authoring slice is implemented: verified owners/managers can use
+  AAL2 on web to create a server-priced draft, submit it for review, inspect
+  separate sponsored totals, or end it. Activation remains service-controlled.
 - Restrict to verified businesses and approved pilot cities. Use invoice or an
   approved web billing account; do not put secrets or arbitrary price authority
   in the client.
