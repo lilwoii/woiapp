@@ -158,6 +158,7 @@ function tableRows(table: string, role: 'anonymous' | 'customer' | 'business') {
         username: role === 'business' ? 'maya.owner' : 'jordan.finds',
         display_name: role === 'business' ? 'Maya Rivera' : 'Jordan Lee',
         avatar_path: null,
+        allow_business_invitations: false,
       }];
     case 'follows':
       return role === 'anonymous' ? [] : [{ business_id: ids.business }];
@@ -678,6 +679,13 @@ export async function installSpottrFixture(page: Page) {
       ) {
         usernameAvailabilityRequests.push(body);
         await json(route, body.candidate !== 'taken.member');
+        return;
+      }
+      if (
+        rpc === 'get_my_profile_badges' && method === 'POST' && role !== 'anonymous' &&
+        exactBodyKeys(body)
+      ) {
+        await json(route, [{ badge_code: 'first_bite', earned_at: now, expires_at: null }]);
         return;
       }
       if (

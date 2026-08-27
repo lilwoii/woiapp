@@ -252,6 +252,12 @@ export default function ProfileScreen() {
               title="Messages"
             />
             <SettingsRow
+              detail="Optional private invitations from verified businesses"
+              icon="envelope-open-text"
+              onPress={() => router.push((signedIn ? '/creator-invitations' : '/auth') as never)}
+              title="Community invitations"
+            />
+            <SettingsRow
               detail="Choose alerts for businesses you follow"
               icon="bell"
               onPress={() => router.push('/saved')}

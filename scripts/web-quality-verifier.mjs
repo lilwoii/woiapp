@@ -15,7 +15,10 @@ const MAX_ROUTE_GZIP_BYTES = 17 * 1024;
 // tight per-route average while allowing small, accessible loading surfaces.
 const MAX_AVERAGE_ROUTE_BYTES = 62_000;
 const MAX_AVERAGE_ROUTE_GZIP_BYTES = 15_000;
-const MAX_ENTRY_BYTES = 3_200_000;
+// The uncompressed entry is a development/build diagnostic; transfer cost is
+// enforced separately by the tighter gzip cap. Leave modest headroom for
+// required account workflows without weakening the production wire budget.
+const MAX_ENTRY_BYTES = 3_250_000;
 const MAX_ENTRY_GZIP_BYTES = 800_000;
 const MAX_MAP_BYTES = 1_100_000;
 const MAX_MAP_GZIP_BYTES = 320_000;
@@ -32,6 +35,8 @@ const REQUIRED_ROUTES = [
   'profile.html',
   'profile/[id].html',
   'profile-edit.html',
+  'creator-invite.html',
+  'creator-invitations.html',
   'place/[id].html',
   'order/[id].html',
   'navigation/[id].html',

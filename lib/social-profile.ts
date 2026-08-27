@@ -15,6 +15,7 @@ export type SocialProfileWorkspace = {
   bannerUrl: string | null;
   showFavorites: boolean;
   showFollowing: boolean;
+  allowBusinessInvitations: boolean;
   approvedReviewCount: number;
   bannerUnlocked: boolean;
   approvedBanners: { assetId: string; url: string }[];
@@ -25,6 +26,7 @@ export type SocialProfileUpdate = {
   links: PublicProfileLink[];
   showFavorites: boolean;
   showFollowing: boolean;
+  allowBusinessInvitations: boolean;
   bannerAssetId?: string | null;
 };
 
@@ -64,7 +66,7 @@ export async function loadOwnSocialProfile(expectedUserId: string): Promise<Acti
     const [profileResult, reviewResult, mediaResult] = await Promise.all([
       client
         .from('profiles')
-        .select('public_id,bio,links,banner_path,show_favorites,show_following')
+        .select('public_id,bio,links,banner_path,show_favorites,show_following,allow_business_invitations')
         .eq('user_id', expectedUserId)
         .maybeSingle(),
       client
@@ -110,6 +112,7 @@ export async function loadOwnSocialProfile(expectedUserId: string): Promise<Acti
         bannerUrl: urls.get(bannerPath) ?? null,
         showFavorites: profile.show_favorites === true,
         showFollowing: profile.show_following === true,
+        allowBusinessInvitations: profile.allow_business_invitations === true,
         approvedReviewCount,
         bannerUnlocked: approvedReviewCount >= 10,
         approvedBanners: candidates.flatMap((candidate) => {
@@ -140,7 +143,10 @@ export async function updateOwnSocialProfile(
       show_following: input.showFollowing,
     };
     if (Object.hasOwn(input, 'bannerAssetId')) payload.banner_asset_id = input.bannerAssetId;
-    const { error } = await client.rpc('update_own_social_profile', { payload });
+    const { error } = await client.rpc('update_social_profile_with_invitation_consent', {
+      payload,
+      next_consent: input.allowBusinessInvitations,
+    });
     if (error) throw error;
     return { ok: true, message: 'Public profile updated.' };
   } catch (error) {

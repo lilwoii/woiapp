@@ -22,6 +22,7 @@ export default function ProfileEditScreen() {
   const [links, setLinks] = useState<PublicProfileLink[]>([]);
   const [showFavorites, setShowFavorites] = useState(true);
   const [showFollowing, setShowFollowing] = useState(true);
+  const [allowBusinessInvitations, setAllowBusinessInvitations] = useState(false);
   const [selectedBannerId, setSelectedBannerId] = useState<string | null | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -41,6 +42,7 @@ export default function ProfileEditScreen() {
       setLinks(result.data.links);
       setShowFavorites(result.data.showFavorites);
       setShowFollowing(result.data.showFollowing);
+      setAllowBusinessInvitations(result.data.allowBusinessInvitations);
     });
     return () => { current = false; };
   }, [accountId, auth.status]);
@@ -104,11 +106,15 @@ export default function ProfileEditScreen() {
       links: normalizedLinks,
       showFavorites,
       showFollowing,
+      allowBusinessInvitations,
       ...(selectedBannerId !== undefined ? { bannerAssetId: selectedBannerId } : {}),
     }, accountId);
     setSaving(false);
     setNotice({ tone: result.ok ? 'success' : 'error', text: result.ok ? result.message ?? 'Profile updated.' : result.reason });
-    if (result.ok) setSelectedBannerId(undefined);
+    if (result.ok) {
+      setSelectedBannerId(undefined);
+      setWorkspace((current) => current ? { ...current, allowBusinessInvitations } : current);
+    }
   };
 
   if (auth.status !== 'authenticated') {
@@ -169,6 +175,7 @@ export default function ProfileEditScreen() {
                 <View style={styles.visibilityGroup}>
                   <View style={styles.visibilityRow}><View style={styles.visibilityCopy}><Text style={styles.visibilityTitle}>Favorites</Text><Text style={styles.help}>Let people browse businesses you follow.</Text></View><Switch accessibilityLabel="Show favorites" onValueChange={setShowFavorites} trackColor={{ false: palette.line, true: palette.mint }} thumbColor={showFavorites ? palette.success : '#FFFFFF'} value={showFavorites} /></View>
                   <View style={styles.visibilityRow}><View style={styles.visibilityCopy}><Text style={styles.visibilityTitle}>Following</Text><Text style={styles.help}>Let people browse members you follow.</Text></View><Switch accessibilityLabel="Show following" onValueChange={setShowFollowing} trackColor={{ false: palette.line, true: palette.mint }} thumbColor={showFollowing ? palette.success : '#FFFFFF'} value={showFollowing} /></View>
+                  <View style={styles.visibilityRow}><View style={styles.visibilityCopy}><Text style={styles.visibilityTitle}>Business invitations</Text><Text style={styles.help}>Allow verified businesses to privately invite you after 10 approved reviews. An invitation can never require a review.</Text></View><Switch accessibilityLabel="Allow verified business invitations" onValueChange={setAllowBusinessInvitations} trackColor={{ false: palette.line, true: palette.mint }} thumbColor={allowBusinessInvitations ? palette.success : '#FFFFFF'} value={allowBusinessInvitations} /></View>
                 </View>
               </View>
             </>

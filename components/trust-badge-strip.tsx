@@ -26,7 +26,7 @@ export function TrustBadgeStrip({ badges, limit = 3, showLabels = false }: Trust
   if (!visible.length) return null;
 
   return (
-    <View accessibilityRole="list" style={styles.wrap}>
+    <View accessibilityLabel="Earned badges" style={styles.wrap}>
       {visible.map((badge) => {
         const expanded = activeCode === badge.code;
         return (
@@ -57,13 +57,15 @@ export function TrustBadgeStrip({ badges, limit = 3, showLabels = false }: Trust
         );
       })}
       {badges.length > visible.length ? (
-        <Pressable
-          accessibilityLabel={`View ${badges.length - visible.length} more badges`}
-          accessibilityRole="link"
-          onPress={() => router.push('/badges')}
-          style={styles.more}>
-          <Text style={styles.moreText}>+{badges.length - visible.length}</Text>
-        </Pressable>
+        <View>
+          <Pressable
+            accessibilityLabel={`View ${badges.length - visible.length} more badges`}
+            accessibilityRole="link"
+            onPress={() => router.push('/badges')}
+            style={styles.more}>
+            <Text style={styles.moreText}>+{badges.length - visible.length}</Text>
+          </Pressable>
+        </View>
       ) : null}
     </View>
   );

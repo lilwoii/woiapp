@@ -9,6 +9,7 @@ import { PageShell } from '@/components/page-shell';
 import { TrustBadgeStrip } from '@/components/trust-badge-strip';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
+import { useMarketplaceStore } from '@/context/marketplace-store';
 import { addReviewProfileComment, deleteReviewProfileComment, fetchPublicProfile, setProfileFollow, setReviewReaction } from '@/lib/marketplace-api';
 import { showMessage } from '@/lib/platform-dialog';
 import type { PublicProfile } from '@/types/social';
@@ -20,6 +21,7 @@ export default function PublicProfileScreen() {
 
 function ScopedPublicProfile({ id }: { id?: string }) {
   const auth = useAuth();
+  const { managedPlaceIds } = useMarketplaceStore();
   const [snapshot, setSnapshot] = useState<{ id: string; profile: PublicProfile } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
@@ -207,6 +209,12 @@ function ScopedPublicProfile({ id }: { id?: string }) {
                 <Text style={[styles.followText, profile.followedByViewer && styles.followTextActive]}>{profile.followedByViewer ? 'Following' : 'Follow'}</Text>
               )}
             </Pressable>
+            {managedPlaceIds.length && auth.status === 'authenticated' ? (
+              <Pressable accessibilityLabel={`Invite ${profile.displayName} to a business event`} accessibilityRole="button" onPress={() => router.push({ pathname: '/creator-invite', params: { recipientId: profile.id, recipientName: profile.displayName } } as never)} style={styles.inviteButton}>
+                <FontAwesome6 color={palette.ink} name="envelope-open-text" size={10} />
+                <Text style={styles.inviteText}>Invite</Text>
+              </Pressable>
+            ) : null}
           </View>
 
           <View style={styles.identityCopy}>
@@ -376,6 +384,8 @@ const styles = StyleSheet.create({
   followButtonActive: { backgroundColor: palette.surface, borderColor: palette.line, borderWidth: 1 },
   followText: { color: '#FFFFFF', fontSize: 11, fontWeight: '900' },
   followTextActive: { color: palette.ink },
+  inviteButton: { alignItems: 'center', backgroundColor: palette.surface, borderColor: palette.line, borderRadius: radii.pill, borderWidth: 1, flexDirection: 'row', gap: 6, minHeight: 42, paddingHorizontal: 14 },
+  inviteText: { color: palette.ink, fontSize: 10, fontWeight: '900' },
   identityCopy: { gap: 5, marginTop: spacing.md, paddingHorizontal: spacing.md },
   nameLine: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   displayName: { color: palette.ink, fontSize: 25, fontWeight: '900', letterSpacing: -0.7 },
