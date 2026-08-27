@@ -53,7 +53,7 @@ test('route verifier requires main and H1 landmarks', () => {
 test('bundle budgets fail closed when a JavaScript regression crosses a ceiling', () => {
   const errors = validateBundleBudgets({
     routeCount: 30,
-    entryBytes: 3_200_001,
+    entryBytes: 3_250_001,
     entryGzipBytes: 700_000,
     mapBytes: 900_000,
     mapGzipBytes: 250_000,
