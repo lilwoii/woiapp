@@ -1566,9 +1566,21 @@ $business_claim_verification_guard$;
 -- Push remains disabled in production, but the database foundation must prove
 -- consent/preference races, lease bounds, and identity consistency before a
 -- provider adapter can be considered.
+insert into auth.users (
+  id, aud, role, email, email_confirmed_at, raw_app_meta_data,
+  raw_user_meta_data, created_at, updated_at
+)
+values (
+  '90000000-0000-4000-8000-000000000009',
+  'authenticated', 'authenticated', 'runtime-push@spottr.invalid', now(),
+  '{}'::jsonb,
+  '{"username":"runtime_push","display_name":"Runtime Push","terms_accepted":true}'::jsonb,
+  now(), now()
+);
+
 insert into public.follows (user_id, business_id)
 values (
-  '10000000-0000-4000-8000-000000000001',
+  '90000000-0000-4000-8000-000000000009',
   '70000000-0000-4000-8000-000000000007'
 )
 on conflict do nothing;
@@ -1576,7 +1588,7 @@ on conflict do nothing;
 set local role authenticated;
 select pg_catalog.set_config(
   'request.jwt.claims',
-  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  '{"sub":"90000000-0000-4000-8000-000000000009","role":"authenticated","aal":"aal2"}',
   true
 );
 
@@ -1596,7 +1608,7 @@ do $push_quiet_hours_preserved$
 begin
   if not exists (
     select 1 from public.notification_preferences preference
-    where preference.user_id = '10000000-0000-4000-8000-000000000001'
+    where preference.user_id = '90000000-0000-4000-8000-000000000009'
       and preference.business_id = '70000000-0000-4000-8000-000000000007'
       and preference.owner_update and preference.location_change and preference.menu_return
       and preference.quiet_hours_start = '22:00'::time
@@ -1609,7 +1621,7 @@ $push_quiet_hours_preserved$;
 reset role;
 
 select public.register_notification_device_server(
-  '10000000-0000-4000-8000-000000000001',
+  '90000000-0000-4000-8000-000000000009',
   '81000000-0000-4000-8000-000000000001',
   'ios',
   '82000000-0000-4000-8000-000000000002',
@@ -1659,7 +1671,7 @@ begin
   where delivery.source_event_id = first_event_id;
 
   unmatched_device_id := private.register_notification_device(
-    '10000000-0000-4000-8000-000000000001',
+    '90000000-0000-4000-8000-000000000009',
     '81000000-0000-4000-8000-000000000009',
     'ios', 'expo', '82000000-0000-4000-8000-000000000002',
     repeat('c', 64), repeat('C', 48), repeat('D', 16), 1,
@@ -1672,7 +1684,7 @@ begin
     ) values (
       claimed_outbox.outbox_id,
       unmatched_device_id,
-      '20000000-0000-4000-8000-000000000002',
+      '10000000-0000-4000-8000-000000000001',
       '70000000-0000-4000-8000-000000000007', first_event_id, 'owner_update'
     );
     raise exception 'Delivery accepted a mismatched device owner';
@@ -1684,7 +1696,7 @@ $push_runtime$;
 set local role authenticated;
 select pg_catalog.set_config(
   'request.jwt.claims',
-  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  '{"sub":"90000000-0000-4000-8000-000000000009","role":"authenticated","aal":"aal2"}',
   true
 );
 select public.update_follow_notification_preferences(
@@ -1698,7 +1710,7 @@ do $push_preference_revocation$
 begin
   if exists (
     select 1 from private.notification_deliveries delivery
-    where delivery.user_id = '10000000-0000-4000-8000-000000000001'
+    where delivery.user_id = '90000000-0000-4000-8000-000000000009'
       and delivery.state in ('pending', 'leased', 'retry', 'unknown')
   ) then raise exception 'Preference revocation left a claimable delivery'; end if;
   if exists (
@@ -1710,7 +1722,7 @@ end;
 $push_preference_revocation$;
 
 select private.set_notification_consent(
-  '10000000-0000-4000-8000-000000000001',
+  '90000000-0000-4000-8000-000000000009',
   'product_updates', false, 'product-updates-v1', 'native_settings'
 );
 
@@ -1718,7 +1730,7 @@ do $push_consent_revocation$
 begin
   if exists (
     select 1 from private.notification_deliveries delivery
-    where delivery.user_id = '10000000-0000-4000-8000-000000000001'
+    where delivery.user_id = '90000000-0000-4000-8000-000000000009'
       and delivery.state in ('pending', 'leased', 'retry', 'unknown')
   ) then raise exception 'Consent revocation left a claimable delivery'; end if;
   if has_table_privilege('authenticated', 'private.notification_devices', 'select')
