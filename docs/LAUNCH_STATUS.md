@@ -1,6 +1,6 @@
 # Spottr launch status
 
-Last verified: 2026-08-27 (UTC)
+Last verified: 2026-08-28 (UTC)
 
 Spottr is not yet authorized for a public launch. The application code and
 release automation have reached a strong release-candidate baseline, but the
@@ -9,7 +9,7 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 
 ## Verified release-candidate evidence
 
-- Source commit `52e339d8da4e582d00e9964658efdc5f1a8135e7` passed the GitHub Quality and
+- Source commit `1576e5e3b628736b90ddce9de721cc2c71586083` passed the GitHub Quality and
   CodeQL workflows.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
@@ -25,7 +25,10 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 - Sponsored authoring remains separate from organic ranking, owner/manager and
   AAL2 gated, server priced, idempotent, review gated, and unable to activate or
   charge itself. A released budget reservation cannot later create a debit.
-- Sites version 43 was built from the exact verified commit and deployed to
+- The push foundation's private tables, grants, consent/preference races,
+  bounded outbox/delivery leases, fanout cursor, and device-owner consistency
+  passed the full PostgreSQL migration and runtime replay.
+- Sites version 45 was built from the exact verified commit and deployed to
   `https://noshatlas-live.lilwoi.chatgpt.site` with owner-only access.
   Anonymous requests return `401`, proving it is not publicly accessible.
 
