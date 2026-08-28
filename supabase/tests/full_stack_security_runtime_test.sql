@@ -566,7 +566,7 @@ insert into public.pricing_versions (
   id, version, region_code, currency, click_floor_minor, click_ceiling_minor,
   state, effective_at, approval_reference, approved_at
 ) values (
-  '76000000-0000-4000-8000-000000000007', 'runtime-v1', 'US-CA', 'USD',
+  '76000000-0000-4000-8000-000000000007', 'runtime-v1', 'US', 'USD',
   25, 500, 'approved', now() - interval '1 day',
   'runtime pricing approval', now() - interval '1 day'
 );
@@ -605,7 +605,8 @@ begin
   quote := public.get_sponsored_campaign_quote(
     '70000000-0000-4000-8000-000000000007'
   );
-  if quote->>'currency' <> 'USD'
+  if quote is null
+    or quote->>'currency' <> 'USD'
     or quote->>'disclosure' <> 'Sponsored ad'
     or quote->>'term_days' <> '30'
   then
