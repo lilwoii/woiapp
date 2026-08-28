@@ -203,6 +203,12 @@ export function validateNativeConfiguration(appBase, eas, sdkRequirements) {
   if (pickerOptions?.cameraPermission !== false || pickerOptions?.microphonePermission !== false) {
     errors.push('Image picker camera and microphone permissions must remain disabled.');
   }
+  if (!findPlugin(expo.plugins ?? [], 'expo-notifications')) {
+    errors.push('expo-notifications must remain explicitly configured for native device registration.');
+  }
+  if ((ios.infoPlist?.UIBackgroundModes ?? []).includes('remote-notification')) {
+    errors.push('Background remote notifications must remain disabled until separately reviewed.');
+  }
 
   const privacyManifests = ios.privacyManifests;
   if (privacyManifests?.NSPrivacyTracking !== false) {

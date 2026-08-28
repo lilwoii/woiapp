@@ -98,8 +98,10 @@ or push delivery unless their separate gates are complete.
 
 - Moderated review, logo, menu, and gallery photos after scanner/operations
   acceptance
-- Push notifications after consent, delivery, quiet-hours, unsubscribe, and
-  credential evidence
+- Push notifications after the private encrypted-device/outbox foundation is
+  deployed and consent, provider receipts, quiet hours, unsubscribe, signed-
+  device behavior, credentials, and operational evidence are accepted. The
+  current foundation makes no provider call and remains disabled.
 - Licensed provider inventory with contractual attribution, field-level
   provenance, refresh, correction, caching, and deletion rules
 - Owner-authorized menu OCR into review-before-publish drafts

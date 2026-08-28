@@ -121,6 +121,17 @@ run. An ambiguous Auth-provider response also leaves the sealed request
 retryable instead of downgrading it to failed. Neither endpoint reports
 `deleted` until the receipt is durable.
 
+Private notification consents, encrypted device registrations, and pending
+delivery rows also reference the Auth user with `ON DELETE CASCADE`. Account
+exports include user-controlled preferences, consent history, and sanitized
+device lifecycle metadata, but deliberately omit installation/project IDs,
+device token hashes, ciphertext, nonces, provider tickets, and credentials.
+Raw push tokens may exist only transiently inside the authenticated registration
+Edge request and are encrypted before persistence. Token deduplication uses a
+separate server-only HMAC key rather than an offline-testable plain digest. Raw
+tokens and cryptographic material must never enter logs, Realtime, lock-screen
+payloads, analytics, or account exports.
+
 The production privacy policy must disclose this behavior and the actual
 retention periods. The deletion drill in [RELEASE.md](RELEASE.md) must prove the
 behavior against a production-like environment.

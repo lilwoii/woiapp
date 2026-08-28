@@ -96,6 +96,7 @@
         }
       ],
       "expo-secure-store",
+      "expo-notifications",
       "expo-sharing",
       "expo-web-browser"
     ],

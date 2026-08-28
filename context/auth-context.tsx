@@ -22,6 +22,10 @@ import { toActionError } from '@/lib/errors';
 import { appRouteUrl } from '@/lib/links';
 import { usernameKey, validateUsername } from '@/lib/moderation';
 import {
+  revokeAllPushNotificationDevices,
+  revokePushNotificationDevice,
+} from '@/lib/push-notifications';
+import {
   clearLocalAuthSessionForUser,
   getLocalAuthSessionSnapshot,
   isSupabaseConfigured,
@@ -73,6 +77,35 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 const ACCOUNT_DELETION_TIMEOUT_MS = 30_000;
+
+async function confirmNotificationRevocation(
+  userId: string,
+  allDevices: boolean,
+): Promise<ActionResult> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      allDevices
+        ? revokeAllPushNotificationDevices(userId)
+        : revokePushNotificationDevice(userId),
+      new Promise<ActionResult>((resolve) => {
+        timeout = setTimeout(() => resolve({
+          ok: false,
+          code: 'NETWORK',
+          reason: 'Spottr could not confirm that device alerts were detached. Check your connection and try again.',
+        }), 5_000);
+      }),
+    ]);
+  } catch {
+    return {
+      ok: false,
+      code: 'NETWORK',
+      reason: 'Spottr could not confirm that device alerts were detached. Check your connection and try again.',
+    };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 function authMutationConflict(): Extract<ActionResult, { ok: false }> {
   return {
@@ -761,6 +794,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setIsBusy(true);
     setMessage(null);
     try {
+      const existingSession = await client.auth.getSession();
+      if (existingSession.error) throw existingSession.error;
+      if (existingSession.data.session) {
+        return {
+          ok: false,
+          code: 'CONFLICT',
+          reason: 'Sign out of the current account before signing in to another one.',
+        };
+      }
       const { data: signInData, error } = await client.auth.signInWithPassword({
         email: email.trim().toLocaleLowerCase('en-US'),
         password,
@@ -950,6 +992,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
           reason: 'The active session changed while sign-out was finishing. Check the current account.',
         };
       }
+      const notificationRevocation = await confirmNotificationRevocation(expectedUserId, false);
+      if (!notificationRevocation.ok) return notificationRevocation;
       const revokeResult = await client.auth.admin.signOut(
         revokingSession.access_token,
         'local'
@@ -1058,6 +1102,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
         };
       }
 
+      const notificationRevocation = await confirmNotificationRevocation(expectedUserId, true);
+      if (!notificationRevocation.ok) return notificationRevocation;
       const revokeResult = await client.auth.admin.signOut(
         revokingSession.access_token,
         'global'

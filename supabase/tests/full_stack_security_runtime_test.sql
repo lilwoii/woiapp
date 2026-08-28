@@ -1562,4 +1562,172 @@ begin
 end;
 $business_claim_verification_guard$;
 
+-- Push remains disabled in production, but the database foundation must prove
+-- consent/preference races, lease bounds, and identity consistency before a
+-- provider adapter can be considered.
+insert into public.follows (user_id, business_id)
+values (
+  '10000000-0000-4000-8000-000000000001',
+  '70000000-0000-4000-8000-000000000007'
+)
+on conflict do nothing;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+select public.update_follow_notification_preferences(
+  array['70000000-0000-4000-8000-000000000007'::uuid],
+  'owner_bundle', true, 'America/Los_Angeles', '22:00'::time, '07:00'::time,
+  'spottr:notification-preference:runtime-enable-0001'
+);
+
+select public.update_follow_notification_preferences(
+  array['70000000-0000-4000-8000-000000000007'::uuid],
+  'live_nearby', false, null, null, null,
+  'spottr:notification-preference:runtime-live-0002'
+);
+
+do $push_quiet_hours_preserved$
+begin
+  if not exists (
+    select 1 from public.notification_preferences preference
+    where preference.user_id = '10000000-0000-4000-8000-000000000001'
+      and preference.business_id = '70000000-0000-4000-8000-000000000007'
+      and preference.owner_update and preference.location_change and preference.menu_return
+      and preference.quiet_hours_start = '22:00'::time
+      and preference.quiet_hours_end = '07:00'::time
+      and preference.timezone = 'America/Los_Angeles'
+  ) then raise exception 'Notification toggle erased quiet hours or bundle state'; end if;
+end;
+$push_quiet_hours_preserved$;
+
+reset role;
+
+select public.register_notification_device_server(
+  '10000000-0000-4000-8000-000000000001',
+  '81000000-0000-4000-8000-000000000001',
+  'ios',
+  '82000000-0000-4000-8000-000000000002',
+  repeat('a', 64),
+  repeat('A', 48),
+  repeat('B', 16),
+  1,
+  'America/Los_Angeles',
+  '0.2.0',
+  'granted',
+  'product-updates-v1',
+  'native_settings'
+);
+
+update private.notification_runtime_settings
+set enqueue_enabled = true, delivery_enabled = true, updated_at = now()
+where singleton;
+
+do $push_runtime$
+declare
+  first_event_id bigint;
+  second_event_id bigint;
+  claimed_outbox record;
+  delivery_id uuid;
+  unmatched_device_id uuid;
+  affected integer;
+begin
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '83000000-0000-4000-8000-000000000003', 'body', 'private body'),
+    now() + interval '1 hour'
+  ) returning id into first_event_id;
+
+  select * into claimed_outbox
+  from private.claim_notification_outbox(
+    '84000000-0000-4000-8000-000000000004', 10, 60
+  ) where source_event_id = first_event_id;
+  if claimed_outbox.outbox_id is null then raise exception 'Eligible notification outbox was not claimed'; end if;
+  affected := private.expand_notification_outbox(
+    claimed_outbox.outbox_id, claimed_outbox.lease_token, 20
+  );
+  if affected <> 1 then raise exception 'Eligible notification fanout did not create one device delivery'; end if;
+  select delivery.id into delivery_id from private.notification_deliveries delivery
+  where delivery.source_event_id = first_event_id;
+
+  unmatched_device_id := private.register_notification_device(
+    '10000000-0000-4000-8000-000000000001',
+    '81000000-0000-4000-8000-000000000009',
+    'ios', 'expo', '82000000-0000-4000-8000-000000000002',
+    repeat('c', 64), repeat('C', 48), repeat('D', 16), 1,
+    'America/Los_Angeles', '0.2.0', 'granted'
+  );
+
+  begin
+    insert into private.notification_deliveries (
+      outbox_id, device_id, user_id, business_id, source_event_id, notification_kind
+    ) values (
+      claimed_outbox.outbox_id,
+      unmatched_device_id,
+      '20000000-0000-4000-8000-000000000002',
+      '70000000-0000-4000-8000-000000000007', first_event_id, 'owner_update'
+    );
+    raise exception 'Delivery accepted a mismatched device owner';
+  exception when foreign_key_violation then null;
+  end;
+end;
+$push_runtime$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+select public.update_follow_notification_preferences(
+  array['70000000-0000-4000-8000-000000000007'::uuid],
+  'owner_bundle', false, null, null, null,
+  'spottr:notification-preference:runtime-disable-0003'
+);
+reset role;
+
+do $push_preference_revocation$
+begin
+  if exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.user_id = '10000000-0000-4000-8000-000000000001'
+      and delivery.state in ('pending', 'leased', 'retry', 'unknown')
+  ) then raise exception 'Preference revocation left a claimable delivery'; end if;
+  if exists (
+    select 1 from private.claim_notification_deliveries(
+      '85000000-0000-4000-8000-000000000005', 20, 60
+    )
+  ) then raise exception 'Claim-time preference enforcement was bypassed'; end if;
+end;
+$push_preference_revocation$;
+
+select private.set_notification_consent(
+  '10000000-0000-4000-8000-000000000001',
+  'product_updates', false, 'product-updates-v1', 'native_settings'
+);
+
+do $push_consent_revocation$
+begin
+  if exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.user_id = '10000000-0000-4000-8000-000000000001'
+      and delivery.state in ('pending', 'leased', 'retry', 'unknown')
+  ) then raise exception 'Consent revocation left a claimable delivery'; end if;
+  if has_table_privilege('authenticated', 'private.notification_devices', 'select')
+    or has_function_privilege(
+      'authenticated',
+      'public.register_notification_device_server(uuid,uuid,text,uuid,text,text,text,integer,text,text,text,text,text)',
+      'execute'
+    )
+  then raise exception 'Notification device secrets or server registration are client-accessible'; end if;
+end;
+$push_consent_revocation$;
+
 rollback;

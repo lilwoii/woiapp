@@ -14,21 +14,28 @@ import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
 import { featureFlags } from '@/lib/features';
 import {
+  registerPushNotificationDevice,
+  revokeAllPushNotificationDevices,
+  revokePushNotificationDevice,
+} from '@/lib/push-notifications';
+import {
   fetchFollowAlertPreferences,
   updateFollowAlertPreference,
 } from '@/lib/marketplace-api';
 
 type SavedFilter = 'all' | 'food_truck' | 'restaurant';
-type AlertPreference = 'live_nearby' | 'owner_update';
+type AlertPreference = 'live_nearby' | 'owner_bundle';
 
 export default function SavedScreen() {
   const { followedIds, places, toggleFollow } = useMarketplaceStore();
   const auth = useAuth();
   const [filter, setFilter] = useState<SavedFilter>('all');
-  const [nearbyAlerts, setNearbyAlerts] = useState(true);
-  const [ownerUpdates, setOwnerUpdates] = useState(true);
+  const [nearbyAlerts, setNearbyAlerts] = useState(false);
+  const [ownerUpdates, setOwnerUpdates] = useState(false);
   const [preferenceBusy, setPreferenceBusy] = useState<AlertPreference | 'loading' | null>(null);
   const [preferenceMessage, setPreferenceMessage] = useState('');
+  const [deliveryBusy, setDeliveryBusy] = useState(false);
+  const [deliveryMessage, setDeliveryMessage] = useState('');
 
   const followedKey = followedIds.join(',');
 
@@ -63,7 +70,11 @@ export default function SavedScreen() {
       return;
     }
 
-    const previous = field === 'live_nearby' ? nearbyAlerts : ownerUpdates;
+    const current = {
+      live_nearby: nearbyAlerts,
+      owner_bundle: ownerUpdates,
+    };
+    const previous = current[field];
     if (field === 'live_nearby') setNearbyAlerts(next);
     else setOwnerUpdates(next);
     setPreferenceBusy(field);
@@ -82,6 +93,27 @@ export default function SavedScreen() {
       );
     }
     setPreferenceBusy(null);
+  };
+
+  const changeDeviceDelivery = async (mode: 'enable' | 'disable_device' | 'unsubscribe') => {
+    if (auth.status !== 'authenticated' || !auth.account?.id) {
+      router.push('/auth');
+      return;
+    }
+    if (auth.assuranceLevel !== 'aal2') {
+      setDeliveryMessage('Verify a current authenticator code in Security first.');
+      router.push('/security');
+      return;
+    }
+    setDeliveryBusy(true);
+    setDeliveryMessage('');
+    const result = mode === 'enable'
+      ? await registerPushNotificationDevice(auth.account.id)
+      : mode === 'disable_device'
+        ? await revokePushNotificationDevice(auth.account.id)
+        : await revokeAllPushNotificationDevices(auth.account.id);
+    setDeliveryMessage(result.ok ? result.message ?? 'Device alert setting updated.' : result.reason);
+    setDeliveryBusy(false);
   };
 
   const followed = useMemo(
@@ -202,17 +234,68 @@ export default function SavedScreen() {
 
         <View style={styles.preferencePanel}>
           <SectionHeading
-            detail="Fine-grained controls prevent noisy alerts."
+            detail="Choose what appears in Spottr and, when enabled, on this device."
             eyebrow="Notifications"
             title="Following alerts"
           />
+          <View style={styles.deliveryRow}>
+            <View style={styles.preferenceIcon}>
+              <FontAwesome6 color={palette.accent} name="bell" size={14} />
+            </View>
+            <View style={styles.preferenceCopy}>
+              <Text style={styles.preferenceTitle}>Device delivery</Text>
+              <Text style={styles.preferenceDetail}>
+                {featureFlags.pushNotifications
+                  ? 'Enable to consent to product alerts with generic lock-screen text. Marketing stays off.'
+                  : 'In-app updates are available. Device delivery remains safely off for this release.'}
+              </Text>
+            </View>
+            {featureFlags.pushNotifications ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={deliveryBusy}
+                onPress={() => void changeDeviceDelivery('enable')}
+                style={({ pressed }) => [styles.deliveryAction, pressed && styles.deliveryActionPressed]}>
+                <Text style={styles.deliveryActionText}>{deliveryBusy ? 'Working…' : 'Enable'}</Text>
+              </Pressable>
+            ) : (
+              <View style={styles.inAppBadge}>
+                <Text style={styles.inAppBadgeText}>In app</Text>
+              </View>
+            )}
+          </View>
+          {featureFlags.pushNotifications ? (
+            <View style={styles.deliveryDisableRow}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={deliveryBusy}
+                onPress={() => void changeDeviceDelivery('disable_device')}
+                style={styles.deliveryDisable}>
+                <Text style={styles.deliveryDisableText}>Turn off this device</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={deliveryBusy}
+                onPress={() => void changeDeviceDelivery('unsubscribe')}
+                style={styles.deliveryDisable}>
+                <Text style={styles.deliveryDisableText}>Unsubscribe every device</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {deliveryMessage ? (
+            <Text accessibilityLiveRegion="polite" style={styles.preferenceStatus}>
+              {deliveryMessage}
+            </Text>
+          ) : null}
           <View style={styles.preferenceRow}>
             <View style={styles.preferenceIcon}>
               <FontAwesome6 color={palette.success} name="location-crosshairs" size={15} />
             </View>
             <View style={styles.preferenceCopy}>
-              <Text style={styles.preferenceTitle}>Goes live nearby</Text>
-              <Text style={styles.preferenceDetail}>Only when a followed business is within 5 miles.</Text>
+              <Text style={styles.preferenceTitle}>Starts serving</Text>
+              <Text style={styles.preferenceDetail}>
+                When a followed place goes live. Distance-based alerts stay off until you choose a privacy-safe option.
+              </Text>
             </View>
             <Switch
               accessibilityLabel="Alert when followed businesses go live nearby"
@@ -228,13 +311,13 @@ export default function SavedScreen() {
               <FontAwesome6 color={palette.accent} name="bullhorn" size={14} />
             </View>
             <View style={styles.preferenceCopy}>
-              <Text style={styles.preferenceTitle}>Owner updates</Text>
-              <Text style={styles.preferenceDetail}>Location changes, sold-out items, and extended hours.</Text>
+              <Text style={styles.preferenceTitle}>Business updates</Text>
+              <Text style={styles.preferenceDetail}>Location changes, menu returns, sold-out notes, and extended hours.</Text>
             </View>
             <Switch
               accessibilityLabel="Alert for updates from followed business owners"
               disabled={preferenceBusy !== null || followedIds.length === 0}
-              onValueChange={(next) => void savePreference('owner_update', next)}
+              onValueChange={(next) => void savePreference('owner_bundle', next)}
               thumbColor="#FFFFFF"
               trackColor={{ false: palette.line, true: palette.success }}
               value={ownerUpdates}
@@ -452,6 +535,58 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.md,
     paddingTop: spacing.md,
+  },
+  deliveryRow: {
+    alignItems: 'center',
+    borderTopColor: palette.line,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    paddingTop: spacing.md,
+  },
+  deliveryAction: {
+    backgroundColor: palette.ink,
+    borderRadius: radii.pill,
+    minHeight: 44,
+    paddingHorizontal: 15,
+    justifyContent: 'center',
+  },
+  deliveryActionPressed: {
+    opacity: 0.78,
+  },
+  deliveryActionText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  deliveryDisable: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  deliveryDisableRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+  },
+  deliveryDisableText: {
+    color: palette.accentDeep,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  inAppBadge: {
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.pill,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  inAppBadgeText: {
+    color: palette.accentDeep,
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   preferenceIcon: {
     alignItems: 'center',

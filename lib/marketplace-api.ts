@@ -147,7 +147,7 @@ function toDiscoveryActionError<T>(error: unknown, fallback: string): ActionResu
 }
 
 export function createMarketplaceIdempotencyKey(
-  scope: 'review' | 'update' | 'response' | 'sponsor' | 'post' | 'invite'
+  scope: 'review' | 'update' | 'response' | 'sponsor' | 'post' | 'invite' | 'notification-preference'
 ) {
   const cryptoApi = globalThis.crypto;
   let nonce: string | undefined = cryptoApi?.randomUUID?.();
@@ -165,7 +165,7 @@ export function createMarketplaceIdempotencyKey(
 
 function actionIdempotencyKey(
   supplied: string | undefined,
-  scope: 'review' | 'update' | 'response' | 'sponsor' | 'post' | 'invite'
+  scope: 'review' | 'update' | 'response' | 'sponsor' | 'post' | 'invite' | 'notification-preference'
 ) {
   const key = supplied ?? createMarketplaceIdempotencyKey(scope);
   if (!idempotencyPattern.test(key)) {
@@ -2155,27 +2155,26 @@ export async function requestAccountExport(): Promise<
 
 export async function updateFollowAlertPreference(
   businessIds: string[],
-  field: 'live_nearby' | 'owner_update',
+  field: 'live_nearby' | 'owner_bundle',
   enabled: boolean
 ): Promise<ActionResult> {
-  const client = supabase;
-  if (!client) return configurationRequired();
+  if (!supabase) return configurationRequired();
   const user = await authenticatedUserId();
   if (!user.ok) return user;
   if (!businessIds.length) return { ok: true };
+  const client = await marketplaceMutationClient(user.data);
+  if (!client) return accountChanged();
 
   try {
-    const payload = businessIds.map((businessId) => ({
-      user_id: user.data,
-      business_id: businessId,
-      [field]: enabled,
-    }));
-    const { error } = await client
-      .from('notification_preferences')
-      .upsert(payload, {
-        onConflict: 'user_id,business_id',
-        defaultToNull: false,
-      });
+    const { error } = await client.rpc('update_follow_notification_preferences', {
+      target_business_ids: businessIds,
+      target_field: field,
+      target_enabled: enabled,
+      target_timezone: null,
+      target_quiet_hours_start: null,
+      target_quiet_hours_end: null,
+      idempotency_key: createMarketplaceIdempotencyKey('notification-preference'),
+    });
     if (error) throw error;
     return { ok: true };
   } catch (error) {
@@ -2185,13 +2184,16 @@ export async function updateFollowAlertPreference(
 
 export async function fetchFollowAlertPreferences(
   businessIds: string[]
-): Promise<ActionResult<{ liveNearby: boolean; ownerUpdates: boolean }>> {
+): Promise<ActionResult<{
+  liveNearby: boolean;
+  ownerUpdates: boolean;
+}>> {
   const client = supabase;
   if (!client) return configurationRequired();
   if (!businessIds.length) {
     return {
       ok: true,
-      data: { liveNearby: true, ownerUpdates: true },
+      data: { liveNearby: false, ownerUpdates: false },
     };
   }
   const user = await authenticatedUserId();
@@ -2200,7 +2202,7 @@ export async function fetchFollowAlertPreferences(
   try {
     const { data, error } = await client
       .from('notification_preferences')
-      .select('business_id, live_nearby, owner_update')
+      .select('business_id, live_nearby, location_change, owner_update, menu_return')
       .eq('user_id', user.data)
       .in('business_id', businessIds);
     if (error) throw error;
@@ -2208,7 +2210,9 @@ export async function fetchFollowAlertPreferences(
     const rows = (data ?? []) as {
       business_id: string;
       live_nearby: boolean;
+      location_change: boolean;
       owner_update: boolean;
+      menu_return: boolean;
     }[];
     const byBusiness = new Map(rows.map((row) => [row.business_id, row]));
 
@@ -2216,10 +2220,15 @@ export async function fetchFollowAlertPreferences(
       ok: true,
       data: {
         liveNearby: businessIds.every(
-          (businessId) => byBusiness.get(businessId)?.live_nearby ?? true
+          (businessId) => byBusiness.get(businessId)?.live_nearby ?? false
         ),
         ownerUpdates: businessIds.every(
-          (businessId) => byBusiness.get(businessId)?.owner_update ?? true
+          (businessId) => {
+            const preference = byBusiness.get(businessId);
+            return preference
+              ? preference.location_change && preference.owner_update && preference.menu_return
+              : false;
+          }
         ),
       },
     };

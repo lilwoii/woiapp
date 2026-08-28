@@ -346,6 +346,28 @@ permission/consent UX, quiet hours, per-business preferences, unsubscribe, token
 deletion, delivery telemetry, abuse controls, and incident revocation are
 verified.
 
+Migration `20260917000000_push_notification_foundation.sql` establishes only a
+fail-closed foundation: private encrypted device registrations, explicit
+product-versus-marketing consent, event-reference-only outbox rows, bounded
+leases, delivery deduplication, a narrow followed-business preference RPC, and
+sign-out revocation contracts. Both private runtime switches default false and
+there is no production provider adapter. Do not enable enqueueing merely to test
+provider credentials in production; validate the full chain in isolated staging
+with a fake adapter first, then real receipt polling and invalid-token retirement.
+
+The legacy `live_nearby` preference does not prove five-mile proximity: Spottr
+does not retain customer coordinates or request background location. Production
+copy and delivery must not promise proximity until a separate privacy-reviewed,
+explicitly chosen location design exists. Never infer it from IP address.
+
+Delivery claims must re-check current consent, the current bundled business-
+update preference, device revocation and freshness, event expiry, and timezone-
+aware quiet hours in the same database statement. Preference, consent, and
+device revocation cancel queued leases. Confirmed device/all-device revocation
+is a precondition of app-initiated sign-out once a registration exists; any
+unexpected session-loss/account-switch path still requires signed-device
+acceptance before push can be activated.
+
 ### UGC
 
 Before accepting public UGC, verify report and block controls on every relevant

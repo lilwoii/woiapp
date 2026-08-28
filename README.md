@@ -103,8 +103,11 @@ that a production project has received or safely exercised it.
   approval, permit operations, privacy review, and incident ownership.
 - Photo uploads remain disabled until scanning, re-encoding, moderation,
   retention, appeals, and deletion are operational.
-- Push remains disabled until APNs/FCM credentials, consent, preference
-  enforcement, and delivery/opt-out evidence exist.
+- Push remains disabled. The repository now contains a private encrypted-token,
+  explicit-consent, event-reference outbox, bounded-delivery, preference-RPC,
+  and sign-out-revocation foundation, but no live provider adapter. APNs/FCM or
+  Expo credentials, receipts, key rotation, scheduler/alerts, web VAPID, signed-
+  device tests, legal review, and delivery/opt-out evidence are still required.
 - Sponsored placements remain disabled and shadow-only until advertiser terms,
   payment/store-policy review, fraud operations, and finance reconciliation are
   approved for the exact production deployment.

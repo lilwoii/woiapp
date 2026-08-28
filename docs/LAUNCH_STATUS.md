@@ -74,6 +74,12 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 - Public UGC, media, chat, home kitchens, imported provider listings, business
   claims, navigation, push, ordering, and paid promotion stay behind their
   existing fail-closed feature gates until their runbooks have live evidence.
+- Push now has a private encrypted-device, explicit-consent, outbox, delivery-
+  lease, preference-RPC, and revocation foundation. It still has no live provider
+  adapter or web-push path; enqueueing, delivery, and the client flag remain off.
+  APNs/FCM or Expo credentials and DPA, VAPID, receipt handling, key rotation,
+  scheduler/alerts, signed-device acceptance, and legal/store review remain
+  external blockers.
 - Launch requires a legal entity, counsel-reviewed terms/privacy and
   marketplace/food-liability decisions, jurisdiction-by-jurisdiction home
   kitchen approval, licensed data/provider agreements, insurance/tax review,
@@ -112,4 +118,3 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
    headers/deep links/live flows, then retain hashes and evidence.
 6. Obtain explicit legal, security, operations, finance, and store sign-off
    before changing public access or enabling any high-risk feature.
-

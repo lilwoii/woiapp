@@ -78,6 +78,24 @@ test('native configuration keeps photo permission disclosures complete and align
   assert.ok(errors.some((error) => error.includes('banner image purpose')));
 });
 
+test('native notification configuration requires the plugin without background delivery', () => {
+  const missingPlugin = structuredClone(appBase);
+  missingPlugin.expo.plugins = missingPlugin.expo.plugins.filter((plugin) =>
+    plugin !== 'expo-notifications' && !(Array.isArray(plugin) && plugin[0] === 'expo-notifications')
+  );
+  assert.ok(
+    validateNativeConfiguration(missingPlugin, eas, new Map())
+      .some((error) => error.includes('expo-notifications must remain explicitly configured')),
+  );
+
+  const backgroundEnabled = structuredClone(appBase);
+  backgroundEnabled.expo.ios.infoPlist.UIBackgroundModes = ['remote-notification'];
+  assert.ok(
+    validateNativeConfiguration(backgroundEnabled, eas, new Map())
+      .some((error) => error.includes('Background remote notifications')),
+  );
+});
+
 test('artifact metadata rejects traversal and non-Hermes bundles', () => {
   const errors = validateArtifactMetadata({
     bundler: 'metro',

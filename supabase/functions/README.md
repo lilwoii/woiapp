@@ -168,3 +168,30 @@ and deletion drill are configured and verified.
 
 The complete rollout and failure-recovery contract is documented in
 [`docs/MEDIA_LIFECYCLE.md`](../../docs/MEDIA_LIFECYCLE.md).
+
+## Notification device registration
+
+`POST /functions/v1/notification-device` is the only device-token boundary.
+Registration requires an active `aal2` account, an exact Expo project ID, an
+explicit native-settings consent version, and the server-side registration
+gate. The Edge function HMACs the token with a separate server-only key for
+deduplication and encrypts it with AES-GCM before calling a service-role-only
+RPC; raw tokens are never stored,
+returned, exported, or logged. A token moving between accounts revokes its old
+ownership before the new registration becomes active.
+
+Current-device and all-device revocation remain callable with a valid session
+even while new registration is disabled, so sign-out fails safe. Auth-user
+deletion cascades device, consent, outbox-delivery, and preference records.
+Web push is intentionally absent; it requires a separate VAPID and service-
+worker acceptance program.
+
+The private transactional outbox stores only an eligible public-event reference,
+never owner-update text. Enqueueing and delivery are separate runtime switches
+and both default to false. Bounded `SKIP LOCKED` leases, device/event dedupe,
+explicit consent, per-business preferences, timezone-aware quiet hours, and an
+`unknown` outcome for ambiguous provider requests are present as database
+contracts. There is deliberately no live provider adapter yet. Keep both
+runtime switches and `EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED` false until Expo
+or direct APNs/FCM credentials, receipt polling, key rotation, scheduler and
+alerts, signed-device tests, legal review, and store declarations are approved.
