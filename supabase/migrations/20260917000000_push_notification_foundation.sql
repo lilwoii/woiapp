@@ -758,7 +758,9 @@ begin
     on conflict (device_id, source_event_id) do nothing
     returning id
   )
-  select (select max(user_id) from recipient_users), (select count(*) from inserted)
+  select (
+    select user_id from recipient_users order by user_id desc limit 1
+  ), (select count(*) from inserted)
   into last_user_id, inserted_count;
 
   if last_user_id is not null then
