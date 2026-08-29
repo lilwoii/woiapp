@@ -1570,13 +1570,21 @@ insert into auth.users (
   id, aud, role, email, email_confirmed_at, raw_app_meta_data,
   raw_user_meta_data, created_at, updated_at
 )
-values (
-  '90000000-0000-4000-8000-000000000009',
-  'authenticated', 'authenticated', 'runtime-push@spottr.invalid', now(),
-  '{}'::jsonb,
-  '{"username":"runtime_push","display_name":"Runtime Push","terms_accepted":true}'::jsonb,
-  now(), now()
-);
+values
+  (
+    '90000000-0000-4000-8000-000000000009',
+    'authenticated', 'authenticated', 'runtime-push@spottr.invalid', now(),
+    '{}'::jsonb,
+    '{"username":"runtime_push","display_name":"Runtime Push","terms_accepted":true}'::jsonb,
+    now(), now()
+  ),
+  (
+    '92000000-0000-4000-8000-000000000002',
+    'authenticated', 'authenticated', 'runtime-push-b@spottr.invalid', now(),
+    '{}'::jsonb,
+    '{"username":"runtime_push_b","display_name":"Runtime Push B","terms_accepted":true}'::jsonb,
+    now(), now()
+  );
 
 insert into auth.sessions (id, user_id, created_at, updated_at)
 values
@@ -1588,6 +1596,11 @@ values
   (
     '91000000-0000-4000-8000-000000000002',
     '90000000-0000-4000-8000-000000000009',
+    now(), now()
+  ),
+  (
+    '91000000-0000-4000-8000-000000000003',
+    '92000000-0000-4000-8000-000000000002',
     now(), now()
   );
 
@@ -1694,6 +1707,9 @@ declare
   second_event_id bigint;
   claimed_outbox record;
   delivery_id uuid;
+  original_device_id uuid;
+  rebound_device_id uuid;
+  reclaimed_device_id uuid;
   unmatched_device_id uuid;
   affected integer;
 begin
@@ -1717,6 +1733,86 @@ begin
   if affected <> 1 then raise exception 'Eligible notification fanout did not create one device delivery'; end if;
   select delivery.id into delivery_id from private.notification_deliveries delivery
   where delivery.source_event_id = first_event_id;
+
+  select device.id into original_device_id
+  from private.notification_devices device
+  where device.user_id = '90000000-0000-4000-8000-000000000009'
+    and device.provider = 'expo'
+    and device.installation_id = '81000000-0000-4000-8000-000000000001'
+    and device.revoked_at is null;
+  if original_device_id is null or delivery_id is null then
+    raise exception 'Cross-account rebind fixture did not capture the original device and delivery';
+  end if;
+  rebound_device_id := private.register_notification_device(
+    '92000000-0000-4000-8000-000000000002',
+    '91000000-0000-4000-8000-000000000003',
+    '81000000-0000-4000-8000-000000000001',
+    'ios', 'expo', '82000000-0000-4000-8000-000000000002',
+    repeat('b', 64), repeat('J', 48), repeat('K', 16), 1,
+    'America/Los_Angeles', '0.2.0', 'granted'
+  );
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = original_device_id
+      and device.revoked_at is not null
+      and device.revoke_reason = 'ownership_changed'
+  ) then raise exception 'Cross-account installation rebind left the prior device active'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_id
+      and delivery.device_id = original_device_id
+      and delivery.user_id = '90000000-0000-4000-8000-000000000009'
+      and delivery.state = 'cancelled'
+      and delivery.last_provider_code = 'device_rebound'
+  ) then raise exception 'Cross-account installation rebind left prior-account delivery queued'; end if;
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = rebound_device_id
+      and device.user_id = '92000000-0000-4000-8000-000000000002'
+      and device.auth_session_id = '91000000-0000-4000-8000-000000000003'
+      and device.revoked_at is null
+  ) then raise exception 'Cross-account installation rebind did not install the new owner'; end if;
+  if rebound_device_id is null or (
+    select count(*) from private.notification_devices device
+    where device.provider = 'expo'
+      and device.installation_id = '81000000-0000-4000-8000-000000000001'
+      and device.revoked_at is null
+  ) <> 1 then raise exception 'Cross-account rebind allowed multiple active owners'; end if;
+
+  reclaimed_device_id := private.register_notification_device(
+    '90000000-0000-4000-8000-000000000009',
+    '91000000-0000-4000-8000-000000000001',
+    '81000000-0000-4000-8000-000000000001',
+    'ios', 'expo', '82000000-0000-4000-8000-000000000002',
+    repeat('a', 64), repeat('A', 48), repeat('B', 16), 1,
+    'America/Los_Angeles', '0.2.0', 'granted'
+  );
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = rebound_device_id
+      and device.revoked_at is not null
+      and device.revoke_reason = 'ownership_changed'
+  ) then raise exception 'Installation reclaim left the temporary owner active'; end if;
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = reclaimed_device_id
+      and device.user_id = '90000000-0000-4000-8000-000000000009'
+      and device.auth_session_id = '91000000-0000-4000-8000-000000000001'
+      and device.revoked_at is null
+  ) then raise exception 'Installation reclaim did not restore the verified owner session'; end if;
+  if reclaimed_device_id = original_device_id or exists (
+    select 1 from private.notification_devices device
+    where device.user_id = '92000000-0000-4000-8000-000000000002'
+      and device.provider = 'expo'
+      and device.installation_id = '81000000-0000-4000-8000-000000000001'
+      and device.revoked_at is null
+  ) then raise exception 'Installation reclaim reused stale ownership state'; end if;
+  if reclaimed_device_id is null or (
+    select count(*) from private.notification_devices device
+    where device.provider = 'expo'
+      and device.installation_id = '81000000-0000-4000-8000-000000000001'
+      and device.revoked_at is null
+  ) <> 1 then raise exception 'Installation ownership allowed multiple active owners'; end if;
 
   unmatched_device_id := private.register_notification_device(
     '90000000-0000-4000-8000-000000000009',
