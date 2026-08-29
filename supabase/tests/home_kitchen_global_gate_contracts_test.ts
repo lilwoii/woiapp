@@ -33,6 +33,9 @@ const orderRoute = await Deno.readTextFile(
 const discoveryRoute = await Deno.readTextFile(
   new URL("../../app/(tabs)/index.tsx", import.meta.url),
 );
+const features = await Deno.readTextFile(
+  new URL("../../lib/features.ts", import.meta.url),
+);
 
 function section(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start);
@@ -241,9 +244,13 @@ Deno.test("client filtering remains presentation-only while deep links use serve
   assertMatch(marketplaceApi, /fetchMarketplacePlaceById/);
   assertMatch(placeRoute, /ensurePlace\(id\)/);
   assertMatch(placeRoute, /startMarketplaceConversation/);
-  assertMatch(orderRoute, /const \{ ensurePlace, publicPlaces \} = useMarketplaceStore\(\)/);
-  assert(!/const \{ ensurePlace, places \} = useMarketplaceStore\(\)/.test(orderRoute));
-  assertMatch(orderRoute, /isHomeKitchenBlocked\(place\?\.category\)/);
+  assertMatch(orderRoute, /const \{ ensurePlace, places \} = useMarketplaceStore\(\)/);
+  assertMatch(orderRoute, /publicListingRouteUnavailableReason\(loadedPlace\)/);
+  assertMatch(orderRoute, /const place = placeBlocked \? undefined : loadedPlace/);
+  assertMatch(
+    features,
+    /publicListingRouteUnavailableReason[\s\S]+isHomeKitchenBlocked\(place\.category\)/,
+  );
   assertMatch(orderRoute, /HOME_KITCHEN_UNAVAILABLE_REASON/);
   assertMatch(messagesRoute, /getMarketplaceMessages/);
   assertMatch(messagesRoute, /getMarketplaceConversationContext/);

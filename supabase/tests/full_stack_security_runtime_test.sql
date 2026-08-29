@@ -3724,17 +3724,33 @@ begin
   ) then
     raise exception 'Client role can toggle the home-kitchen launch gate';
   end if;
-  if has_table_privilege(
+  if coalesce(pg_catalog.has_table_privilege(
     'authenticated',
-    'private.home_kitchen_runtime_settings',
+    (
+      select target_table.oid
+      from pg_catalog.pg_class target_table
+      join pg_catalog.pg_namespace target_schema
+        on target_schema.oid = target_table.relnamespace
+      where target_schema.nspname = 'private'
+        and target_table.relname = 'home_kitchen_runtime_settings'
+        and target_table.relkind in ('r', 'p')
+    ),
     'select'
-  ) then
+  ), false) then
     raise exception 'Authenticated role can read private home-kitchen gate state';
   end if;
 
-  select pg_catalog.pg_get_functiondef(
-    'private.revoke_home_kitchen_pickup_state()'::regprocedure
-  ) into cleanup_definition;
+  select pg_catalog.pg_get_functiondef(target_function.oid)
+  into cleanup_definition
+  from pg_catalog.pg_proc target_function
+  join pg_catalog.pg_namespace target_schema
+    on target_schema.oid = target_function.pronamespace
+  where target_schema.nspname = 'private'
+    and target_function.proname = 'revoke_home_kitchen_pickup_state'
+    and target_function.pronargs = 0;
+  if cleanup_definition is null then
+    raise exception 'Home-kitchen cleanup function is missing';
+  end if;
   cleanup_lock_position := position(
     'pg_catalog.pg_advisory_xact_lock(' in cleanup_definition
   );
