@@ -22,7 +22,11 @@ import { palette, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/context/auth-context";
 import { useMarketplaceStore } from "@/context/marketplace-store";
 import { chatSafetyIssue, chatSafetyMessage } from "@/lib/chat-safety";
-import { featureFlags } from "@/lib/features";
+import {
+  featureFlags,
+  HOME_KITCHEN_CHAT_UNAVAILABLE_REASON,
+  isHomeKitchenBlocked,
+} from "@/lib/features";
 import {
   authorizeNeighborhoodPickupChoice,
   clearMarketplaceConversation,
@@ -126,11 +130,38 @@ function ScopedConversationScreen({ id }: { id?: string }) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chatBlocked, setChatBlocked] = useState(false);
   const draftSafetyIssue = chatSafetyIssue(draft);
   const threadClosed = Boolean(conversation && conversation.state !== "open");
   const activePickup = pickupRequests.find((request) =>
     request.state === "pending" || request.state === "authorized"
   );
+
+  const clearBlockedConversationState = useCallback(() => {
+    refreshGeneration.current += 1;
+    conversationGeneration.current += 1;
+    mediaGeneration.current += 1;
+    if (typingTimer.current) clearTimeout(typingTimer.current);
+    typingTimer.current = null;
+    typingActive.current = false;
+    pickupDetailRequestRef.current = null;
+    setLoading(false);
+    setChatBlocked(true);
+    setConversation(null);
+    setMessages([]);
+    setTyping([]);
+    setPickupRole(null);
+    setChatContext(null);
+    setPickupRequests([]);
+    setPickupOptions([]);
+    setSelectedPickupOption(null);
+    setPickupDetail(null);
+    setPickupBusy(false);
+    setPhotos([]);
+    setDraft("");
+    setSending(false);
+    setError(HOME_KITCHEN_CHAT_UNAVAILABLE_REASON);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -147,23 +178,47 @@ function ScopedConversationScreen({ id }: { id?: string }) {
     const generation = ++refreshGeneration.current;
     if (!quiet) setLoading(true);
     try {
-      const [messageResult, typingMembers, requestResult, contextResult] =
-        await Promise.all([
-          getMarketplaceMessages(id),
-          getMarketplaceTyping(id),
-          listMarketplacePickupRequests(id),
-          getMarketplaceConversationContext(id),
-        ]);
+      // Resolve the narrow conversation context first. This both identifies
+      // the business kind and prevents message/pickup hydration when the
+      // globally disabled home-kitchen category is encountered.
+      const contextResult = await getMarketplaceConversationContext(id);
+      if (!mounted.current || refreshGeneration.current !== generation) return;
+      if (!contextResult.ok || !contextResult.data) {
+        if (!contextResult.ok && contextResult.code === "NOT_FOUND") {
+          clearBlockedConversationState();
+          return;
+        }
+        setLoading(false);
+        setChatBlocked(false);
+        setError(
+          contextResult.ok
+            ? "Conversation details could not be loaded."
+            : contextResult.reason
+        );
+        return;
+      }
+
+      const context = contextResult.data;
+      if (isHomeKitchenBlocked(context.businessCategory)) {
+        clearBlockedConversationState();
+        return;
+      }
+
+      const [messageResult, typingMembers, requestResult] = await Promise.all([
+        getMarketplaceMessages(id),
+        getMarketplaceTyping(id),
+        listMarketplacePickupRequests(id),
+      ]);
       if (!mounted.current || refreshGeneration.current !== generation) return;
       if (!messageResult.ok) {
         setLoading(false);
+        setChatBlocked(false);
         setError(messageResult.reason);
         return;
       }
 
       const nextMessages = messageResult.data ?? [];
-      const context = contextResult.ok ? contextResult.data ?? null : null;
-      const role = context?.role ?? await getMarketplaceConversationRole(id);
+      const role = context.role ?? await getMarketplaceConversationRole(id);
       if (!mounted.current || refreshGeneration.current !== generation) return;
 
       const nextRequests = requestResult.ok ? requestResult.data ?? [] : [];
@@ -200,6 +255,7 @@ function ScopedConversationScreen({ id }: { id?: string }) {
 
       setLoading(false);
       setError(null);
+      setChatBlocked(false);
       setMessages(nextMessages);
       setTyping(typingMembers);
       setChatContext(context);
@@ -221,9 +277,10 @@ function ScopedConversationScreen({ id }: { id?: string }) {
     } catch {
       if (!mounted.current || refreshGeneration.current !== generation) return;
       setLoading(false);
+      setChatBlocked(false);
       setError("This conversation could not refresh safely. Try again.");
     }
-  }, [expectedUserId, id]);
+  }, [clearBlockedConversationState, expectedUserId, id]);
 
   useEffect(() => {
     if (!focused || auth.status !== "authenticated") return;
@@ -624,6 +681,23 @@ function ScopedConversationScreen({ id }: { id?: string }) {
     if (result.ok) router.replace("/messages" as never);
     else showMessage("Could not block member", result.reason);
   };
+
+  if (chatBlocked) {
+    return (
+      <FocusAwareScreen>
+        <PageShell>
+          <View style={styles.center}>
+            <FontAwesome6 color={palette.accentDeep} name="shield-halved" size={22} />
+            <Text accessibilityRole="header" style={styles.centerTitle}>Conversation unavailable</Text>
+            <Text style={styles.centerBody}>{HOME_KITCHEN_CHAT_UNAVAILABLE_REASON}</Text>
+            <Pressable accessibilityRole="button" onPress={() => router.replace("/messages" as never)} style={styles.sendButton}>
+              <Text style={styles.sendText}>Back to messages</Text>
+            </Pressable>
+          </View>
+        </PageShell>
+      </FocusAwareScreen>
+    );
+  }
 
   return (
     <FocusAwareScreen>

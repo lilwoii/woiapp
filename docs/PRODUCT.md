@@ -19,8 +19,9 @@ Venue types:
 2. Restaurants
 3. Pop-ups and market vendors
 4. Cafes and bakeries
-5. Home kitchens, hidden unless a server-controlled jurisdiction is legally
-   approved and the business has a current verified permit
+5. Home kitchens, hidden unless the global server launch gate is enabled, the
+   server-controlled jurisdiction is legally approved, and the business has a
+   current verified permit
 
 The universal client currently supports:
 
@@ -77,6 +78,10 @@ organic results.
   tracking.
 - Home-kitchen public coordinates are approximate and street/postal details are
   withheld.
+- `EXPO_PUBLIC_HOME_KITCHENS_ENABLED` is a client presentation flag only. The
+  database-authoritative launch gate defaults false and protects discovery,
+  deep links, public projections, and marketplace chat until a reviewed
+  service operation enables the exact launch scope.
 
 ## Launch boundary
 

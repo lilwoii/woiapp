@@ -11,3 +11,23 @@ export const featureFlags = Object.freeze({
   businessClaims: enabled(process.env.EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED),
   sponsoredPlacements: enabled(process.env.EXPO_PUBLIC_SPONSORED_PLACEMENTS_ENABLED),
 });
+
+// The database remains the authority for public eligibility. These client
+// helpers only keep a disabled launch category out of public UI and local
+// caches while the backend gate is unavailable, stale, or being bypassed by a
+// deep link.
+export const HOME_KITCHEN_UNAVAILABLE_REASON = 'This listing is unavailable.';
+export const HOME_KITCHEN_CHAT_UNAVAILABLE_REASON = 'This conversation is unavailable.';
+
+export function isHomeKitchenBlocked(kind: unknown) {
+  return kind === 'home_kitchen' && !featureFlags.homeKitchens;
+}
+
+export function filterHomeKitchenPlaces<
+  T extends { id: string; category: string },
+>(places: readonly T[]): T[] {
+  if (featureFlags.homeKitchens) return [...places];
+  return places.filter(
+    (place) => place.category !== 'home_kitchen',
+  );
+}

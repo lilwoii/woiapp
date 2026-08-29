@@ -20,7 +20,7 @@ import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
-import { featureFlags } from '@/lib/features';
+import { featureFlags, filterHomeKitchenPlaces } from '@/lib/features';
 import {
   createBusinessDraft,
   searchMarketplacePlaces,
@@ -247,7 +247,7 @@ function BusinessOnboardingContent({
           setClaimSearchError(result.reason);
           return;
         }
-        setClaimSearchResults((result.data?.places ?? []).slice(0, 5));
+        setClaimSearchResults(filterHomeKitchenPlaces(result.data?.places ?? []).slice(0, 5));
       });
     }, unavailable ? 0 : 450);
     return () => {

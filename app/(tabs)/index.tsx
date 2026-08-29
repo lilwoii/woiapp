@@ -118,7 +118,7 @@ function ScopedDiscoverScreen() {
     hasMoreResults,
     loadingMoreResults,
     loadMoreResults,
-    places,
+    publicPlaces,
     refresh,
     searchArea,
     syncMessage,
@@ -141,7 +141,7 @@ function ScopedDiscoverScreen() {
   const [pickupOnly, setPickupOnly] = useState(false);
   const [hiddenSponsoredIds, setHiddenSponsoredIds] = useState<string[]>([]);
   const [openSponsorReasonId, setOpenSponsorReasonId] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState(places[0]?.id);
+  const [selectedId, setSelectedId] = useState(publicPlaces[0]?.id);
   const [locationLabel, setLocationLabel] = useState('Choose city, ZIP, or location');
   const [userCoordinates, setUserCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locating, setLocating] = useState(isSupabaseConfigured);
@@ -173,8 +173,8 @@ function ScopedDiscoverScreen() {
     [enabledMapCategories],
   );
   const enabledPlaces = useMemo(
-    () => filterPlacesForEnabledCategories(places, enabledCategorySet),
-    [enabledCategorySet, places],
+    () => filterPlacesForEnabledCategories(publicPlaces, enabledCategorySet),
+    [enabledCategorySet, publicPlaces],
   );
   const requestedMapCategories = useMemo(
     () => category === 'all'
@@ -375,7 +375,7 @@ function ScopedDiscoverScreen() {
 
   useEffect(() => {
     if (!activeArea) return;
-    if (!places.length) {
+    if (!enabledPlaces.length) {
       const timer = setTimeout(() => {
         mapInventoryRequest.current.invalidate();
         latestMapViewport.current = null;
@@ -385,9 +385,9 @@ function ScopedDiscoverScreen() {
       }, 0);
       return () => clearTimeout(timer);
     }
-    const latitudes = places.map((place) => place.latitude);
+    const latitudes = enabledPlaces.map((place) => place.latitude);
     const centerLatitude = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
-    const longitudes = places.map((place) => normalizeLongitude(place.longitude));
+    const longitudes = enabledPlaces.map((place) => normalizeLongitude(place.longitude));
     const radians = longitudes.map((longitude) => (longitude * Math.PI) / 180);
     const centerLongitude = normalizeLongitude(
       (Math.atan2(
@@ -414,7 +414,7 @@ function ScopedDiscoverScreen() {
       void loadMapInventory(viewport);
     }, 0);
     return () => clearTimeout(timer);
-  }, [activeArea, loadMapInventory, places]);
+  }, [activeArea, enabledPlaces, loadMapInventory]);
 
   const discoveryFilters: DiscoveryFilters = useMemo(
     () => ({
@@ -881,7 +881,7 @@ function ScopedDiscoverScreen() {
           </View>
         ) : null}
 
-        {syncStatus === 'idle' && !places.length ? (
+        {syncStatus === 'idle' && !enabledPlaces.length ? (
           <View accessibilityLiveRegion="polite" style={styles.empty}>
             <View style={styles.emptyIcon}>
               <FontAwesome6 color={palette.accent} name="location-crosshairs" size={22} />
@@ -903,7 +903,7 @@ function ScopedDiscoverScreen() {
               </Pressable>
             ) : null}
           </View>
-        ) : syncStatus === 'syncing' && !places.length ? (
+        ) : syncStatus === 'syncing' && !enabledPlaces.length ? (
           <View accessibilityLiveRegion="polite" style={styles.loadingState}>
             <ActivityIndicator color={palette.accentDeep} />
             <Text style={styles.loadingText}>Loading nearby food…</Text>
@@ -1047,10 +1047,10 @@ function ScopedDiscoverScreen() {
               <FontAwesome6 color={palette.accent} name="location-dot" size={22} />
             </View>
             <Text accessibilityRole="header" {...webSectionHeading} style={styles.emptyTitle}>
-              {places.length ? 'No matches in this area' : 'No verified listings here yet'}
+              {enabledPlaces.length ? 'No matches in this area' : 'No verified listings here yet'}
             </Text>
             <Text style={styles.emptyBody}>
-              {places.length
+              {enabledPlaces.length
                 ? 'Try Everything, clear Open now, or choose another city or ZIP code.'
                 : 'Try another area or check back as local businesses join Spottr.'}
             </Text>

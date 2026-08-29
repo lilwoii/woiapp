@@ -1,6 +1,10 @@
 # Secure marketplace chat and pickup disclosure
 
-Spottr chat is a private, server-moderated exposure channel for two categories:
+Spottr chat is a private, server-moderated exposure channel for two categories.
+Home-kitchen chat is additionally behind the private, default-false global
+launch gate in `20260929000000_home_kitchen_global_launch_gate.sql`; the client
+feature flag is not an authorization boundary. A disabled gate blocks new and
+existing participant reads/writes and revokes active exact pickup state.
 
 - An eligible, published Neighborhood Kitchen always offers chat. A seller
   cannot disable it while remaining in this category.

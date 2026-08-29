@@ -28,6 +28,11 @@ import {
   MarketplaceRequestToken,
   resolveMarketplaceScope,
 } from '@/lib/marketplace-scope';
+import {
+  filterHomeKitchenPlaces,
+  HOME_KITCHEN_UNAVAILABLE_REASON,
+  isHomeKitchenBlocked,
+} from '@/lib/features';
 import { checkProfessionalText } from '@/lib/moderation';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 import {
@@ -42,6 +47,7 @@ import {
 
 type MarketplaceStoreValue = {
   places: Place[];
+  publicPlaces: Place[];
   followedIds: string[];
   account: AccountSummary;
   scopeKey: string;
@@ -106,6 +112,12 @@ const marketplaceSessionChanged: Extract<ActionResult, { ok: false }> = {
   reason: 'The active account changed. Try again from the current account.',
 };
 
+const homeKitchenUnavailable: Extract<ActionResult, { ok: false }> = {
+  ok: false,
+  code: 'NOT_FOUND',
+  reason: HOME_KITCHEN_UNAVAILABLE_REASON,
+};
+
 function createMarketplaceStoreState(scopeKey: string): MarketplaceStoreState {
   return {
     scopeKey,
@@ -148,6 +160,9 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
     pendingPlaceIds,
     managedPlaceIds,
   } = visibleState;
+  // Keep account-scoped managed records available to Studio, but expose a
+  // separately gated collection for public discovery and deep-link surfaces.
+  const publicPlaces = useMemo(() => filterHomeKitchenPlaces(places), [places]);
   const activeRefresh = useRef<ActiveRefresh | null>(null);
   const activePagination = useRef<MarketplaceRequestToken | null>(null);
   const nextResultOffset = useRef(0);
@@ -462,6 +477,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   const ensurePlace = useCallback(
     async (placeId: string, preferredLocationId?: string): Promise<ActionResult> => {
       const existingPlace = places.find((place) => place.id === placeId);
+      if (isHomeKitchenBlocked(existingPlace?.category)) return homeKitchenUnavailable;
       if (existingPlace?.detailsLoaded && (!preferredLocationId || existingPlace.locationId === preferredLocationId)) return { ok: true };
       if (!isSupabaseConfigured) return liveServicesRequired;
 
@@ -476,6 +492,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
         return { ok: false, code: 'NOT_FOUND', reason: 'This listing is unavailable.' };
       }
       const loadedPlace = result.data;
+      if (isHomeKitchenBlocked(loadedPlace.category)) return homeKitchenUnavailable;
       commitStore(token, (current) => ({
         ...current,
         places: [loadedPlace, ...current.places.filter((place) => place.id !== placeId)],
@@ -690,6 +707,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   const value = useMemo(
     () => ({
       places,
+      publicPlaces,
       followedIds,
       account:
         expectedUserId && auth.account?.id === expectedUserId
@@ -722,6 +740,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       ensurePlace,
       managedPlaceIds,
       pendingPlaceIds,
+      publicPlaces,
       places,
       publishUpdate,
       refreshAccess,

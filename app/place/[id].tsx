@@ -29,7 +29,11 @@ import { TrustBadgeStrip } from '@/components/trust-badge-strip';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
-import { featureFlags } from '@/lib/features';
+import {
+  featureFlags,
+  HOME_KITCHEN_UNAVAILABLE_REASON,
+  isHomeKitchenBlocked,
+} from '@/lib/features';
 import { phoneHref, placeShareUrl, safeHttpsUrl } from '@/lib/links';
 import { isMarketplaceChatAvailable, startMarketplaceConversation } from '@/lib/marketplace-chat';
 import { externalDirectionsUrl } from '@/lib/navigation';
@@ -65,13 +69,18 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
     ensurePlace,
     followedIds,
     loadMoreReviews,
-    places,
+    publicPlaces,
     toggleFollow,
   } = useMarketplaceStore();
   const { width } = useWindowDimensions();
   const wide = width >= 920;
-  const place = places.find((entry) => entry.id === id);
-  const chatEligibleCategory = place?.category === 'home_kitchen' || place?.category === 'pop_up';
+  const loadedPlace = publicPlaces.find((entry) => entry.id === id);
+  const placeBlocked = isHomeKitchenBlocked(loadedPlace?.category);
+  // A managed home-kitchen record may remain in the account-scoped store for
+  // Studio. Never let that private cache become a public detail route.
+  const place = placeBlocked ? undefined : loadedPlace;
+  const chatEligibleCategory = place?.category === 'pop_up' ||
+    (place?.category === 'home_kitchen' && featureFlags.homeKitchens);
   const [rating, setRating] = useState(5);
   const [review, setReview] = useState('');
   const [reviewPhotos, setReviewPhotos] = useState<ReviewPhotoInput[]>([]);
@@ -89,7 +98,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   const mounted = useRef(true);
   const reviewIntent = useRef<{ fingerprint: string; key: string } | null>(null);
   const [listingLoading, setListingLoading] = useState(
-    !place || (auth.isConfigured && !place.detailsLoaded)
+    !placeBlocked && (!place || (auth.isConfigured && !place.detailsLoaded))
   );
   const [listingError, setListingError] = useState<string | null>(null);
   const [reviewMessage, setReviewMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
@@ -108,6 +117,11 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
     const ready = Boolean(place && (!auth.isConfigured || place.detailsLoaded));
     const timer = setTimeout(() => {
       if (!active) return;
+      if (placeBlocked) {
+        setListingLoading(false);
+        setListingError(HOME_KITCHEN_UNAVAILABLE_REASON);
+        return;
+      }
       if (!id || ready) {
         setListingLoading(false);
         return;
@@ -124,12 +138,12 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
       active = false;
       clearTimeout(timer);
     };
-  }, [auth.isConfigured, ensurePlace, id, place]);
+  }, [auth.isConfigured, ensurePlace, id, place, placeBlocked]);
 
   useEffect(() => {
     let active = true;
     if (!place || !chatEligibleCategory) return () => { active = false; };
-    void isMarketplaceChatAvailable(place.id).then((available) => {
+    void isMarketplaceChatAvailable(place.id, place.category).then((available) => {
       if (active) setChatAvailable(available);
     });
     return () => { active = false; };
@@ -228,13 +242,17 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   };
 
   const openChat = async () => {
+    if (isHomeKitchenBlocked(place.category)) {
+      showMessage('Chat unavailable', HOME_KITCHEN_UNAVAILABLE_REASON);
+      return;
+    }
     const expectedUserId = auth.status === 'authenticated' ? auth.account?.id : null;
     if (!expectedUserId) {
       router.push('/auth');
       return;
     }
     setChatStarting(true);
-    const result = await startMarketplaceConversation(place.id, expectedUserId);
+    const result = await startMarketplaceConversation(place.id, expectedUserId, place.category);
     if (!mounted.current) return;
     setChatStarting(false);
     if (!result.ok || !result.data) {

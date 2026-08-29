@@ -1,5 +1,8 @@
 import { toActionError } from '@/lib/errors';
-import { featureFlags } from '@/lib/features';
+import {
+  featureFlags,
+  isHomeKitchenBlocked,
+} from '@/lib/features';
 import { mapLogoPaths } from '@/lib/map-inventory';
 import { publicBadgeFromCode, type PublicBadge } from '@/lib/trust-badges';
 import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
@@ -843,6 +846,10 @@ export async function fetchMapFoodFeatures(
   ) {
     return { ok: false, code: 'INVALID', reason: 'Select at least one valid map category.' };
   }
+  const enabledRequestedCategories = uniqueRequestedCategories.filter(
+    (category) => !isHomeKitchenBlocked(category),
+  );
+  if (!enabledRequestedCategories.length) return { ok: true, data: [] };
 
   try {
     const { rows: mapRows } = await invokePublicDiscovery({
@@ -852,7 +859,7 @@ export async function fetchMapFoodFeatures(
       east_longitude: east,
       north_latitude: north,
       map_zoom: Math.round(Math.min(18, Math.max(2, viewport.zoom))),
-      requested_kinds: uniqueRequestedCategories,
+      requested_kinds: enabledRequestedCategories,
       max_features: 1200,
     });
     const logoPaths = mapLogoPaths(mapRows);
@@ -866,16 +873,30 @@ export async function fetchMapFoodFeatures(
       const longitude = numberValue(entry.longitude, Number.NaN);
       const count = numberValue(entry.place_count, 0);
       const id = stringValue(entry.feature_id);
-      if (!type || !dominantCategory || !id || !Number.isFinite(latitude) || !Number.isFinite(longitude) || count < 1) continue;
+      if (
+        !type || !dominantCategory || (type === 'place' && isHomeKitchenBlocked(dominantCategory)) ||
+        !id || !Number.isFinite(latitude) || !Number.isFinite(longitude) || count < 1
+      ) continue;
 
       const rawCounts = entry.category_counts;
       const categoryCounts: MapInventoryFeature['categoryCounts'] = {};
       if (rawCounts && typeof rawCounts === 'object' && !Array.isArray(rawCounts)) {
         for (const category of businessCategories) {
           const value = numberValue((rawCounts as Row)[category], 0);
-          if (Number.isInteger(value) && value > 0) categoryCounts[category] = value;
+          if (
+            Number.isInteger(value) && value > 0 && !isHomeKitchenBlocked(category)
+          ) categoryCounts[category] = value;
         }
       }
+      const visibleCount = type === 'cluster'
+        ? Object.values(categoryCounts).reduce((sum, value) => sum + (value ?? 0), 0)
+        : count;
+      if (visibleCount < 1) continue;
+      const visibleDominantCategory = type === 'cluster'
+        ? (Object.entries(categoryCounts) as [BusinessCategory, number][])
+            .sort((left, right) => right[1] - left[1])[0]?.[0]
+        : dominantCategory;
+      if (!visibleDominantCategory) continue;
       const logoPath = stringValue(entry.logo_path);
       const businessId = stringValue(entry.business_id);
       const locationId = stringValue(entry.location_id);
@@ -883,11 +904,11 @@ export async function fetchMapFoodFeatures(
       features.push({
         type,
         id,
-        count,
+        count: visibleCount,
         latitude,
         longitude,
         categoryCounts,
-        dominantCategory,
+        dominantCategory: visibleDominantCategory,
         ...(uuidPattern.test(businessId) ? { businessId } : {}),
         ...(uuidPattern.test(locationId) ? { locationId } : {}),
         ...(stringValue(entry.business_name) ? { name: stringValue(entry.business_name) } : {}),
@@ -1015,7 +1036,9 @@ export async function fetchMarketplacePlaces(
     for (const business of [...pagePublishedRows, ...rows(includedResult.data)]) {
       businessById.set(businessIdOf(business), { ...business, state: 'published' });
     }
-    const businesses = [...businessById.values()];
+    const businesses = [...businessById.values()].filter(
+      (business) => !isHomeKitchenBlocked(business.kind) || managedIds.includes(businessIdOf(business)),
+    );
     const ids = businesses.map(businessIdOf).filter(Boolean);
     if (!ids.length) {
       return {

@@ -337,7 +337,24 @@ Keep `EXPO_PUBLIC_HOME_KITCHENS_ENABLED=false` until each enabled jurisdiction
 has signed legal approval, permit verification/renewal, allowed-food rules,
 privacy testing, food-safety escalation, suspension-on-expiry, insurance/tax
 review, and a named operator. Public residence addresses and precise coordinates
-are prohibited.
+are prohibited. The client flag is presentation-only. Migration
+`20260929000000_home_kitchen_global_launch_gate.sql` creates the private
+`home_kitchen_runtime_settings` singleton, defaults it to disabled, and makes
+the server-side eligibility helper authoritative for discovery projections,
+map/nearby/search RPCs, direct place links, and marketplace chat. The toggle
+and status RPCs are service-role-only; do not grant application roles access to
+the table or expose the flag through a public client endpoint.
+
+Before enabling, run the migration and its staged runtime contract against the
+target PostgreSQL version, record the legal/permit evidence for the exact
+jurisdiction, then call `public.set_home_kitchen_launch_gate(true, reason)`
+from the protected service operation. Disabling the gate is the kill switch:
+it immediately hides eligible home kitchens, blocks new and existing
+participant chat reads/writes, cancels pending or authorized home-kitchen
+pickup requests, and destroys exact pickup disclosures while preserving
+conversations for moderation and account export. Re-enabling may expose
+previously approved records again, so treat it as a reviewed operational
+change rather than a client feature-flag flip.
 
 ### Push
 

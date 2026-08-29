@@ -3343,6 +3343,544 @@ begin
 end;
 $push_dispatch_service_wrapper_runtime$;
 
+-- Home kitchens remain invisible and their existing chat is inaccessible while
+-- the service-owned launch gate is at its migration default. The fixture is
+-- fully eligible on jurisdiction, permit, publication, location, and chat
+-- state so a negative result proves the global gate rather than a missing
+-- prerequisite. The whole runtime file rolls back at the end.
+insert into public.jurisdictions (
+  id, country_code, region_code, locality, home_kitchens_enabled,
+  legal_reviewed_at, rules_url
+) values (
+  'e0000000-0000-4000-8000-000000000001', 'US', 'CA', 'Los Angeles',
+  true, now(), 'https://example.invalid/runtime-home-kitchen-rules'
+);
+
+insert into public.businesses (
+  id, kind, name, slug, description, state, verification, timezone,
+  jurisdiction_id, provenance, created_by
+) values (
+  'e1000000-0000-4000-8000-000000000001',
+  'home_kitchen',
+  'Runtime Global Gate Kitchen',
+  'runtime-global-gate-kitchen',
+  'Eligible home-kitchen fixture for the global launch gate.',
+  'pending',
+  'verified',
+  'America/Los_Angeles',
+  'e0000000-0000-4000-8000-000000000001',
+  'owner',
+  '10000000-0000-4000-8000-000000000001'
+);
+
+insert into public.business_private_details (
+  business_id, business_email, business_phone
+) values (
+  'e1000000-0000-4000-8000-000000000001',
+  'runtime-home-kitchen@spottr.invalid',
+  '+12135550188'
+);
+
+insert into public.home_kitchen_permits (
+  business_id, jurisdiction_id, permit_number_private, issuer,
+  expires_on, verification, reviewed_by, reviewed_at
+) values (
+  'e1000000-0000-4000-8000-000000000001',
+  'e0000000-0000-4000-8000-000000000001',
+  'runtime-home-permit',
+  'Runtime Health Authority',
+  current_date + 30,
+  'verified',
+  '10000000-0000-4000-8000-000000000001',
+  now()
+);
+
+insert into public.media_assets (
+  id, owner_id, business_id, storage_path, mime_type, width, height,
+  byte_size, sha256, source, license_note, quarantine_state,
+  processed_storage_path, scan_completed_at, moderation
+) values (
+  'e2000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000001',
+  'e1000000-0000-4000-8000-000000000001',
+  'published/runtime/global-gate-kitchen-logo.jpg',
+  'image/jpeg', 512, 512, 4096, repeat('e', 64), 'owner_upload',
+  'Runtime global-gate fixture', 'clean',
+  'published/runtime/global-gate-kitchen-logo-processed.jpg', now(), 'approved'
+);
+
+update public.businesses
+set logo_asset_id = 'e2000000-0000-4000-8000-000000000001'
+where id = 'e1000000-0000-4000-8000-000000000001';
+
+insert into public.business_locations (
+  id, business_id, label, address_line, city, region, postal_code,
+  point, is_primary, is_approximate, public_address, publication_state
+) values (
+  'e3000000-0000-4000-8000-000000000001',
+  'e1000000-0000-4000-8000-000000000001',
+  'Runtime approximate kitchen area',
+  null,
+  'Los Angeles',
+  'CA',
+  '90001',
+  public.st_setsrid(public.st_makepoint(-118.24, 34.05), 4326)::public.geography,
+  true,
+  true,
+  false,
+  'published'
+);
+
+insert into public.weekly_hours (business_id, weekday, opens_at, closes_at, is_closed)
+select
+  'e1000000-0000-4000-8000-000000000001',
+  weekday::smallint,
+  '00:00'::time,
+  '23:59'::time,
+  false
+from generate_series(0, 6) weekday;
+
+insert into public.business_payments (business_id, payment)
+values ('e1000000-0000-4000-8000-000000000001', 'cash');
+
+insert into public.menu_sections (id, business_id, name, is_published)
+values (
+  'e4000000-0000-4000-8000-000000000001',
+  'e1000000-0000-4000-8000-000000000001',
+  'Runtime gate menu',
+  true
+);
+
+insert into public.menu_items (
+  id, section_id, name, price_minor, currency, availability, is_published
+) values (
+  'e5000000-0000-4000-8000-000000000001',
+  'e4000000-0000-4000-8000-000000000001',
+  'Runtime gate meal',
+  1200,
+  'USD',
+  'available',
+  true
+);
+
+update public.businesses
+set state = 'published'
+where id = 'e1000000-0000-4000-8000-000000000001';
+
+insert into public.business_members (
+  business_id, user_id, role, status, accepted_at
+) values (
+  'e1000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000001',
+  'owner',
+  'active',
+  now()
+);
+
+insert into public.marketplace_conversations (
+  id, public_id, business_id, customer_id, merchant_id,
+  state, last_sequence, last_message_at
+) values (
+  'e6000000-0000-4000-8000-000000000001',
+  'e6010000-0000-4000-8000-000000000001',
+  'e1000000-0000-4000-8000-000000000001',
+  '60000000-0000-4000-8000-000000000006',
+  '10000000-0000-4000-8000-000000000001',
+  'open',
+  1,
+  now()
+);
+
+insert into public.marketplace_messages (
+  id, public_id, conversation_id, sender_id, sequence, body
+) values (
+  'e7000000-0000-4000-8000-000000000001',
+  'e7010000-0000-4000-8000-000000000001',
+  'e6000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000001',
+  1,
+  'Runtime gate fixture message.'
+);
+
+-- Create one authorized exact disclosure before exercising the service toggle.
+-- The latest consent trigger privatizes buyer consent metadata after recording
+-- its receipt, while the disclosure-window trigger enforces a short expiry.
+do $home_kitchen_global_gate_fixture$
+declare
+  fixture_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  insert into public.marketplace_pickup_requests (
+    id, public_id, conversation_id, requested_by,
+    pickup_starts_at, pickup_ends_at, note, state, version,
+    responded_by, responded_at, choice_kind,
+    buyer_terms_version, buyer_acknowledged_at
+  ) values (
+    'e8000000-0000-4000-8000-000000000001',
+    'e8010000-0000-4000-8000-000000000001',
+    'e6000000-0000-4000-8000-000000000001',
+    '60000000-0000-4000-8000-000000000006',
+    fixture_now + interval '1 hour',
+    fixture_now + interval '2 hours',
+    null,
+    'authorized',
+    2,
+    '10000000-0000-4000-8000-000000000001',
+    fixture_now,
+    'seller_residence',
+    '2026-08-01',
+    fixture_now
+  );
+
+  insert into private.neighborhood_pickup_disclosures (
+    request_id, choice_kind, choice_public_id, label, address_line,
+    city, region, postal_code, latitude, longitude, authorized_by,
+    authorized_at, expires_at
+  ) values (
+    'e8000000-0000-4000-8000-000000000001',
+    'seller_residence',
+    'e8020000-0000-4000-8000-000000000001',
+    'Runtime exact residence',
+    '1 Runtime Exact Way',
+    'Los Angeles',
+    'CA',
+    '90001',
+    34.05,
+    -118.24,
+    '10000000-0000-4000-8000-000000000001',
+    fixture_now,
+    fixture_now + interval '4 hours'
+  );
+end;
+$home_kitchen_global_gate_fixture$;
+
+do $home_kitchen_global_gate_default_off$
+declare
+  gate jsonb;
+  map_count integer;
+  nearby_count integer;
+  search_count integer;
+begin
+  gate := public.get_home_kitchen_launch_gate();
+  if coalesce((gate->>'enabled')::boolean, true) then
+    raise exception 'Home-kitchen launch gate did not default to false';
+  end if;
+
+  select count(*) into map_count
+  from public.map_food_places(
+    -118.5, 33.8, -118.0, 34.3, 14,
+    array['home_kitchen']::text[], 1200
+  ) place
+  where place.business_id = 'e1000000-0000-4000-8000-000000000001';
+  if map_count <> 0 then
+    raise exception 'Disabled home kitchen appeared in map discovery';
+  end if;
+
+  select count(*) into nearby_count
+  from public.nearby_businesses(34.05, -118.24, 16093, 50, 0) place
+  where place.business_id = 'e1000000-0000-4000-8000-000000000001';
+  if nearby_count <> 0 then
+    raise exception 'Disabled home kitchen appeared in nearby discovery';
+  end if;
+
+  select count(*) into search_count
+  from public.search_businesses('Runtime Global Gate Kitchen', 25, 0) place
+  where place.business_id = 'e1000000-0000-4000-8000-000000000001';
+  if search_count <> 0 then
+    raise exception 'Disabled home kitchen appeared in search discovery';
+  end if;
+end;
+$home_kitchen_global_gate_default_off$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"60000000-0000-4000-8000-000000000006","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $home_kitchen_global_gate_chat_off$
+declare
+  visible_count integer;
+  conversation_count integer;
+begin
+  select count(*) into visible_count
+  from public.public_business_directory
+  where business_id = 'e1000000-0000-4000-8000-000000000001';
+  if visible_count <> 0 then
+    raise exception 'Disabled home kitchen appeared in the public directory';
+  end if;
+
+  select count(*) into conversation_count
+  from public.list_my_marketplace_conversations_v2(null, null, 30)
+  where business_id = 'e1000000-0000-4000-8000-000000000001';
+  if conversation_count <> 0 then
+    raise exception 'Disabled home-kitchen conversation appeared in inbox';
+  end if;
+
+  begin
+    perform public.get_marketplace_conversation_role(
+      'e6010000-0000-4000-8000-000000000001'
+    );
+    raise exception 'Disabled home-kitchen conversation role was readable';
+  exception
+    when sqlstate '42501' then
+      if sqlerrm <> 'CHAT_ACCESS_REQUIRED' then raise; end if;
+  end;
+
+  begin
+    perform public.get_marketplace_messages_v2(
+      'e6010000-0000-4000-8000-000000000001', null::bigint, 50
+    );
+    raise exception 'Disabled home-kitchen messages were readable';
+  exception
+    when sqlstate '42501' then
+      if sqlerrm <> 'CHAT_ACCESS_REQUIRED' then raise; end if;
+  end;
+
+  begin
+    perform public.send_marketplace_message(
+      'e6010000-0000-4000-8000-000000000001',
+      'Blocked while the home-kitchen gate is disabled.',
+      '{}'::uuid[],
+      'home-gate-runtime-send-off-0001'
+    );
+    raise exception 'Disabled home-kitchen chat accepted a message';
+  exception
+    when sqlstate '42501' then
+      if sqlerrm <> 'CHAT_WRITE_NOT_ALLOWED' then raise; end if;
+  end;
+end;
+$home_kitchen_global_gate_chat_off$;
+
+reset role;
+select pg_catalog.set_config(
+  'request.jwt.claims', '{"role":"service_role"}', true
+);
+set local role service_role;
+
+do $home_kitchen_global_gate_toggle$
+declare
+  gate jsonb;
+  result jsonb;
+  cleanup_definition text;
+  request_definition text;
+  authorization_definition text;
+  cleanup_lock_position integer;
+  cleanup_update_position integer;
+  request_lock_position integer;
+  request_row_lock_position integer;
+  request_eligibility_position integer;
+  authorization_lock_position integer;
+  authorization_row_lock_position integer;
+  authorization_eligibility_position integer;
+  client_role text;
+begin
+  if has_function_privilege(
+    'anon',
+    'public.set_home_kitchen_launch_gate(boolean,text)',
+    'execute'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.set_home_kitchen_launch_gate(boolean,text)',
+    'execute'
+  ) then
+    raise exception 'Client role can toggle the home-kitchen launch gate';
+  end if;
+  if has_table_privilege(
+    'authenticated',
+    'private.home_kitchen_runtime_settings',
+    'select'
+  ) then
+    raise exception 'Authenticated role can read private home-kitchen gate state';
+  end if;
+
+  select pg_catalog.pg_get_functiondef(
+    'private.revoke_home_kitchen_pickup_state()'::regprocedure
+  ) into cleanup_definition;
+  cleanup_lock_position := position(
+    'pg_catalog.pg_advisory_xact_lock(' in cleanup_definition
+  );
+  cleanup_update_position := position(
+    'update public.marketplace_pickup_requests' in cleanup_definition
+  );
+  if cleanup_lock_position <= 0
+    or cleanup_update_position <= cleanup_lock_position
+  then
+    raise exception 'Home-kitchen cleanup does not take the exclusive gate lock before request rows';
+  end if;
+
+  select pg_catalog.pg_get_functiondef(
+    'public.request_neighborhood_pickup_choice(uuid,uuid,text,timestamptz,timestamptz,text,text,text)'::regprocedure
+  ) into request_definition;
+  request_lock_position := position(
+    'pg_catalog.pg_advisory_xact_lock_shared(' in request_definition
+  );
+  request_row_lock_position := position(
+    'for update of conversation' in request_definition
+  );
+  request_eligibility_position := position(
+    'private.marketplace_conversation_write_allowed' in request_definition
+  );
+  if request_lock_position <= 0
+    or request_row_lock_position <= request_lock_position
+    or request_eligibility_position <= request_lock_position
+    or request_eligibility_position <= request_row_lock_position
+  then
+    raise exception 'Neighborhood pickup request does not share the gate lock before row lock and eligibility';
+  end if;
+
+  select pg_catalog.pg_get_functiondef(
+    'public.authorize_neighborhood_pickup_choice(uuid,uuid,integer,text)'::regprocedure
+  ) into authorization_definition;
+  authorization_lock_position := position(
+    'pg_catalog.pg_advisory_xact_lock_shared(' in authorization_definition
+  );
+  authorization_row_lock_position := position(
+    'for update;' in authorization_definition
+  );
+  authorization_eligibility_position := position(
+    'private.marketplace_conversation_write_allowed' in authorization_definition
+  );
+  if authorization_lock_position <= 0
+    or authorization_row_lock_position <= authorization_lock_position
+    or authorization_eligibility_position <= authorization_lock_position
+    or authorization_eligibility_position <= authorization_row_lock_position
+  then
+    raise exception 'Neighborhood pickup authorization does not share the gate lock before row lock and eligibility';
+  end if;
+
+  foreach client_role in array array['anon', 'authenticated'] loop
+    if has_function_privilege(
+      client_role,
+      'public.request_marketplace_pickup_detail(uuid,timestamptz,timestamptz,text,text)',
+      'execute'
+    ) or has_function_privilege(
+      client_role,
+      'public.authorize_marketplace_pickup_detail(uuid,uuid,uuid,integer,text)',
+      'execute'
+    ) then
+      raise exception 'Legacy exact-pickup writer is executable by %', client_role;
+    end if;
+  end loop;
+
+  result := public.set_home_kitchen_launch_gate(
+    true,
+    'Enable the eligible runtime fixture for the toggle contract.'
+  );
+  if coalesce((result->>'enabled')::boolean, false) is distinct from true then
+    raise exception 'Home-kitchen launch gate did not enable through service role';
+  end if;
+
+  gate := public.get_home_kitchen_launch_gate();
+  if coalesce((gate->>'enabled')::boolean, false) is distinct from true then
+    raise exception 'Home-kitchen launch gate status did not reflect enablement';
+  end if;
+end;
+$home_kitchen_global_gate_toggle$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"60000000-0000-4000-8000-000000000006","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $home_kitchen_global_gate_chat_on$
+declare
+  visible_count integer;
+  conversation_count integer;
+  message_count integer;
+  role_name text;
+  start_result jsonb;
+begin
+  select count(*) into visible_count
+  from public.public_business_directory
+  where business_id = 'e1000000-0000-4000-8000-000000000001';
+  if visible_count <> 1 then
+    raise exception 'Eligible home kitchen remained hidden after enablement';
+  end if;
+
+  select count(*) into conversation_count
+  from public.list_my_marketplace_conversations_v2(null, null, 30)
+  where business_id = 'e1000000-0000-4000-8000-000000000001';
+  if conversation_count <> 1 then
+    raise exception 'Enabled home-kitchen conversation was not listed';
+  end if;
+
+  role_name := public.get_marketplace_conversation_role(
+    'e6010000-0000-4000-8000-000000000001'
+  );
+  if role_name <> 'customer' then
+    raise exception 'Enabled home-kitchen conversation returned the wrong role';
+  end if;
+
+  select count(*) into message_count
+  from public.get_marketplace_messages_v2(
+    'e6010000-0000-4000-8000-000000000001', null::bigint, 50
+  );
+  if message_count <> 1 then
+    raise exception 'Enabled home-kitchen message was not readable';
+  end if;
+
+  start_result := public.start_marketplace_conversation(
+    'e1000000-0000-4000-8000-000000000001',
+    'home-gate-runtime-start-on-0001'
+  );
+  if coalesce(start_result->>'business_id', '')
+    <> 'e1000000-0000-4000-8000-000000000001'
+  then
+    raise exception 'Enabled home-kitchen conversation start did not succeed';
+  end if;
+end;
+$home_kitchen_global_gate_chat_on$;
+
+reset role;
+select pg_catalog.set_config(
+  'request.jwt.claims', '{"role":"service_role"}', true
+);
+set local role service_role;
+
+do $home_kitchen_global_gate_disable$
+declare
+  result jsonb;
+  request_state text;
+  disclosure_count integer;
+  conversation_count integer;
+begin
+  result := public.set_home_kitchen_launch_gate(
+    false,
+    'Disable the runtime fixture and revoke all home-kitchen pickup state.'
+  );
+  if coalesce((result->>'enabled')::boolean, true) then
+    raise exception 'Home-kitchen launch gate did not disable through service role';
+  end if;
+  if coalesce((result->'cleanup'->>'cancelled_requests')::integer, 0) < 1 then
+    raise exception 'Disabling the gate did not cancel the active pickup request';
+  end if;
+
+  select state into request_state
+  from public.marketplace_pickup_requests
+  where id = 'e8000000-0000-4000-8000-000000000001';
+  if request_state <> 'cancelled' then
+    raise exception 'Home-kitchen pickup request was not cancelled on disable';
+  end if;
+
+  select count(*) into disclosure_count
+  from private.neighborhood_pickup_disclosures
+  where request_id = 'e8000000-0000-4000-8000-000000000001';
+  if disclosure_count <> 0 then
+    raise exception 'Exact Neighborhood Kitchen disclosure survived disable';
+  end if;
+
+  select count(*) into conversation_count
+  from public.marketplace_conversations
+  where id = 'e6000000-0000-4000-8000-000000000001';
+  if conversation_count <> 1 then
+    raise exception 'Disabling the gate deleted a conversation';
+  end if;
+end;
+$home_kitchen_global_gate_disable$;
+
 reset role;
 
 rollback;

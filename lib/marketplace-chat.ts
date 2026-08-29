@@ -4,6 +4,10 @@ import {
   createAccountBoundSupabaseClient,
   supabase,
 } from "@/lib/supabase";
+import {
+  HOME_KITCHEN_CHAT_UNAVAILABLE_REASON,
+  isHomeKitchenBlocked,
+} from "@/lib/features";
 import type { ActionResult, BusinessCategory } from "@/types/marketplace";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
@@ -41,6 +45,29 @@ function accountChanged<T = undefined>(): ActionResult<T> {
     code: "AUTH_REQUIRED",
     reason: "The active account changed. Try again from the current account.",
   };
+}
+
+function homeKitchenChatUnavailable<T>(): ActionResult<T> {
+  return {
+    ok: false,
+    code: "NOT_FOUND",
+    reason: HOME_KITCHEN_CHAT_UNAVAILABLE_REASON,
+  };
+}
+
+function isChatAccessDeniedError(error: unknown) {
+  const candidate = error as {
+    code?: unknown;
+    message?: unknown;
+    status?: unknown;
+    context?: { status?: unknown };
+  } | null;
+  const code = stringValue(candidate?.code);
+  const message = stringValue(candidate?.message).toLocaleUpperCase("en-US");
+  const status = candidate?.status ?? candidate?.context?.status;
+  if (status === 0 || status === "0") return false;
+  if (/(NETWORK|OFFLINE|FETCH)/.test(message)) return false;
+  return code === "42501" && message.includes("CHAT_ACCESS_REQUIRED");
 }
 
 async function marketplaceMutationClient(
@@ -123,7 +150,9 @@ async function signedUrls(paths: string[]) {
 export async function startMarketplaceConversation(
   businessId: string,
   expectedUserId?: string,
+  businessKind?: BusinessCategory,
 ): Promise<ActionResult<string>> {
+  if (isHomeKitchenBlocked(businessKind)) return homeKitchenChatUnavailable();
   if (!supabase) return unavailable();
   if (!uuidPattern.test(businessId)) {
     return { ok: false, code: "INVALID", reason: "Choose a valid business." };
@@ -149,7 +178,9 @@ export async function startMarketplaceConversation(
 
 export async function isMarketplaceChatAvailable(
   businessId: string,
+  businessKind?: BusinessCategory,
 ): Promise<boolean> {
+  if (isHomeKitchenBlocked(businessKind)) return false;
   const client = supabase;
   if (!client || !uuidPattern.test(businessId)) return false;
   const { data, error } = await client.rpc("is_marketplace_chat_available", {
@@ -173,7 +204,9 @@ export async function listMarketplaceConversations(): Promise<
       },
     );
     if (error) throw error;
-    const sourceRows = rows(data);
+    const sourceRows = rows(data).filter(
+      (row) => !isHomeKitchenBlocked(row.business_kind),
+    );
     const urls = await signedUrls(
       sourceRows.map((row) => stringValue(row.counterpart_avatar_path)),
     );
@@ -480,6 +513,7 @@ export async function getMarketplaceConversationContext(
     ) {
       throw new Error("INVALID_CHAT_CONTEXT");
     }
+    if (isHomeKitchenBlocked(category)) return homeKitchenChatUnavailable();
     const paymentMethodsConfirmedAt = dateValue(
       row.payment_methods_confirmed_at,
     );
@@ -500,6 +534,7 @@ export async function getMarketplaceConversationContext(
       },
     };
   } catch (error) {
+    if (isChatAccessDeniedError(error)) return homeKitchenChatUnavailable();
     return toActionError(error, "Conversation details could not be loaded.");
   }
 }

@@ -100,7 +100,12 @@ that a production project has received or safely exercised it.
   provider agreement. Spottr must not scrape or clone Yelp, Google, DoorDash,
   Facebook Marketplace, or restaurant sites.
 - Home kitchens remain disabled until each jurisdiction has documented legal
-  approval, permit operations, privacy review, and incident ownership.
+  approval, permit operations, privacy review, and incident ownership. The
+  `EXPO_PUBLIC_HOME_KITCHENS_ENABLED` flag only controls client presentation;
+  migration `20260929000000_home_kitchen_global_launch_gate.sql` adds the
+  authoritative private, default-false server gate that also protects direct
+  place links, discovery projections, and marketplace chat. Only the
+  service-role launch-gate boundary may read or change that state.
 - Photo uploads remain disabled until scanning, re-encoding, moderation,
   retention, appeals, and deletion are operational.
 - Push remains disabled. The repository contains a private encrypted-token,

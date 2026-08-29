@@ -23,6 +23,18 @@ report, or claim that production is risk-free.
 
 No client-side check is treated as authorization.
 
+Home-kitchen launch state follows the same rule. The client
+`EXPO_PUBLIC_HOME_KITCHENS_ENABLED` value is only a presentation filter. The
+private `home_kitchen_runtime_settings` singleton and
+`private.home_kitchens_globally_enabled()` helper are default-false; the
+service-role-only audited toggle/status boundary owns changes and inspection.
+`private.is_business_publicly_eligible` applies that gate only to
+`home_kitchen`, so direct `/place` links, public projections, map/nearby/search
+RPCs, RLS-backed reads, and marketplace chat cannot bypass a disabled launch.
+Existing home-kitchen conversations also require current chat eligibility.
+Disabling cancels active pickup requests and destroys exact disclosures but
+does not delete conversation history, staff evidence, or account-export data.
+
 ## Authentication and privileged actions
 
 - Supabase Auth owns password hashes; application tables never store passwords.

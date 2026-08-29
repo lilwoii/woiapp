@@ -27,7 +27,7 @@ type SavedFilter = 'all' | 'food_truck' | 'restaurant';
 type AlertPreference = 'live_nearby' | 'owner_bundle';
 
 export default function SavedScreen() {
-  const { followedIds, places, toggleFollow } = useMarketplaceStore();
+  const { followedIds, publicPlaces, toggleFollow } = useMarketplaceStore();
   const auth = useAuth();
   const accountId = auth.status === 'authenticated' ? auth.account?.id : undefined;
   const [filter, setFilter] = useState<SavedFilter>('all');
@@ -181,16 +181,16 @@ export default function SavedScreen() {
 
   const followed = useMemo(
     () =>
-      places.filter(
+      publicPlaces.filter(
         (place) =>
           followedIds.includes(place.id) &&
           (filter === 'all' || (filter === 'restaurant' ? place.category !== 'food_truck' : place.category === filter))
       ),
-    [filter, followedIds, places]
+    [filter, followedIds, publicPlaces]
   );
 
   const followedWithUpdates = followed.filter((place) => place.update);
-  const recommendations = places
+  const recommendations = publicPlaces
     .filter((place) => !followedIds.includes(place.id))
     .sort((a, b) => b.trendingScore - a.trendingScore)
     .slice(0, 3);

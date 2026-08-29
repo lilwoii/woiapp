@@ -1621,6 +1621,53 @@ as $$
     );
 $$;
 
+-- Database-authoritative home-kitchen launch state. The forward migration adds
+-- the service-role-only toggle/status RPCs and chat/disclosure cleanup after
+-- the marketplace chat tables exist; the bootstrap schema keeps the default
+-- and read helper aligned so public projections fail closed from first boot.
+create table if not exists private.home_kitchen_runtime_settings (
+  singleton boolean primary key default true check (singleton),
+  enabled boolean not null default false,
+  updated_by uuid references auth.users(id) on delete set null,
+  updated_at timestamptz not null default now(),
+  change_reason text,
+  constraint home_kitchen_runtime_settings_reason_length check (
+    change_reason is null or char_length(btrim(change_reason)) between 3 and 1000
+  )
+);
+
+insert into private.home_kitchen_runtime_settings (
+  singleton,
+  enabled,
+  change_reason
+)
+values (
+  true,
+  false,
+  'Bootstrap default: home kitchens remain disabled until launch approval.'
+)
+on conflict (singleton) do nothing;
+
+revoke all privileges on table private.home_kitchen_runtime_settings
+  from public, anon, authenticated, service_role;
+
+create or replace function private.home_kitchens_globally_enabled()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((
+    select settings.enabled
+    from private.home_kitchen_runtime_settings settings
+    where settings.singleton
+  ), false);
+$$;
+
+revoke all on function private.home_kitchens_globally_enabled()
+  from public, anon, authenticated, service_role;
+
 create or replace function private.is_business_publicly_eligible(target_business_id uuid)
 returns boolean
 language sql
@@ -1650,6 +1697,8 @@ as $$
       and (
         b.kind <> 'home_kitchen'
         or (
+          private.home_kitchens_globally_enabled()
+          and
           b.verification = 'verified'
           and exists (
             select 1

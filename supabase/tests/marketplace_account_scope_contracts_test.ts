@@ -110,7 +110,10 @@ Deno.test("follow writes serialize and access refresh retries around optimistic 
 Deno.test("listing details remount their local cache for every account and route scope", () => {
   assert(placeScreen.includes("key={`${scopeKey}:place:${id ?? ''}`}"));
   assertMatch(placeScreen, /mounted\.current = false/);
-  assertMatch(placeScreen, /startMarketplaceConversation\(place\.id, expectedUserId\)/);
+  assertMatch(
+    placeScreen,
+    /startMarketplaceConversation\(place\.id, expectedUserId, place\.category\)/,
+  );
 });
 
 Deno.test("private conversations reject delayed account A results after a scope change", () => {

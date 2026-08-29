@@ -21,7 +21,11 @@ import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
-import { featureFlags } from '@/lib/features';
+import {
+  featureFlags,
+  HOME_KITCHEN_UNAVAILABLE_REASON,
+  isHomeKitchenBlocked,
+} from '@/lib/features';
 import {
   cancelShadowOrder,
   loadShadowOrderableMenu,
@@ -182,8 +186,12 @@ export default function PickupOrderScreen() {
 
 function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSessionProps) {
   const insets = useSafeAreaInsets();
-  const { ensurePlace, places } = useMarketplaceStore();
-  const place = places.find((candidate) => candidate.id === placeId);
+  const { ensurePlace, publicPlaces } = useMarketplaceStore();
+  const place = publicPlaces.find((candidate) => candidate.id === placeId);
+  const placeBlocked = isHomeKitchenBlocked(place?.category);
+  const [placeResolving, setPlaceResolving] = useState(!place);
+  const [placeUnavailableReason, setPlaceUnavailableReason] = useState<string | null>(null);
+  const [placeProbeNonce, setPlaceProbeNonce] = useState(0);
   const [menu, setMenu] = useState<ShadowOrderableMenu | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [selections, setSelections] = useState<SelectionState>({});
@@ -214,10 +222,65 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
   }, []);
 
   useEffect(() => {
-    if (!placeId || place) return;
-    const timer = setTimeout(() => void ensurePlace(placeId), 0);
-    return () => clearTimeout(timer);
-  }, [ensurePlace, place, placeId]);
+    let active = true;
+    if (placeBlocked) {
+      const timer = setTimeout(() => {
+        if (!active) return;
+        setPlaceResolving(false);
+        setPlaceUnavailableReason(HOME_KITCHEN_UNAVAILABLE_REASON);
+      }, 0);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
+    }
+    if (place) {
+      const timer = setTimeout(() => {
+        if (!active) return;
+        setPlaceResolving(false);
+        setPlaceUnavailableReason(null);
+      }, 0);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
+    }
+    if (!placeId) {
+      const timer = setTimeout(() => {
+        if (!active) return;
+        setPlaceResolving(false);
+        setPlaceUnavailableReason(HOME_KITCHEN_UNAVAILABLE_REASON);
+      }, 0);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
+    }
+    const timer = setTimeout(() => {
+      if (!active) return;
+      setPlaceResolving(true);
+      setPlaceUnavailableReason(null);
+      void ensurePlace(placeId).then((result) => {
+        if (!active) return;
+        setPlaceResolving(false);
+        if (!result.ok) {
+          setPlaceUnavailableReason(
+            result.code === 'NOT_FOUND'
+              ? HOME_KITCHEN_UNAVAILABLE_REASON
+              : result.reason
+          );
+        }
+      }).catch(() => {
+        if (!active) return;
+        setPlaceResolving(false);
+        setPlaceUnavailableReason('This listing could not be loaded right now.');
+      });
+    }, 0);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [ensurePlace, place, placeBlocked, placeId, placeProbeNonce]);
 
   useEffect(() => {
     let active = true;
@@ -236,7 +299,10 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
 
   const loadMenu = useCallback(async () => {
     const accountId = auth.account?.id;
-    if (!accountId || !placeId || !secureSession || !featureFlags.pickupOrdering) return;
+    if (
+      !accountId || !placeId || !place || placeBlocked || !secureSession ||
+      !featureFlags.pickupOrdering
+    ) return;
     const generation = requestGeneration.current;
     setBusy('menu');
     setNotice(null);
@@ -257,7 +323,7 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
         ? current
         : result.data?.pickupWindows[0]?.capacitySlotId ?? ''
     );
-  }, [auth.account?.id, placeId, secureSession]);
+  }, [auth.account?.id, place, placeBlocked, placeId, secureSession]);
 
   useEffect(() => {
     const timer = setTimeout(() => void loadMenu(), 0);
@@ -266,7 +332,10 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
 
   useEffect(() => {
     const accountId = auth.account?.id;
-    if (!accountId || !placeId || !secureSession) return;
+    if (
+      !accountId || !placeId || !place || placeBlocked || placeResolving ||
+      placeUnavailableReason || !secureSession
+    ) return;
     const attemptScope = `${accountId}:${placeId}:${recoveryNonce}`;
     if (recoveryAttempted.current === attemptScope) return;
     recoveryAttempted.current = attemptScope;
@@ -339,7 +408,16 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
     return () => {
       active = false;
     };
-  }, [auth.account?.id, placeId, recoveryNonce, secureSession]);
+  }, [
+    auth.account?.id,
+    place,
+    placeBlocked,
+    placeId,
+    placeResolving,
+    placeUnavailableReason,
+    recoveryNonce,
+    secureSession,
+  ]);
 
   useEffect(() => {
     if (!quote || receipt) return;
@@ -734,6 +812,29 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
         primaryLabel="Open Security"
         title="Verify this session"
       />
+    );
+  }
+  if (placeBlocked || placeUnavailableReason) {
+    return (
+      <GateScreen
+        body={placeBlocked ? HOME_KITCHEN_UNAVAILABLE_REASON : placeUnavailableReason!}
+        icon="shield-halved"
+        primaryAction={placeBlocked || !placeId
+          ? undefined
+          : () => setPlaceProbeNonce((current) => current + 1)}
+        primaryLabel={placeBlocked || !placeId ? undefined : "Try again"}
+        title="Listing unavailable"
+      />
+    );
+  }
+  if (placeResolving || !place) {
+    return (
+      <FocusAwareScreen>
+        <View style={styles.center}>
+          <ActivityIndicator color={palette.accentDeep} />
+          <Text style={styles.centerText}>Checking listing availability…</Text>
+        </View>
+      </FocusAwareScreen>
     );
   }
   if (!menu && receipt) {
