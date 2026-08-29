@@ -1578,6 +1578,53 @@ values (
   now(), now()
 );
 
+insert into auth.sessions (id, user_id, created_at, updated_at)
+values
+  (
+    '91000000-0000-4000-8000-000000000001',
+    '90000000-0000-4000-8000-000000000009',
+    now(), now()
+  ),
+  (
+    '91000000-0000-4000-8000-000000000002',
+    '90000000-0000-4000-8000-000000000009',
+    now(), now()
+  );
+
+do $push_registration_session_guard$
+begin
+  begin
+    perform private.register_notification_device(
+      '90000000-0000-4000-8000-000000000009',
+      '91000000-0000-4000-8000-000000000099',
+      '81000000-0000-4000-8000-000000000099',
+      'ios', 'expo', '82000000-0000-4000-8000-000000000002',
+      repeat('e', 64), repeat('E', 48), repeat('F', 16), 1,
+      'America/Los_Angeles', '0.2.0', 'granted'
+    );
+    raise exception 'Registration accepted a missing Auth session';
+  exception when invalid_parameter_value then null;
+  end;
+
+  update auth.sessions set not_after = now() - interval '1 second'
+  where id = '91000000-0000-4000-8000-000000000002';
+  begin
+    perform private.register_notification_device(
+      '90000000-0000-4000-8000-000000000009',
+      '91000000-0000-4000-8000-000000000002',
+      '81000000-0000-4000-8000-000000000098',
+      'ios', 'expo', '82000000-0000-4000-8000-000000000002',
+      repeat('1', 64), repeat('G', 48), repeat('H', 16), 1,
+      'America/Los_Angeles', '0.2.0', 'granted'
+    );
+    raise exception 'Registration accepted an expired Auth session';
+  exception when invalid_parameter_value then null;
+  end;
+  update auth.sessions set not_after = null
+  where id = '91000000-0000-4000-8000-000000000002';
+end;
+$push_registration_session_guard$;
+
 insert into public.follows (user_id, business_id)
 values (
   '90000000-0000-4000-8000-000000000009',
@@ -1588,7 +1635,7 @@ on conflict do nothing;
 set local role authenticated;
 select pg_catalog.set_config(
   'request.jwt.claims',
-  '{"sub":"90000000-0000-4000-8000-000000000009","role":"authenticated","aal":"aal2"}',
+  '{"sub":"90000000-0000-4000-8000-000000000009","role":"authenticated","aal":"aal2","session_id":"91000000-0000-4000-8000-000000000001"}',
   true
 );
 
@@ -1622,6 +1669,7 @@ reset role;
 
 select public.register_notification_device_server(
   '90000000-0000-4000-8000-000000000009',
+  '91000000-0000-4000-8000-000000000001',
   '81000000-0000-4000-8000-000000000001',
   'ios',
   '82000000-0000-4000-8000-000000000002',
@@ -1672,6 +1720,7 @@ begin
 
   unmatched_device_id := private.register_notification_device(
     '90000000-0000-4000-8000-000000000009',
+    '91000000-0000-4000-8000-000000000002',
     '81000000-0000-4000-8000-000000000009',
     'ios', 'expo', '82000000-0000-4000-8000-000000000002',
     repeat('c', 64), repeat('C', 48), repeat('D', 16), 1,
@@ -1690,13 +1739,24 @@ begin
     raise exception 'Delivery accepted a mismatched device owner';
   exception when foreign_key_violation then null;
   end;
+
+  delete from auth.sessions
+  where id = '91000000-0000-4000-8000-000000000002';
+  affected := private.revoke_notification_devices_without_session();
+  if affected <> 1 then raise exception 'Ended auth session did not retire one device'; end if;
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = unmatched_device_id
+      and device.revoked_at is not null
+      and device.revoke_reason = 'auth_session_ended'
+  ) then raise exception 'Ended auth session left an active notification device'; end if;
 end;
 $push_runtime$;
 
 set local role authenticated;
 select pg_catalog.set_config(
   'request.jwt.claims',
-  '{"sub":"90000000-0000-4000-8000-000000000009","role":"authenticated","aal":"aal2"}',
+  '{"sub":"90000000-0000-4000-8000-000000000009","role":"authenticated","aal":"aal2","session_id":"91000000-0000-4000-8000-000000000001"}',
   true
 );
 select public.update_follow_notification_preferences(
@@ -1736,7 +1796,7 @@ begin
   if has_table_privilege('authenticated', 'private.notification_devices', 'select')
     or has_function_privilege(
       'authenticated',
-      'public.register_notification_device_server(uuid,uuid,text,uuid,text,text,text,integer,text,text,text,text,text)',
+      'public.register_notification_device_server(uuid,uuid,uuid,text,uuid,text,text,text,integer,text,text,text,text,text)',
       'execute'
     )
   then raise exception 'Notification device secrets or server registration are client-accessible'; end if;

@@ -633,6 +633,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
       try {
         recoveryIntentUsers.current.clear();
         setRecoveryReady(false);
+        const currentSession = await client.auth.getSession();
+        if (currentSession.error) throw currentSession.error;
+        if (currentSession.data.session) {
+          if (mounted.current) {
+            setMessage(
+              isRecovery
+                ? 'Sign out before opening a password-recovery link. This protects the account already active on this device.'
+                : 'Sign out before opening an account verification link. This protects the account already active on this device.'
+            );
+          }
+          return;
+        }
         const { data, error } = await client.auth.exchangeCodeForSession(code);
         if (error && mounted.current) {
           if (isRecovery) {

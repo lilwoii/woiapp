@@ -130,6 +130,9 @@ Deno.test("notification storage is private, cascading, deduplicated, and disable
   const migration = await text(
     "migrations/20260917000000_push_notification_foundation.sql",
   );
+  const sessionBinding = await text(
+    "migrations/20260919000000_notification_session_binding.sql",
+  );
   for (
     const table of [
       "notification_consents",
@@ -155,8 +158,22 @@ Deno.test("notification storage is private, cascading, deduplicated, and disable
     /notification_devices_active_token_idx[\s\S]*where revoked_at is null/,
   );
   assertMatch(
-    migration,
+    sessionBinding,
     /notification_devices_active_installation_idx[\s\S]*where revoked_at is null/,
+  );
+  assertMatch(
+    sessionBinding,
+    /auth_session_id uuid[\s\S]*notification_devices_active_session_required/,
+  );
+  assertMatch(
+    sessionBinding,
+    /join auth\.sessions auth_session on auth_session\.id = device\.auth_session_id/,
+  );
+  assert(sessionBinding.includes("auth_session_ended"));
+  assert(sessionBinding.includes("session_binding_required"));
+  assertMatch(
+    sessionBinding,
+    /from auth\.sessions auth_session[\s\S]*for key share;[\s\S]*if not found then/,
   );
   assertMatch(migration, /values \(true, false, false\)/);
   assertMatch(
@@ -237,18 +254,23 @@ Deno.test("event enqueue stores only references and bounded workers use leases",
 
 Deno.test("registration is fail-closed and revocation remains available during shutdown", async () => {
   const edge = await text("functions/notification-device/index.ts");
+  const http = await text("functions/_shared/http.ts");
   const config = await text("config.toml");
   const env = await text("functions/.env.example");
   const registerGate = edge.indexOf(
     'SPOTTR_PUSH_DEVICE_REGISTRATION_ENABLED") !== "true"',
   );
   assert(registerGate > edge.indexOf('command.action === "revoke"'));
-  assert(
-    edge.includes('authenticatedUser(request, command.action === "register")'),
+  assertMatch(
+    edge,
+    /authenticatedUser\(\s*request,\s*command\.action === "register",?\s*\)/,
   );
   assert(edge.includes('requiredSetting("SPOTTR_PUSH_EXPO_PROJECT_ID")'));
   assert(edge.includes('requiredSetting("SPOTTR_PUSH_TOKEN_ENCRYPTION_KEY")'));
   assert(edge.includes('requiredSetting("SPOTTR_PUSH_TOKEN_HASH_KEY")'));
+  assert(edge.includes("authenticatedSessionId(token)"));
+  assert(edge.includes("target_auth_session_id: authSessionId"));
+  assert(http.includes("jwtPayload(token).session_id"));
   assert(!edge.includes("fetch("));
   assert(!edge.includes("console.log"));
   assertMatch(config, /\[functions\.notification-device\]\s+verify_jwt = true/);
@@ -259,6 +281,10 @@ Deno.test("native permission is user-triggered and sign-out revokes before the a
   const native = await text("../lib/push-notifications.native.ts");
   const web = await text("../lib/push-notifications.web.ts");
   const auth = await text("../context/auth-context.tsx");
+  const deepLinkHandler = auth.slice(
+    auth.indexOf("const handleDeepLink"),
+    auth.indexOf("const linkSubscription"),
+  );
   const app = JSON.parse(await text("../app.base.json"));
   assert(native.includes("requestPermissionsAsync"));
   assert(native.includes("getExpoPushTokenAsync({ projectId: easProjectId })"));
@@ -280,6 +306,16 @@ Deno.test("native permission is user-triggered and sign-out revokes before the a
   assert(
     auth.includes(
       "Sign out of the current account before signing in to another one.",
+    ),
+  );
+  assert(
+    deepLinkHandler.indexOf(
+      "const currentSession = await client.auth.getSession();",
+    ) < deepLinkHandler.indexOf("client.auth.exchangeCodeForSession(code)"),
+  );
+  assert(
+    deepLinkHandler.includes(
+      "Sign out before opening a password-recovery link.",
     ),
   );
   assert(app.expo.plugins.includes("expo-notifications"));

@@ -105,6 +105,9 @@ or push delivery unless their separate gates are complete.
   database, scheduler, and client gate remains disabled pending live
   acceptance. The checked-in maintenance control plane can invoke both workers
   in bounded phases once its separate protected gate is explicitly enabled.
+  Native registrations are Auth-session-bound and are rejected by the delivery
+  path after that session ends; this is defense in depth and not a substitute
+  for signed-device and live-provider acceptance.
 - Licensed provider inventory with contractual attribution, field-level
   provenance, refresh, correction, caching, and deletion rules
 - Owner-authorized menu OCR into review-before-publish drafts

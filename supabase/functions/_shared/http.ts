@@ -99,6 +99,19 @@ export async function authenticatedUser(
   return { token, user: data.user, client };
 }
 
+export function authenticatedSessionId(token: string): string {
+  const sessionId = jwtPayload(token).session_id;
+  if (
+    typeof sessionId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      sessionId,
+    )
+  ) {
+    throw new HttpError(401, "INVALID_SESSION");
+  }
+  return sessionId.toLowerCase();
+}
+
 function jwtPayload(token: string): Record<string, unknown> {
   try {
     const encoded = token.split(".")[1];
@@ -195,4 +208,3 @@ export function publicError(error: unknown, cors: HeadersInit = {}): Response {
   console.error(error);
   return jsonResponse({ error: { code: "INTERNAL_ERROR" } }, 500, cors);
 }
-

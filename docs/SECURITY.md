@@ -132,6 +132,19 @@ separate server-only HMAC key rather than an offline-testable plain digest. Raw
 tokens and cryptographic material must never enter logs, Realtime, lock-screen
 payloads, analytics, or account exports.
 
+Each active native registration is also bound to the verified Supabase Auth
+`session_id` that registered it. Legacy unbound rows are revoked during the
+forward migration. Registration validates session ownership server-side;
+delivery claim and provider handoff require the same user/session row to remain
+present and before `not_after`. Ended sessions revoke the device and cancel
+queued work. The app does not allow a native verification or recovery link to
+replace an already active account; it requires the existing account's guarded
+sign-out flow first.
+
+Revocation cannot recall a request that already crossed the provider boundary.
+A `sending` delivery remains ambiguous and may produce at most the one
+already-handed-off notification; it is never converted into a blind retry.
+
 Provider dispatch is internal-authenticated, bounded, and separately gated from
 registration and database enqueueing. Tokens are decrypted only at send time
 with an explicitly versioned AES-GCM key ring. The provider host is fixed in

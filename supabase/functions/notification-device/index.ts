@@ -1,5 +1,6 @@
 import {
   adminClient,
+  authenticatedSessionId,
   authenticatedUser,
   corsHeaders,
   HttpError,
@@ -31,7 +32,10 @@ Deno.serve(async (request) => {
       }
       throw error;
     }
-    const { user } = await authenticatedUser(request, command.action === "register");
+    const { token, user } = await authenticatedUser(
+      request,
+      command.action === "register",
+    );
     const admin = adminClient();
 
     if (command.action === "revoke_all") {
@@ -72,8 +76,10 @@ Deno.serve(async (request) => {
       encryptionKey,
       tokenHashKey,
     );
+    const authSessionId = authenticatedSessionId(token);
     const { error } = await admin.rpc("register_notification_device_server", {
       target_user_id: user.id,
+      target_auth_session_id: authSessionId,
       target_installation_id: command.installationId,
       target_platform: command.platform,
       target_project_id: command.projectId,

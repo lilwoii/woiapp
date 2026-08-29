@@ -355,6 +355,13 @@ dispatch wrappers, delayed receipt-check leases, receipt finalization, and
 invalid-token retirement. The Edge adapter uses fixed Expo endpoints, enhanced
 push authentication, generic lock-screen copy, a versioned AES-GCM key ring,
 and `unknown` rather than blind retry after ambiguous sends.
+Migration `20260919000000_notification_session_binding.sql` retires every legacy
+unbound registration, binds new devices to the verified Auth JWT `session_id`,
+and requires that session to remain present and unexpired both when a delivery
+is claimed and immediately before provider handoff. An ended session revokes
+the device and cancels queued work. Native auth links also refuse to replace an
+account that is already signed in; the user must complete the existing
+fail-closed sign-out flow first.
 
 Database enqueue/delivery, device registration, provider access, dispatch, the
 receipt worker, and the client remain independently gated and default false.
@@ -377,9 +384,12 @@ Delivery claims must re-check current consent, the current bundled business-
 update preference, device revocation and freshness, event expiry, and timezone-
 aware quiet hours in the same database statement. Preference, consent, and
 device revocation cancel queued leases. Confirmed device/all-device revocation
-is a precondition of app-initiated sign-out once a registration exists; any
-unexpected session-loss/account-switch path still requires signed-device
-acceptance before push can be activated.
+is a precondition of app-initiated sign-out once a registration exists. The
+delivery worker independently rejects registrations whose bound Auth session
+was removed or reached `not_after`; signed-device acceptance is still required
+before push can be activated. A provider request already marked `sending` is an
+irreversible network-boundary case: revocation blocks future claims but cannot
+promise recall of that one already-handed-off notification.
 
 ### UGC
 
