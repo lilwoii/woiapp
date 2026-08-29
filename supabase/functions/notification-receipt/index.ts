@@ -8,6 +8,7 @@ import {
 } from "../_shared/http.ts";
 import {
   fetchExpoReceipts,
+  parseNotificationFinalization,
   parseReceiptClaims,
   parseReceiptRequest,
   PushProviderError,
@@ -21,11 +22,14 @@ function requiredSetting(name: string): string {
   return value;
 }
 
-function requireWorkerGates(): void {
-  if (
-    Deno.env.get("SPOTTR_PUSH_RECEIPT_WORKER_ENABLED") !== "true" ||
-    Deno.env.get("SPOTTR_PUSH_EXPO_PROVIDER_ENABLED") !== "true"
-  ) throw new HttpError(503, "PUSH_RECEIPTS_DISABLED");
+function requireCleanupWorkerGate(): void {
+  if (Deno.env.get("SPOTTR_PUSH_RECEIPT_WORKER_ENABLED") !== "true") {
+    throw new HttpError(503, "PUSH_RECEIPTS_DISABLED");
+  }
+}
+
+function providerEnabled(): boolean {
+  return Deno.env.get("SPOTTR_PUSH_EXPO_PROVIDER_ENABLED") === "true";
 }
 
 async function recordReceipt(
@@ -49,11 +53,31 @@ Deno.serve(async (request) => {
   try {
     if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED");
     internalBearer(request, "SPOTTR_PUSH_RECEIPT_SECRET");
-    requireWorkerGates();
+    requireCleanupWorkerGate();
     const command = parseReceiptRequest(await readJson(request, 1024));
-    const accessToken = validateExpoAccessToken(requiredSetting("SPOTTR_PUSH_EXPO_ACCESS_TOKEN"));
     const admin = adminClient();
-    const { data, error } = await admin.rpc("claim_notification_receipts_server", {
+    const { data: rawFinalization, error: finalizationError } = await admin.rpc(
+      "finalize_notification_receipt_expiry_server",
+      { target_batch_size: command.batchSize },
+    );
+    if (finalizationError) {
+      throw new HttpError(503, "NOTIFICATION_RECEIPT_FINALIZATION_FAILED");
+    }
+    const finalization = parseNotificationFinalization(
+      rawFinalization,
+      command.batchSize,
+      "INVALID_NOTIFICATION_RECEIPT_FINALIZATION",
+    );
+
+    // Run the database-only sweep before this check, but fail closed while
+    // provider polling is unavailable. A 200/complete response here would
+    // let the maintenance heartbeat declare healthy while receipts wait.
+    if (!providerEnabled()) {
+      throw new HttpError(503, "PUSH_PROVIDER_DISABLED");
+    }
+
+    const accessToken = validateExpoAccessToken(requiredSetting("SPOTTR_PUSH_EXPO_ACCESS_TOKEN"));
+    const { data, error } = await admin.rpc("claim_notification_receipts_after_finalization_server", {
       target_worker_id: crypto.randomUUID(),
       target_batch_size: command.batchSize,
       target_lease_seconds: 120,
@@ -111,7 +135,9 @@ Deno.serve(async (request) => {
       retry,
       failed,
       invalid,
-      more_work: claims.length === command.batchSize,
+      more_work: claims.length === command.batchSize || finalization.moreWork,
+      receipts_finalized: finalization.finalized,
+      receipt_finalization_more_work: finalization.moreWork,
     });
   } catch (error) {
     return publicError(error);

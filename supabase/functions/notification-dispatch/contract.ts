@@ -21,6 +21,11 @@ export type DispatchRequest = {
 
 export type ReceiptRequest = { batchSize: number };
 
+export type NotificationFinalization = {
+  finalized: number;
+  moreWork: boolean;
+};
+
 export type DeliveryClaim = {
   delivery_id: string;
   device_id: string;
@@ -187,6 +192,22 @@ export function parseReceiptRequest(value: unknown): ReceiptRequest {
   return { batchSize: boundedInteger(body.batchSize, 100, 250) };
 }
 
+export function parseNotificationFinalization(
+  value: unknown,
+  maximum: number,
+  errorCode: string,
+): NotificationFinalization {
+  const body = record(value);
+  if (
+    !body || !Number.isSafeInteger(body.finalized) ||
+    Number(body.finalized) < 0 || Number(body.finalized) > maximum ||
+    typeof body.more_work !== "boolean"
+  ) {
+    throw new HttpError(503, errorCode);
+  }
+  return { finalized: Number(body.finalized), moreWork: body.more_work };
+}
+
 function base64UrlToBytes(value: string, errorCode: string): Uint8Array {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new HttpError(503, errorCode);
   const padded = value.replace(/-/g, "+").replace(/_/g, "/")
@@ -338,7 +359,15 @@ export async function sendExpoMessages(
     throw new PushProviderError("unknown", "ExpoNetworkAmbiguous");
   }
   if (!response.ok) {
-    const resolution = response.status === 429 || response.status >= 500 ? "retry" : "dead";
+    // A provider 5xx does not tell us whether the batch was accepted. Keep
+    // those rows unknown so the ambiguity finalizer can settle them later;
+    // retrying here could duplicate a notification that already crossed the
+    // provider boundary. Only explicit provider throttling is retryable.
+    const resolution = response.status === 429
+      ? "retry"
+      : response.status >= 500
+      ? "unknown"
+      : "dead";
     throw new PushProviderError(resolution, responseCode(response.status));
   }
   const envelope = record(await boundedJson(response));
@@ -391,6 +420,9 @@ export async function fetchExpoReceipts(
     throw new PushProviderError("retry", "ExpoReceiptNetworkError");
   }
   if (!response.ok) {
+    // Receipt polling is read-only and never resends a notification, so an
+    // unavailable receipt endpoint can be polled again safely. This retry
+    // path must not be reused by sendExpoMessages.
     throw new PushProviderError("retry", responseCode(response.status));
   }
   const envelope = record(await boundedJson(response));

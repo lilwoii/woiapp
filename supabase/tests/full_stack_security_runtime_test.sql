@@ -2733,6 +2733,18 @@ declare
   delivery_claim record;
   ambiguous_delivery_claim record;
   receipt_claim record;
+  receipt_claim_count integer;
+  receipt_finalization jsonb;
+  unknown_finalization jsonb;
+  outbox_finalization jsonb;
+  pending_outbox_event_id bigint;
+  retry_outbox_event_id bigint;
+  leased_outbox_event_id bigint;
+  active_outbox_event_id bigint;
+  pending_outbox_id uuid;
+  retry_outbox_id uuid;
+  leased_outbox_id uuid;
+  active_outbox_id uuid;
 begin
   insert into public.business_public_events (
     business_id, event_type, payload, expires_at
@@ -2854,6 +2866,235 @@ begin
       and delivery.state = 'dead'
       and delivery.last_provider_code = 'DeviceNotRegistered'
   ) then raise exception 'Invalid provider receipt did not finalize the delivery'; end if;
+
+  -- An active receipt lease is preserved even when its receipt window has
+  -- expired; the provider request may still be in flight.
+  update private.notification_deliveries
+  set state = 'accepted', last_provider_code = 'ExpoAccepted', updated_at = now()
+  where id = delivery_claim.delivery_id;
+  update private.notification_receipt_checks
+  set state = 'leased', attempts = 1, created_at = now() - interval '2 hours',
+      expires_at = now() - interval '1 hour', available_at = now(),
+      lease_token = '8a000000-0000-4000-8000-000000000008',
+      lease_expires_at = now() + interval '1 hour',
+      last_provider_code = 'ExpoReceiptPending', updated_at = now()
+  where delivery_id = delivery_claim.delivery_id;
+  select count(*) into receipt_claim_count
+  from public.claim_notification_receipts_server(
+    '89a00000-0000-4000-8000-000000000009', 20, 60
+  ) where delivery_id = delivery_claim.delivery_id;
+  if receipt_claim_count <> 0
+  then raise exception 'Active receipt lease was finalized prematurely'; end if;
+  if not exists (
+    select 1 from private.notification_receipt_checks receipt
+    where receipt.delivery_id = delivery_claim.delivery_id
+      and receipt.state = 'leased'
+      and receipt.lease_token = '8a000000-0000-4000-8000-000000000008'
+      and receipt.lease_expires_at > now()
+  ) then raise exception 'Active receipt lease was cleared'; end if;
+
+  -- Receipt max-attempt finalization is atomic with the accepted delivery and
+  -- never leaves a row eligible for another provider attempt.
+  update private.notification_receipt_checks
+  set state = 'retry', attempts = 20, expires_at = now() + interval '1 day',
+      available_at = now(), lease_token = null, lease_expires_at = null,
+      last_provider_code = 'ExpoReceiptPending', updated_at = now()
+  where delivery_id = delivery_claim.delivery_id;
+  receipt_finalization := private.finalize_notification_receipt_expiry(20);
+  if coalesce((receipt_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((receipt_finalization->>'more_work')::boolean, true)
+  then raise exception 'Receipt max-attempt finalization did not settle its bounded batch'; end if;
+  if not exists (
+    select 1 from private.notification_receipt_checks receipt
+    where receipt.delivery_id = delivery_claim.delivery_id
+      and receipt.state = 'dead'
+      and receipt.last_provider_code = 'receipt_max_attempts'
+  ) or not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_claim.delivery_id
+      and delivery.state = 'failed'
+      and delivery.last_provider_code = 'receipt_max_attempts'
+  ) then raise exception 'Receipt max-attempt finalization left an accepted delivery retryable'; end if;
+
+  -- A fresh provider 5xx/lease ambiguity remains untouched during the fixed
+  -- two-hour grace window, including its lease fields.
+  update private.notification_deliveries
+  set state = 'unknown', lease_token = '8b000000-0000-4000-8000-000000000008',
+      lease_expires_at = now() + interval '1 hour', updated_at = now(),
+      last_provider_code = 'ExpoHttp503'
+  where id = ambiguous_delivery_claim.delivery_id;
+  unknown_finalization := private.finalize_unknown_notification_deliveries(20);
+  if coalesce((unknown_finalization->>'finalized')::integer, 0) <> 0
+    or coalesce((unknown_finalization->>'more_work')::boolean, true)
+  then raise exception 'Fresh unknown delivery was finalized prematurely'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = ambiguous_delivery_claim.delivery_id
+      and delivery.state = 'unknown'
+      and delivery.lease_token = '8b000000-0000-4000-8000-000000000008'
+      and delivery.lease_expires_at > now()
+  ) then raise exception 'Fresh unknown delivery lease was cleared'; end if;
+
+  -- A stale provider 5xx/lease ambiguity is finalized after the grace window
+  -- and clears any leftover lease fields.
+  update private.notification_deliveries
+  set updated_at = now() - interval '3 hours'
+  where id = ambiguous_delivery_claim.delivery_id;
+  unknown_finalization := private.finalize_unknown_notification_deliveries(20);
+  if coalesce((unknown_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((unknown_finalization->>'more_work')::boolean, true)
+  then raise exception 'Unknown delivery finalization did not settle its bounded batch'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = ambiguous_delivery_claim.delivery_id
+      and delivery.state = 'failed'
+      and delivery.lease_token is null
+      and delivery.lease_expires_at is null
+      and delivery.last_provider_code = 'provider_ambiguity_expired'
+  ) then raise exception 'Unknown provider outcome was not finalized terminally'; end if;
+
+  -- Delivery attempts that can no longer be claimed are finalized without
+  -- touching a provider-handoff `sending` row.
+  update private.notification_deliveries
+  set state = 'retry', attempts = 20, lease_token = null,
+      lease_expires_at = null, updated_at = now(),
+      last_provider_code = 'ExpoReceiptPending'
+  where id = delivery_claim.delivery_id;
+  unknown_finalization := private.finalize_unknown_notification_deliveries(20);
+  if coalesce((unknown_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((unknown_finalization->>'more_work')::boolean, true)
+  then raise exception 'Exhausted retry delivery was not finalized'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_claim.delivery_id
+      and delivery.state = 'failed'
+      and delivery.last_provider_code = 'delivery_max_attempts'
+  ) then raise exception 'Exhausted retry delivery remained retryable'; end if;
+
+  update private.notification_deliveries
+  set state = 'leased', attempts = 20,
+      lease_token = '8c000000-0000-4000-8000-000000000008',
+      lease_expires_at = now() - interval '1 second', updated_at = now(),
+      last_provider_code = 'ExpoReceiptPending'
+  where id = ambiguous_delivery_claim.delivery_id;
+  unknown_finalization := private.finalize_unknown_notification_deliveries(20);
+  if coalesce((unknown_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((unknown_finalization->>'more_work')::boolean, true)
+  then raise exception 'Expired exhausted lease was not finalized'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = ambiguous_delivery_claim.delivery_id
+      and delivery.state = 'failed'
+      and delivery.lease_token is null
+      and delivery.lease_expires_at is null
+      and delivery.last_provider_code = 'delivery_lease_max_attempts'
+  ) then raise exception 'Expired exhausted lease remained retryable'; end if;
+
+  -- Outbox attempts have their own terminal boundary. Pending/retry rows and
+  -- expired pre-fan-out leases are settled, while an active lease remains
+  -- untouched because its worker may still be in flight.
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007', 'owner_update',
+    jsonb_build_object('update_id', '86200000-0000-4000-8000-000000000006'),
+    now() + interval '2 hours'
+  ) returning id into pending_outbox_event_id;
+  select id into pending_outbox_id
+  from private.notification_outbox where source_event_id = pending_outbox_event_id;
+  update private.notification_outbox set
+    state = 'pending', attempts = 20, lease_token = null,
+    lease_expires_at = null, updated_at = now()
+  where id = pending_outbox_id;
+  outbox_finalization := private.finalize_notification_outbox(20);
+  if coalesce((outbox_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((outbox_finalization->>'more_work')::boolean, true)
+  then raise exception 'Exhausted pending outbox was not finalized'; end if;
+  if not exists (
+    select 1 from private.notification_outbox queue
+    where queue.id = pending_outbox_id
+      and queue.state = 'dead'
+      and queue.lease_token is null
+      and queue.lease_expires_at is null
+      and queue.last_error_code = 'outbox_max_attempts'
+  ) then raise exception 'Exhausted pending outbox remained claimable'; end if;
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007', 'owner_update',
+    jsonb_build_object('update_id', '86300000-0000-4000-8000-000000000006'),
+    now() + interval '2 hours'
+  ) returning id into retry_outbox_event_id;
+  select id into retry_outbox_id
+  from private.notification_outbox where source_event_id = retry_outbox_event_id;
+  update private.notification_outbox set
+    state = 'retry', attempts = 20, lease_token = null,
+    lease_expires_at = null, updated_at = now()
+  where id = retry_outbox_id;
+  outbox_finalization := private.finalize_notification_outbox(20);
+  if coalesce((outbox_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((outbox_finalization->>'more_work')::boolean, true)
+  then raise exception 'Exhausted retry outbox was not finalized'; end if;
+  if not exists (
+    select 1 from private.notification_outbox queue
+    where queue.id = retry_outbox_id
+      and queue.state = 'dead'
+      and queue.last_error_code = 'outbox_max_attempts'
+  ) then raise exception 'Exhausted retry outbox remained claimable'; end if;
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007', 'owner_update',
+    jsonb_build_object('update_id', '86400000-0000-4000-8000-000000000006'),
+    now() + interval '2 hours'
+  ) returning id into leased_outbox_event_id;
+  select id into leased_outbox_id
+  from private.notification_outbox where source_event_id = leased_outbox_event_id;
+  update private.notification_outbox set
+    state = 'leased', attempts = 20,
+    lease_token = '8d000000-0000-4000-8000-000000000008',
+    lease_expires_at = now() - interval '1 second', updated_at = now()
+  where id = leased_outbox_id;
+  outbox_finalization := private.finalize_notification_outbox(20);
+  if coalesce((outbox_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((outbox_finalization->>'more_work')::boolean, true)
+  then raise exception 'Expired exhausted outbox lease was not finalized'; end if;
+  if not exists (
+    select 1 from private.notification_outbox queue
+    where queue.id = leased_outbox_id
+      and queue.state = 'dead'
+      and queue.lease_token is null
+      and queue.lease_expires_at is null
+      and queue.last_error_code = 'outbox_max_attempts'
+  ) then raise exception 'Expired exhausted outbox lease remained claimable'; end if;
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007', 'owner_update',
+    jsonb_build_object('update_id', '86500000-0000-4000-8000-000000000006'),
+    now() + interval '2 hours'
+  ) returning id into active_outbox_event_id;
+  select id into active_outbox_id
+  from private.notification_outbox where source_event_id = active_outbox_event_id;
+  update private.notification_outbox set
+    state = 'leased', attempts = 20,
+    lease_token = '8e000000-0000-4000-8000-000000000008',
+    lease_expires_at = now() + interval '1 hour', updated_at = now()
+  where id = active_outbox_id;
+  outbox_finalization := private.finalize_notification_outbox(20);
+  if coalesce((outbox_finalization->>'finalized')::integer, 0) <> 0
+    or coalesce((outbox_finalization->>'more_work')::boolean, true)
+  then raise exception 'Active outbox lease was finalized prematurely'; end if;
+  if not exists (
+    select 1 from private.notification_outbox queue
+    where queue.id = active_outbox_id
+      and queue.state = 'leased'
+      and queue.lease_token = '8e000000-0000-4000-8000-000000000008'
+      and queue.lease_expires_at > now()
+  ) then raise exception 'Active outbox lease was cleared'; end if;
 end;
 $push_dispatch_receipt_runtime$;
 
@@ -3030,6 +3271,9 @@ end;
 $push_account_deletion_runtime$;
 
 do $push_dispatch_privilege_guard$
+declare
+  client_role text;
+  function_signature text;
 begin
   if has_table_privilege('authenticated', 'private.notification_receipt_checks', 'select')
     or has_function_privilege(
@@ -3042,7 +3286,63 @@ begin
       'authenticated', 'public.record_notification_receipt_result_server(uuid,uuid,text,text,integer)', 'execute'
     )
   then raise exception 'Notification provider worker authority is client-accessible'; end if;
+
+  foreach client_role in array array['anon', 'authenticated'] loop
+    foreach function_signature in array array[
+      'public.finalize_notification_outbox_server(integer)',
+      'public.finalize_unknown_notification_deliveries_server(integer)',
+      'public.finalize_notification_receipt_expiry_server(integer)',
+      'public.notification_outbox_has_pending_server(uuid[])',
+      'public.claim_notification_receipts_after_finalization_server(uuid,integer,integer)'
+    ] loop
+      if has_function_privilege(client_role, function_signature, 'execute') then
+        raise exception 'Notification wrapper % is executable by %',
+          function_signature, client_role;
+      end if;
+    end loop;
+  end loop;
 end;
 $push_dispatch_privilege_guard$;
+
+select pg_catalog.set_config(
+  'request.jwt.claims', '{"role":"service_role"}', true
+);
+set local role service_role;
+
+do $push_dispatch_service_wrapper_runtime$
+declare
+  result jsonb;
+  claimed_receipts integer;
+begin
+  result := public.finalize_notification_outbox_server(1);
+  if coalesce(jsonb_typeof(result->'finalized'), '') <> 'number'
+    or coalesce(jsonb_typeof(result->'more_work'), '') <> 'boolean'
+  then raise exception 'Service-role outbox finalizer returned an invalid contract'; end if;
+
+  result := public.finalize_unknown_notification_deliveries_server(1);
+  if coalesce(jsonb_typeof(result->'finalized'), '') <> 'number'
+    or coalesce(jsonb_typeof(result->'more_work'), '') <> 'boolean'
+  then raise exception 'Service-role delivery finalizer returned an invalid contract'; end if;
+
+  result := public.finalize_notification_receipt_expiry_server(1);
+  if coalesce(jsonb_typeof(result->'finalized'), '') <> 'number'
+    or coalesce(jsonb_typeof(result->'more_work'), '') <> 'boolean'
+  then raise exception 'Service-role receipt finalizer returned an invalid contract'; end if;
+
+  if public.notification_outbox_has_pending_server(
+    array['ffffffff-ffff-4fff-8fff-ffffffffffff'::uuid]
+  ) then raise exception 'Outbox status wrapper matched an absent row'; end if;
+
+  select count(*) into claimed_receipts
+  from public.claim_notification_receipts_after_finalization_server(
+    '89b00000-0000-4000-8000-000000000009', 1, 60
+  );
+  if claimed_receipts not between 0 and 1 then
+    raise exception 'After-finalization receipt wrapper exceeded its batch';
+  end if;
+end;
+$push_dispatch_service_wrapper_runtime$;
+
+reset role;
 
 rollback;

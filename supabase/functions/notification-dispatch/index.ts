@@ -14,6 +14,7 @@ import {
   parseDeliveryClaims,
   parseDispatchRequest,
   parseEncryptionKeyRing,
+  parseNotificationFinalization,
   parseOutboxClaims,
   PushProviderError,
   sendExpoMessages,
@@ -26,11 +27,14 @@ function requiredSetting(name: string): string {
   return value;
 }
 
-function requireWorkerGates(): void {
-  if (
-    Deno.env.get("SPOTTR_PUSH_DISPATCH_WORKER_ENABLED") !== "true" ||
-    Deno.env.get("SPOTTR_PUSH_EXPO_PROVIDER_ENABLED") !== "true"
-  ) throw new HttpError(503, "PUSH_DISPATCH_DISABLED");
+function requireCleanupWorkerGate(): void {
+  if (Deno.env.get("SPOTTR_PUSH_DISPATCH_WORKER_ENABLED") !== "true") {
+    throw new HttpError(503, "PUSH_DISPATCH_DISABLED");
+  }
+}
+
+function providerEnabled(): boolean {
+  return Deno.env.get("SPOTTR_PUSH_EXPO_PROVIDER_ENABLED") === "true";
 }
 
 type Admin = ReturnType<typeof adminClient>;
@@ -74,11 +78,45 @@ Deno.serve(async (request) => {
   try {
     if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED");
     internalBearer(request, "SPOTTR_PUSH_DISPATCH_SECRET");
-    requireWorkerGates();
+    requireCleanupWorkerGate();
     const command = parseDispatchRequest(await readJson(request, 2048));
+    const admin = adminClient();
+
+    const { data: rawOutboxFinalization, error: outboxFinalizationError } = await admin.rpc(
+      "finalize_notification_outbox_server",
+      { target_batch_size: command.outboxBatchSize },
+    );
+    if (outboxFinalizationError) {
+      throw new HttpError(503, "NOTIFICATION_OUTBOX_FINALIZATION_FAILED");
+    }
+    const outboxFinalization = parseNotificationFinalization(
+      rawOutboxFinalization,
+      command.outboxBatchSize,
+      "INVALID_NOTIFICATION_OUTBOX_FINALIZATION",
+    );
+
+    const { data: rawUnknownFinalization, error: unknownFinalizationError } = await admin.rpc(
+      "finalize_unknown_notification_deliveries_server",
+      { target_batch_size: command.deliveryBatchSize },
+    );
+    if (unknownFinalizationError) {
+      throw new HttpError(503, "NOTIFICATION_UNKNOWN_FINALIZATION_FAILED");
+    }
+    const unknownFinalization = parseNotificationFinalization(
+      rawUnknownFinalization,
+      command.deliveryBatchSize,
+      "INVALID_NOTIFICATION_UNKNOWN_FINALIZATION",
+    );
+
+    // Run the database-only sweep before this check, but fail closed while
+    // provider delivery is unavailable. A 200/complete response here would
+    // let the maintenance heartbeat declare healthy while outbox work waits.
+    if (!providerEnabled()) {
+      throw new HttpError(503, "PUSH_PROVIDER_DISABLED");
+    }
+
     const accessToken = validateExpoAccessToken(requiredSetting("SPOTTR_PUSH_EXPO_ACCESS_TOKEN"));
     const keyRing = parseEncryptionKeyRing(requiredSetting("SPOTTR_PUSH_TOKEN_ENCRYPTION_KEYS"));
-    const admin = adminClient();
     const workerId = crypto.randomUUID();
 
     const { data: rawOutbox, error: outboxError } = await admin.rpc(
@@ -92,7 +130,6 @@ Deno.serve(async (request) => {
     if (outboxError) throw new HttpError(503, "NOTIFICATION_OUTBOX_CLAIM_FAILED");
     const outbox = parseOutboxClaims(rawOutbox ?? [], command.outboxBatchSize);
     let expandedDeliveries = 0;
-    let recipientBatchSaturated = false;
     for (const claim of outbox) {
       const { data, error } = await admin.rpc("expand_notification_outbox_server", {
         target_outbox_id: claim.outbox_id,
@@ -104,7 +141,17 @@ Deno.serve(async (request) => {
       }
       const expanded = Number(data);
       expandedDeliveries += expanded;
-      if (expanded === command.recipientBatchSize) recipientBatchSaturated = true;
+    }
+
+    let expandedOutboxPending = false;
+    if (outbox.length) {
+      const { data, error } = await admin.rpc("notification_outbox_has_pending_server", {
+        target_outbox_ids: outbox.map((claim) => claim.outbox_id),
+      });
+      if (error || typeof data !== "boolean") {
+        throw new HttpError(503, "NOTIFICATION_OUTBOX_STATUS_FAILED");
+      }
+      expandedOutboxPending = data;
     }
 
     const { data: rawDeliveries, error: deliveryError } = await admin.rpc(
@@ -202,7 +249,12 @@ Deno.serve(async (request) => {
       retry,
       dead,
       more_work: outbox.length === command.outboxBatchSize ||
-        recipientBatchSaturated || deliveries.length === command.deliveryBatchSize,
+        expandedOutboxPending || deliveries.length === command.deliveryBatchSize ||
+        outboxFinalization.moreWork || unknownFinalization.moreWork,
+      outbox_finalized: outboxFinalization.finalized,
+      outbox_finalization_more_work: outboxFinalization.moreWork,
+      unknown_finalized: unknownFinalization.finalized,
+      unknown_finalization_more_work: unknownFinalization.moreWork,
     });
   } catch (error) {
     return publicError(error);

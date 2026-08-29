@@ -198,7 +198,13 @@ uses fixed allowlisted Expo endpoints, emits generic lock-screen copy and a
 canonical place route only, and never retries an ambiguous send. Accepted
 tickets create receipt checks no earlier than 15 minutes after submission.
 `notification-receipt` resolves those tickets without resending, retires tokens
-that return `DeviceNotRegistered`, and bounds every lease and retry.
+that return `DeviceNotRegistered`, and bounds every lease and retry. Provider
+5xx responses and expired send leases remain `unknown` for a fixed two-hour
+grace window before a service-only finalizer records the terminal `failed`
+state; receipt expiry and the 20-attempt ceiling are finalized atomically with
+their accepted delivery. Outbox fan-out rows also have a service-only
+20-attempt finalizer, while active leases remain untouched. Maintenance treats
+any finalizer backlog as unfinished work and withholds its heartbeat.
 
 The provider, dispatch worker, receipt worker, database enqueue/delivery, and
 client switches are independent and all default false. Keep them false until

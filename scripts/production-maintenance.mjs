@@ -49,9 +49,6 @@ function validatePushDispatchResult(result) {
   if (!result || typeof result !== 'object' || result.status !== 'complete') {
     throw new Error('notification-dispatch did not report completion.');
   }
-  if (result.more_work !== false) {
-    throw new Error('notification-dispatch did not report bounded completion.');
-  }
   const outboxClaimed = nonNegativeInteger(
     result.outbox_claimed,
     'notification-dispatch outbox_claimed',
@@ -87,17 +84,45 @@ function validatePushDispatchResult(result) {
     'notification-dispatch dead',
     deliveriesClaimed,
   );
+  nonNegativeInteger(
+    result.outbox_finalized,
+    'notification-dispatch outbox_finalized',
+    PUSH_DISPATCH_COMMAND.outboxBatchSize,
+  );
+  if (typeof result.outbox_finalization_more_work !== 'boolean') {
+    throw new Error('notification-dispatch returned an invalid outbox backlog flag.');
+  }
+  const unknownFinalized = nonNegativeInteger(
+    result.unknown_finalized,
+    'notification-dispatch unknown_finalized',
+    PUSH_DISPATCH_COMMAND.deliveryBatchSize,
+  );
+  if (typeof result.unknown_finalization_more_work !== 'boolean') {
+    throw new Error('notification-dispatch returned an invalid ambiguity backlog flag.');
+  }
+  if (result.more_work !== false && typeof result.more_work !== 'boolean') {
+    throw new Error('notification-dispatch returned an invalid top-level backlog flag.');
+  }
+  if (
+    result.more_work === false &&
+    (result.outbox_finalization_more_work || result.unknown_finalization_more_work)
+  ) {
+    throw new Error('notification-dispatch top-level backlog omitted finalization work.');
+  }
+  if (result.more_work !== false) {
+    throw new Error('notification-dispatch did not report bounded completion.');
+  }
   if (accepted + unknown + retry + dead !== deliveriesClaimed) {
     throw new Error('notification-dispatch returned inconsistent delivery counts.');
+  }
+  if (unknownFinalized < 0) {
+    throw new Error('notification-dispatch returned an invalid ambiguity finalization count.');
   }
 }
 
 function validatePushReceiptResult(result) {
   if (!result || typeof result !== 'object' || result.status !== 'complete') {
     throw new Error('notification-receipt did not report completion.');
-  }
-  if (result.more_work !== false) {
-    throw new Error('notification-receipt did not report bounded completion.');
   }
   const receiptsClaimed = nonNegativeInteger(
     result.receipts_claimed,
@@ -124,6 +149,23 @@ function validatePushReceiptResult(result) {
     'notification-receipt invalid',
     receiptsClaimed,
   );
+  nonNegativeInteger(
+    result.receipts_finalized,
+    'notification-receipt receipts_finalized',
+    PUSH_RECEIPT_COMMAND.batchSize,
+  );
+  if (typeof result.receipt_finalization_more_work !== 'boolean') {
+    throw new Error('notification-receipt returned an invalid finalization backlog flag.');
+  }
+  if (result.more_work !== false && typeof result.more_work !== 'boolean') {
+    throw new Error('notification-receipt returned an invalid top-level backlog flag.');
+  }
+  if (result.more_work === false && result.receipt_finalization_more_work) {
+    throw new Error('notification-receipt top-level backlog omitted finalization work.');
+  }
+  if (result.more_work !== false) {
+    throw new Error('notification-receipt did not report bounded completion.');
+  }
   if (delivered + retry + failed + invalid !== receiptsClaimed) {
     throw new Error('notification-receipt returned inconsistent receipt counts.');
   }

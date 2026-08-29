@@ -62,6 +62,10 @@ function completePushDispatch(overrides = {}) {
     unknown: 0,
     retry: 1,
     dead: 0,
+    outbox_finalized: 0,
+    outbox_finalization_more_work: false,
+    unknown_finalized: 0,
+    unknown_finalization_more_work: false,
     more_work: false,
     ...overrides,
   });
@@ -75,6 +79,8 @@ function completePushReceipts(overrides = {}) {
     retry: 0,
     failed: 0,
     invalid: 1,
+    receipts_finalized: 0,
+    receipt_finalization_more_work: false,
     more_work: false,
     ...overrides,
   });
@@ -254,6 +260,76 @@ test('maintenance withholds heartbeat when receipt worker counts are inconsisten
   assert.equal(
     calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
     false,
+  );
+});
+
+test('maintenance rejects a dispatch ambiguity backlog hidden by top-level more_work=false', async () => {
+  const queue = [
+    response({ status: 'idle' }),
+    response({ status: 'complete' }),
+    response({ requests_expired: 0 }),
+    response({ requests_cancelled: 0 }),
+    completeQuoteExpiry(),
+    completeOrderExpiry(),
+    response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    completeProviderLifecycle(),
+    completeSponsoredReservations(),
+    completePushDispatch({ unknown_finalization_more_work: true, more_work: false }),
+  ];
+  await assert.rejects(
+    runProductionMaintenance({
+      config: readMaintenanceConfiguration(PUSH_ENABLED_ENV),
+      fetchImpl: async () => queue.shift(),
+      log: () => {},
+    }),
+    /top-level backlog omitted finalization work/,
+  );
+});
+
+test('maintenance rejects a dispatch outbox finalizer backlog hidden by top-level more_work=false', async () => {
+  const queue = [
+    response({ status: 'idle' }),
+    response({ status: 'complete' }),
+    response({ requests_expired: 0 }),
+    response({ requests_cancelled: 0 }),
+    completeQuoteExpiry(),
+    completeOrderExpiry(),
+    response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    completeProviderLifecycle(),
+    completeSponsoredReservations(),
+    completePushDispatch({ outbox_finalization_more_work: true, more_work: false }),
+  ];
+  await assert.rejects(
+    runProductionMaintenance({
+      config: readMaintenanceConfiguration(PUSH_ENABLED_ENV),
+      fetchImpl: async () => queue.shift(),
+      log: () => {},
+    }),
+    /top-level backlog omitted finalization work/,
+  );
+});
+
+test('maintenance rejects a receipt finalizer backlog hidden by top-level more_work=false', async () => {
+  const queue = [
+    response({ status: 'idle' }),
+    response({ status: 'complete' }),
+    response({ requests_expired: 0 }),
+    response({ requests_cancelled: 0 }),
+    completeQuoteExpiry(),
+    completeOrderExpiry(),
+    response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    completeProviderLifecycle(),
+    completeSponsoredReservations(),
+    completePushDispatch(),
+    completePushReceipts({ receipt_finalization_more_work: true, more_work: false }),
+  ];
+  await assert.rejects(
+    runProductionMaintenance({
+      config: readMaintenanceConfiguration(PUSH_ENABLED_ENV),
+      fetchImpl: async () => queue.shift(),
+      log: () => {},
+    }),
+    /top-level backlog omitted finalization work/,
   );
 });
 

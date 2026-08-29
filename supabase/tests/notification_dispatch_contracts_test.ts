@@ -8,6 +8,7 @@ import {
   fetchExpoReceipts,
   parseDispatchRequest,
   parseEncryptionKeyRing,
+  parseNotificationFinalization,
   parseReceiptRequest,
   PushProviderError,
   sendExpoMessages,
@@ -46,6 +47,23 @@ Deno.test("push worker requests are exact and strictly bounded", () => {
       "INVALID_NOTIFICATION_WORKER_REQUEST",
     );
   }
+});
+
+Deno.test("finalizer responses are bounded and carry an explicit backlog flag", () => {
+  assertEquals(
+    parseNotificationFinalization({ finalized: 2, more_work: false }, 2, "INVALID"),
+    { finalized: 2, moreWork: false },
+  );
+  assertThrows(
+    () => parseNotificationFinalization({ finalized: 3, more_work: false }, 2, "INVALID"),
+    HttpError,
+    "INVALID",
+  );
+  assertThrows(
+    () => parseNotificationFinalization({ finalized: 0, more_work: "false" }, 2, "INVALID"),
+    HttpError,
+    "INVALID",
+  );
 });
 
 Deno.test("versioned key ring decrypts only the matching AES-GCM token", async () => {
@@ -156,6 +174,35 @@ Deno.test("ambiguous send is never converted into a blind retry", async () => {
   }
 });
 
+Deno.test("provider 5xx responses remain unknown while explicit throttles retry", async () => {
+  const message = buildGenericExpoMessage(token, {
+    business_id: businessId,
+    source_event_id: 42,
+    notification_kind: "owner_update",
+  });
+  for (const status of [500, 502, 503]) {
+    const providerFailure = (() => Promise.resolve(new Response("upstream failure", { status }))) as typeof fetch;
+    await assertRejects(
+      () => sendExpoMessages([message], accessToken, providerFailure),
+      PushProviderError,
+      `ExpoHttp${status}`,
+    );
+    try {
+      await sendExpoMessages([message], accessToken, providerFailure);
+    } catch (error) {
+      assert(error instanceof PushProviderError);
+      assertEquals(error.resolution, "unknown");
+    }
+  }
+  const throttled = (() => Promise.resolve(new Response("slow down", { status: 429 }))) as typeof fetch;
+  try {
+    await sendExpoMessages([message], accessToken, throttled);
+  } catch (error) {
+    assert(error instanceof PushProviderError);
+    assertEquals(error.resolution, "retry");
+  }
+});
+
 Deno.test("receipt polling never resends and retires invalid provider tokens", async () => {
   const ids = [
     "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
@@ -194,8 +241,12 @@ Deno.test("dispatch storage, RPCs, functions, and runtime switches stay private 
   const migration = await text(
     "migrations/20260918000000_push_notification_dispatch.sql",
   );
+  const ambiguityMigration = await text(
+    "migrations/20260928000000_notification_ambiguity_finalization.sql",
+  );
   const dispatch = await text("functions/notification-dispatch/index.ts");
   const receipt = await text("functions/notification-receipt/index.ts");
+  const fullStackRuntime = await text("tests/full_stack_security_runtime_test.sql");
   const config = await text("config.toml");
   const env = await text("functions/.env.example");
   assert(migration.includes("private.notification_receipt_checks"));
@@ -204,6 +255,43 @@ Deno.test("dispatch storage, RPCs, functions, and runtime switches stay private 
   assert(migration.includes("target_provider_code = 'DeviceNotRegistered'"));
   assert(migration.includes("state = 'unknown'"));
   assert(migration.includes("last_provider_code = 'worker_handoff_ambiguous'"));
+  assertMatch(ambiguityMigration, /updated_at < now\(\) - interval '2 hours'/);
+  assertMatch(ambiguityMigration, /notification_outbox_terminal_finalize_idx/);
+  assertMatch(ambiguityMigration, /queue\.state in \('pending', 'retry'\)[\s\S]+queue\.attempts >= 20/);
+  assertMatch(ambiguityMigration, /queue\.state = 'leased'[\s\S]+queue\.attempts >= 20[\s\S]+queue\.lease_expires_at <= now\(\)/);
+  assertMatch(ambiguityMigration, /state = 'dead'[\s\S]+outbox_max_attempts/);
+  assertMatch(ambiguityMigration, /finalize_notification_outbox\([\s\S]+for update of queue skip locked/);
+  assertMatch(ambiguityMigration, /state = 'failed'[\s\S]+provider_ambiguity_expired/);
+  assertMatch(ambiguityMigration, /delivery\.state = 'retry'[\s\S]+delivery\.attempts >= 20/);
+  assertMatch(ambiguityMigration, /delivery\.state = 'leased'[\s\S]+delivery\.attempts >= 20[\s\S]+delivery\.lease_expires_at <= now\(\)/);
+  assertMatch(ambiguityMigration, /for update of delivery skip locked/);
+  assertMatch(ambiguityMigration, /for update of receipt skip locked/);
+  assertMatch(ambiguityMigration, /claim_notification_receipts_core/);
+  assertMatch(ambiguityMigration, /create or replace function private\.claim_notification_receipts\(\s*[\s\S]+perform private\.finalize_notification_receipt_expiry/);
+  assert(!ambiguityMigration.includes("claim_notification_receipts_legacy"));
+  assertMatch(ambiguityMigration, /receipt\.state <> 'leased' or receipt\.lease_expires_at <= now\(\)/);
+  assertMatch(ambiguityMigration, /receipt_max_attempts/);
+  assertMatch(ambiguityMigration, /receipt_expired/);
+  assertMatch(
+    ambiguityMigration,
+    /notification_outbox_has_pending_server\([\s\S]+auth\.role\(\)[\s\S]+cardinality\(target_outbox_ids\) not between 1 and 100[\s\S]+queue\.state = 'pending'/,
+  );
+  assertMatch(
+    ambiguityMigration,
+    /revoke all on function public\.notification_outbox_has_pending_server\(uuid\[\]\)/,
+  );
+  assertMatch(
+    ambiguityMigration,
+    /revoke all on function public\.finalize_notification_outbox_server\(integer\)/,
+  );
+  assertMatch(
+    ambiguityMigration,
+    /revoke all on function public\.finalize_unknown_notification_deliveries_server\(integer\)/,
+  );
+  assertMatch(
+    ambiguityMigration,
+    /revoke all on function public\.finalize_notification_receipt_expiry_server\(integer\)/,
+  );
   assertMatch(
     migration,
     /revoke all privileges on table private\.notification_receipt_checks/,
@@ -234,10 +322,57 @@ Deno.test("dispatch storage, RPCs, functions, and runtime switches stay private 
   assert(dispatch.includes("AbortSignal.timeout(10_000)"));
   assert(receipt.includes("AbortSignal.timeout(10_000)"));
   assertMatch(
-    dispatch,
-    /more_work: outbox\.length === command\.outboxBatchSize[\s\S]+recipientBatchSaturated[\s\S]+deliveries\.length === command\.deliveryBatchSize/,
+    await text("functions/notification-dispatch/contract.ts"),
+    /response\.status === 429[\s\S]+response\.status >= 500[\s\S]+"unknown"/,
   );
-  assertMatch(receipt, /more_work: claims\.length === command\.batchSize/);
+  assert(dispatch.includes("finalize_unknown_notification_deliveries_server"));
+  assert(dispatch.includes("finalize_notification_outbox_server"));
+  assert(dispatch.includes("notification_outbox_has_pending_server"));
+  assert(receipt.includes("finalize_notification_receipt_expiry_server"));
+  assert(receipt.includes("claim_notification_receipts_after_finalization_server"));
+  assert(dispatch.includes('throw new HttpError(503, "PUSH_PROVIDER_DISABLED")'));
+  assert(receipt.includes('throw new HttpError(503, "PUSH_PROVIDER_DISABLED")'));
+  assertMatch(dispatch, /outbox_finalized: outboxFinalization\.finalized/);
+  assertMatch(dispatch, /outbox_finalization_more_work: outboxFinalization\.moreWork/);
+  assertMatch(dispatch, /unknown_finalization_more_work: unknownFinalization\.moreWork/);
+  assertMatch(receipt, /receipt_finalization_more_work: finalization\.moreWork/);
+  assertMatch(
+    dispatch,
+    /if \(outbox\.length\)[\s\S]+notification_outbox_has_pending_server[\s\S]+typeof data !== "boolean"[\s\S]+expandedOutboxPending = data/,
+  );
+  assert(!dispatch.includes("recipientBatchSaturated"));
+  assert(
+    dispatch.indexOf("finalize_notification_outbox_server") <
+      dispatch.indexOf("const accessToken = validateExpoAccessToken"),
+  );
+  assert(
+    dispatch.indexOf("finalize_unknown_notification_deliveries_server") <
+      dispatch.indexOf("const accessToken = validateExpoAccessToken"),
+  );
+  assert(
+    receipt.indexOf("finalize_notification_receipt_expiry_server") <
+      receipt.indexOf("const accessToken = validateExpoAccessToken"),
+  );
+  assert(
+    dispatch.indexOf("finalize_notification_outbox_server") <
+      dispatch.indexOf('throw new HttpError(503, "PUSH_PROVIDER_DISABLED")'),
+  );
+  assert(
+    dispatch.indexOf("finalize_unknown_notification_deliveries_server") <
+      dispatch.indexOf('throw new HttpError(503, "PUSH_PROVIDER_DISABLED")'),
+  );
+  assert(
+    receipt.indexOf("finalize_notification_receipt_expiry_server") <
+      receipt.indexOf('throw new HttpError(503, "PUSH_PROVIDER_DISABLED")'),
+  );
+  assertMatch(
+    dispatch,
+    /more_work: outbox\.length === command\.outboxBatchSize[\s\S]+expandedOutboxPending[\s\S]+deliveries\.length === command\.deliveryBatchSize[\s\S]+outboxFinalization\.moreWork[\s\S]+unknownFinalization\.moreWork/,
+  );
+  assertMatch(
+    receipt,
+    /more_work: claims\.length === command\.batchSize[\s\S]+finalization\.moreWork/,
+  );
   assert(!dispatch.includes("console.log"));
   assert(!receipt.includes("console.log"));
   assertMatch(
@@ -251,4 +386,21 @@ Deno.test("dispatch storage, RPCs, functions, and runtime switches stay private 
   assertMatch(env, /SPOTTR_PUSH_DISPATCH_WORKER_ENABLED=false/);
   assertMatch(env, /SPOTTR_PUSH_RECEIPT_WORKER_ENABLED=false/);
   assertMatch(env, /SPOTTR_PUSH_EXPO_PROVIDER_ENABLED=false/);
+  for (
+    const signature of [
+      "public.finalize_notification_outbox_server(integer)",
+      "public.finalize_unknown_notification_deliveries_server(integer)",
+      "public.finalize_notification_receipt_expiry_server(integer)",
+      "public.notification_outbox_has_pending_server(uuid[])",
+      "public.claim_notification_receipts_after_finalization_server(uuid,integer,integer)",
+    ]
+  ) {
+    assert(fullStackRuntime.includes(signature));
+  }
+  assertMatch(fullStackRuntime, /array\['anon', 'authenticated'\]/);
+  assertMatch(fullStackRuntime, /"role":"service_role"/);
+  assertMatch(
+    fullStackRuntime,
+    /set local role service_role[\s\S]+finalize_notification_outbox_server\(1\)[\s\S]+finalize_unknown_notification_deliveries_server\(1\)[\s\S]+finalize_notification_receipt_expiry_server\(1\)[\s\S]+notification_outbox_has_pending_server[\s\S]+claim_notification_receipts_after_finalization_server/,
+  );
 });
