@@ -1,4 +1,9 @@
-import { isAuthSessionMissingError, type Session, type User } from '@supabase/supabase-js';
+import {
+  isAuthSessionMissingError,
+  type AuthChangeEvent,
+  type Session,
+  type User,
+} from '@supabase/supabase-js';
 import * as Linking from 'expo-linking';
 import {
   createContext,
@@ -14,6 +19,8 @@ import { Platform } from 'react-native';
 
 import {
   authMutationGate,
+  canProcessAuthEventAfterInitialRestore,
+  createInitialAuthRestoreBarrier,
   createSessionHydrationGuard,
   isUnexpectedAuthenticatedIdentityReplacement,
   reconcilePasswordRecoveryIntent,
@@ -523,7 +530,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
 
     const restoreRequest = sessionHydration.advance();
+    const initialRestoreBarrier = createInitialAuthRestoreBarrier();
     void (async () => {
+      let restoreSucceeded = false;
+      let activeRestoreRequest = restoreRequest;
       try {
         const [sessionResult, quarantine] = await Promise.all([
           client.auth.getSession(),
@@ -559,26 +569,40 @@ export function AuthProvider({ children }: PropsWithChildren) {
           }
           rejectedNativeIdentity.current = null;
           if (!mounted.current || !sessionHydration.isCurrent(restoreRequest)) return;
-          await hydrateSession(null);
+          const anonymousReservation: SessionHydrationReservation = {
+            identityChanged: sessionHydration.current().userId !== null,
+            token: sessionHydration.begin(null),
+          };
+          activeRestoreRequest = anonymousReservation.token;
+          await hydrateSession(null, anonymousReservation);
           if (mounted.current) {
             setMessage('Spottr cleared a rejected account change. Sign in again to continue.');
           }
+          restoreSucceeded = mounted.current && sessionHydration.isCurrent(activeRestoreRequest);
           return;
         }
         if (sessionResult.error) throw sessionResult.error;
-        await hydrateSession(sessionResult.data.session);
+        const restoredSession = sessionResult.data.session;
+        const restoredUserId = restoredSession?.user.id ?? null;
+        const restoredReservation: SessionHydrationReservation = {
+          identityChanged: sessionHydration.current().userId !== restoredUserId,
+          token: sessionHydration.begin(restoredUserId),
+        };
+        activeRestoreRequest = restoredReservation.token;
+        await hydrateSession(restoredSession, restoredReservation);
+        restoreSucceeded = mounted.current && sessionHydration.isCurrent(activeRestoreRequest);
       } catch {
-        if (!mounted.current || !sessionHydration.isCurrent(restoreRequest)) return;
+        if (!mounted.current || !sessionHydration.isCurrent(activeRestoreRequest)) return;
         await failClosedSessionReconciliation(
           'Spottr could not restore your session. You can retry by signing in.',
-          restoreRequest
+          activeRestoreRequest
         );
+      } finally {
+        initialRestoreBarrier.settle(restoreSucceeded);
       }
     })();
 
-    const {
-      data: { subscription },
-    } = client.auth.onAuthStateChange((event, session) => {
+    const handleAuthStateChange = (event: AuthChangeEvent, session: Session | null) => {
       const priorUserId = sessionHydration.current().userId;
       const priorSession = committedSession.current;
       const recoveryHintUserId = session?.user?.id ?? null;
@@ -759,6 +783,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
           }
         })();
       }, 0);
+    };
+
+    const {
+      data: { subscription },
+    } = client.auth.onAuthStateChange((event, session) => {
+      void initialRestoreBarrier.ready.then((restoreSucceeded) => {
+        if (
+          !mounted.current ||
+          !canProcessAuthEventAfterInitialRestore(
+            restoreSucceeded,
+            Boolean(session),
+            authMutationGate.current()?.kind ?? null
+          )
+        ) return;
+        handleAuthStateChange(event, session);
+      });
     });
 
     const handleDeepLink = async ({ url }: { url: string }) => {
@@ -770,6 +810,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (!isRecovery && !isAuthCallback) return;
       const code = typeof parsed.queryParams?.code === 'string' ? parsed.queryParams.code : null;
       if (!code) return;
+      const restoreSucceeded = await initialRestoreBarrier.ready;
+      if (!mounted.current) return;
+      if (!restoreSucceeded) {
+        if (isRecovery) setRecoveryReady(false);
+        setMessage(
+          'Spottr could not verify the account already stored on this device. Reopen the app before using this link.'
+        );
+        return;
+      }
       const authOperation = authMutationGate.begin('session-exchange');
       if (!authOperation) {
         if (mounted.current) {

@@ -34,6 +34,43 @@ export type AuthMutationGate = {
   isActive: (token: AuthMutationToken) => boolean;
 };
 
+export type InitialAuthRestoreBarrier = Readonly<{
+  ready: Promise<boolean>;
+  settle: (succeeded: boolean) => void;
+}>;
+
+/**
+ * Holds auth callbacks until the persisted startup identity has either been
+ * committed or failed closed. Supabase may emit an auth event while the first
+ * SecureStore read is still pending; processing that event early would lose
+ * the prior authenticated identity needed to reject an account replacement.
+ */
+export function createInitialAuthRestoreBarrier(): InitialAuthRestoreBarrier {
+  let settled = false;
+  let resolveReady!: (succeeded: boolean) => void;
+  const ready = new Promise<boolean>((resolve) => {
+    resolveReady = resolve;
+  });
+
+  return {
+    ready,
+    settle(succeeded) {
+      if (settled) return;
+      settled = true;
+      resolveReady(succeeded);
+    },
+  };
+}
+
+export function canProcessAuthEventAfterInitialRestore(
+  restoreSucceeded: boolean,
+  callbackHasSession: boolean,
+  activeMutationKind: AuthMutationKind | null
+): boolean {
+  if (restoreSucceeded || !callbackHasSession) return true;
+  return activeMutationKind === 'sign-in' || activeMutationKind === 'sign-up';
+}
+
 export function createSessionHydrationGuard(): SessionHydrationGuard {
   let epoch = 0;
   let currentUserId: string | null = null;

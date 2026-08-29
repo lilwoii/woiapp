@@ -1,5 +1,7 @@
 import {
+  canProcessAuthEventAfterInitialRestore,
   createAuthMutationGate,
+  createInitialAuthRestoreBarrier,
   createSessionHydrationGuard,
   isUnexpectedAuthenticatedIdentityReplacement,
   reconcilePasswordRecoveryIntent,
@@ -92,6 +94,61 @@ describe('session hydration guard', () => {
 
     await expect(delayedCompletion).resolves.toBe(false);
     expect(guard.isCurrentUser('user-b')).toBe(true);
+  });
+});
+
+describe('initial auth restore barrier', () => {
+  it('settles against the post-hydration reservation rather than the stale read token', async () => {
+    const guard = createSessionHydrationGuard();
+    const barrier = createInitialAuthRestoreBarrier();
+    const storageRead = guard.advance();
+    const restoredIdentity = guard.begin('user-a');
+
+    expect(guard.isCurrent(storageRead)).toBe(false);
+    barrier.settle(guard.isCurrent(restoredIdentity));
+
+    await expect(barrier.ready).resolves.toBe(true);
+  });
+
+  it('holds a replacement callback until the restored identity is committed', async () => {
+    const barrier = createInitialAuthRestoreBarrier();
+    let committedUserId: string | null = null;
+    const rejected: string[] = [];
+
+    const replacementCallback = barrier.ready.then((restored) => {
+      if (restored && isUnexpectedAuthenticatedIdentityReplacement(committedUserId, 'user-b')) {
+        rejected.push('user-b');
+      }
+    });
+
+    expect(rejected).toEqual([]);
+    committedUserId = 'user-a';
+    barrier.settle(true);
+    await replacementCallback;
+
+    expect(rejected).toEqual(['user-b']);
+  });
+
+  it('does not release queued callbacks when startup restoration fails closed', async () => {
+    const barrier = createInitialAuthRestoreBarrier();
+    let processed = false;
+    const queuedCallback = barrier.ready.then((restored) => {
+      if (restored) processed = true;
+    });
+
+    barrier.settle(false);
+    barrier.settle(true);
+    await queuedCallback;
+
+    expect(processed).toBe(false);
+  });
+
+  it('allows recovery only through anonymous or explicit-auth events after failure', () => {
+    expect(canProcessAuthEventAfterInitialRestore(false, true, null)).toBe(false);
+    expect(canProcessAuthEventAfterInitialRestore(false, false, null)).toBe(true);
+    expect(canProcessAuthEventAfterInitialRestore(false, true, 'sign-in')).toBe(true);
+    expect(canProcessAuthEventAfterInitialRestore(false, true, 'session-exchange')).toBe(false);
+    expect(canProcessAuthEventAfterInitialRestore(true, true, null)).toBe(true);
   });
 });
 
