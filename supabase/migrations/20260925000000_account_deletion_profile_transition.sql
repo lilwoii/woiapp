@@ -35,13 +35,13 @@ begin
       and new.created_at is not distinct from old.created_at
       and exists (
         select 1
-        from private.account_deletion_freezes freeze
+        from private.account_deletion_freezes deletion_freeze
         join private.account_deletion_requests request
-          on request.id = freeze.request_id
-         and request.user_id = freeze.user_id
-        where freeze.user_id = old.user_id
+          on request.id = deletion_freeze.request_id
+         and request.user_id = deletion_freeze.user_id
+        where deletion_freeze.user_id = old.user_id
           and current_setting('spottr.account_deletion_request_id', true) =
-            freeze.request_id::text
+            deletion_freeze.request_id::text
           and request.state in ('started', 'processing', 'storage_deleted', 'failed')
           and request.expires_at > now()
       );

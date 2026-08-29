@@ -94,14 +94,14 @@ Deno.test("account deletion can apply only its frozen terminal profile transitio
   assert(migration.includes("new.status = 'deleted'"));
   assert(migration.includes("auth.uid() = old.user_id"));
   assert(migration.includes("new.user_id is not distinct from old.user_id"));
-  assert(migration.includes("private.account_deletion_freezes freeze"));
-  assert(migration.includes("request.user_id = freeze.user_id"));
+  assert(migration.includes("private.account_deletion_freezes deletion_freeze"));
+  assert(migration.includes("request.user_id = deletion_freeze.user_id"));
   assert(
     migration.includes(
       "current_setting('spottr.account_deletion_request_id', true)",
     ),
   );
-  assert(migration.includes("freeze.request_id::text"));
+  assert(migration.includes("deletion_freeze.request_id::text"));
   assert(
     migration.includes(
       "request.state in ('started', 'processing', 'storage_deleted', 'failed')",
