@@ -1830,6 +1830,17 @@ $push_quiet_hours_preserved$;
 
 reset role;
 
+-- The preservation assertion above intentionally uses real quiet hours. Clear
+-- them for the worker lease/handoff fixtures so this runtime test is stable at
+-- every wall-clock hour while production quiet-hour deferral remains enforced.
+update public.notification_preferences
+set quiet_hours_start = null,
+    quiet_hours_end = null,
+    timezone = null,
+    updated_at = now()
+where user_id = '90000000-0000-4000-8000-000000000009'
+  and business_id = '70000000-0000-4000-8000-000000000007';
+
 select public.register_notification_device_server(
   '90000000-0000-4000-8000-000000000009',
   '91000000-0000-4000-8000-000000000001',
