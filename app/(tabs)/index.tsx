@@ -36,6 +36,7 @@ import { featureFlags } from '@/lib/features';
 import { normalizeLongitude, zoomFromLongitudeDelta } from '@/lib/map-clustering';
 import { filterMapInventoryCategories, filterPlacesForEnabledCategories } from '@/lib/map-inventory';
 import { mapCategoryOrder, mapCategoryPresentation } from '@/lib/map-presentation';
+import { createLatestRequestGate } from '@/lib/latest-request';
 import { fetchMapFoodFeatures, recordSponsoredInteraction } from '@/lib/marketplace-api';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import type { DietaryTag, PaymentMethod, Place } from '@/types/marketplace';
@@ -150,9 +151,12 @@ function ScopedDiscoverScreen() {
   const [pagination, setPagination] = useState({ key: '', count: 24 });
   const [locationError, setLocationError] = useState<string | null>(null);
   const [mapInventoryFeatures, setMapInventoryFeatures] = useState<MapInventoryFeature[]>([]);
+  const [mapMarkersSuppressed, setMapMarkersSuppressed] = useState(false);
+  const [mapInventoryError, setMapInventoryError] = useState<string | null>(null);
   const mounted = useRef(true);
   const locationRequestGeneration = useRef(0);
-  const mapInventoryRequest = useRef(0);
+  const mapInventoryRequest = useRef(createLatestRequestGate());
+  const latestMapViewport = useRef<MapViewport | null>(null);
   const deferredQuery = useDeferredValue(query);
   const visibleCategoryFilters = useMemo(
     () => categoryFilters.filter((item) => item.id !== 'home_kitchen' || featureFlags.homeKitchens),
@@ -183,29 +187,48 @@ function ScopedDiscoverScreen() {
   const cuisines = useMemo(() => cuisineFacets(enabledPlaces).slice(0, 14), [enabledPlaces]);
 
   const loadMapInventory = useCallback(async (viewport: MapViewport) => {
-    const requestId = ++mapInventoryRequest.current;
+    const requestToken = mapInventoryRequest.current.begin();
     if (!mounted.current) return { ok: false, reason: 'Screen is no longer active.' } as const;
+    latestMapViewport.current = viewport;
+    setMapInventoryError(null);
     if (!requestedMapCategories.length) {
       setMapInventoryFeatures([]);
+      setMapMarkersSuppressed(false);
       return { ok: true, data: [] } as const;
     }
+    setMapInventoryFeatures([]);
+    setMapMarkersSuppressed(true);
     const result = await fetchMapFoodFeatures(viewport, requestedMapCategories);
-    if (!mounted.current || requestId !== mapInventoryRequest.current) return result;
+    if (!mounted.current || !mapInventoryRequest.current.isCurrent(requestToken)) return result;
     if (!result.ok) {
-      // Keep the last verified inventory visible during a brief gateway quota
-      // or availability event. A successful later viewport request replaces it.
+      setMapInventoryError('Map places could not refresh. The verified list is still available.');
       return result;
     }
     setMapInventoryFeatures(result.data ?? []);
+    setMapMarkersSuppressed(false);
     return result;
   }, [requestedMapCategories]);
 
+  const invalidateMapInventory = useCallback((viewport: MapViewport) => {
+    latestMapViewport.current = viewport;
+    mapInventoryRequest.current.invalidate();
+    setMapInventoryFeatures([]);
+    setMapMarkersSuppressed(true);
+    setMapInventoryError(null);
+  }, []);
+
+  const retryMapInventory = useCallback(() => {
+    const viewport = latestMapViewport.current;
+    if (viewport) void loadMapInventory(viewport);
+  }, [loadMapInventory]);
+
   useEffect(() => {
+    const mapRequestGate = mapInventoryRequest.current;
     mounted.current = true;
     return () => {
       mounted.current = false;
       locationRequestGeneration.current += 1;
-      mapInventoryRequest.current += 1;
+      mapRequestGate.invalidate();
     };
   }, []);
 
@@ -351,7 +374,17 @@ function ScopedDiscoverScreen() {
   }, [loadMapInventory, refresh]);
 
   useEffect(() => {
-    if (!activeArea || !places.length) return;
+    if (!activeArea) return;
+    if (!places.length) {
+      const timer = setTimeout(() => {
+        mapInventoryRequest.current.invalidate();
+        latestMapViewport.current = null;
+        setMapInventoryFeatures([]);
+        setMapMarkersSuppressed(false);
+        setMapInventoryError(null);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
     const latitudes = places.map((place) => place.latitude);
     const centerLatitude = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
     const longitudes = places.map((place) => normalizeLongitude(place.longitude));
@@ -459,6 +492,13 @@ function ScopedDiscoverScreen() {
     if (category === 'all') return permittedMapInventory;
     return filterMapInventoryCategories(permittedMapInventory, new Set([category]));
   }, [category, detailedMapFiltersActive, permittedMapInventory]);
+  const authoritativeMapInventory = isSupabaseConfigured && !detailedMapFiltersActive;
+  useEffect(() => {
+    if (!authoritativeMapInventory || !latestMapViewport.current) return;
+    const viewport = latestMapViewport.current;
+    const timer = setTimeout(() => void loadMapInventory(viewport), 0);
+    return () => clearTimeout(timer);
+  }, [authoritativeMapInventory, loadMapInventory]);
   const mapInventoryMayBeCapped = useMemo(
     () => visibleMapInventory.reduce((total, feature) => total + feature.count, 0) >= 1_200,
     [visibleMapInventory],
@@ -868,15 +908,19 @@ function ScopedDiscoverScreen() {
             <ActivityIndicator color={palette.accentDeep} />
             <Text style={styles.loadingText}>Loading nearby food…</Text>
           </View>
-        ) : ranked.length || visibleMapInventory.length ? (
+        ) : ranked.length || visibleMapInventory.length || mapMarkersSuppressed ? (
           <View style={[styles.workspace, wide && styles.workspaceWide]}>
             <View style={[styles.mapColumn, wide && styles.mapColumnWide]}>
               <LiveMap
-                inventoryFeatures={visibleMapInventory}
+                inventoryError={authoritativeMapInventory ? mapInventoryError : null}
+                inventoryFeatures={authoritativeMapInventory ? visibleMapInventory : undefined}
+                markersSuppressed={authoritativeMapInventory ? mapMarkersSuppressed : false}
                 onSelect={selectPlace}
                 onSelectBusinessId={(businessId, locationId) => void selectBusinessId(businessId, locationId)}
                 onSearchArea={searchVisibleMap}
-                onViewportChange={(viewport) => void loadMapInventory(viewport)}
+                onRetryInventory={authoritativeMapInventory ? retryMapInventory : undefined}
+                onViewportChange={authoritativeMapInventory ? (viewport) => void loadMapInventory(viewport) : undefined}
+                onViewportInvalidated={invalidateMapInventory}
                 places={mappedPlaces}
                 selectedId={selected?.id}
                 userCoordinates={userCoordinates}

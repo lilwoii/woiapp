@@ -9,6 +9,7 @@ import {
   clusterInventoryFeatures,
   clusterPlaces,
   normalizeLongitude,
+  shouldRenderMapInventory,
   viewportIsLiveInventoryEligible,
 } from '@/lib/map-clustering';
 import { categoryMarkerLabel, mapCategoryPresentation, mapClusterCategorySignature, mapClusterCategorySummary } from '@/lib/map-presentation';
@@ -24,7 +25,11 @@ export type Props = {
   onSelectBusinessId?: (businessId: string, locationId?: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
   onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
+  onViewportInvalidated?: (viewport: MapViewport) => void;
+  onRetryInventory?: () => void;
   inventoryFeatures?: MapInventoryFeature[];
+  inventoryError?: string | null;
+  markersSuppressed?: boolean;
   userCoordinates?: { latitude: number; longitude: number } | null;
   routeCoordinates?: NavigationCoordinate[];
   navigationMode?: TravelMode;
@@ -246,7 +251,11 @@ export default function MapLibreMapView({
   onSelectBusinessId,
   onSearchArea,
   onViewportChange,
-  inventoryFeatures = [],
+  onViewportInvalidated,
+  onRetryInventory,
+  inventoryFeatures,
+  inventoryError = null,
+  markersSuppressed = false,
   userCoordinates,
   routeCoordinates = [],
   navigationMode,
@@ -261,6 +270,7 @@ export default function MapLibreMapView({
   const onSelectBusinessIdRef = useRef(onSelectBusinessId);
   const onSearchAreaRef = useRef(onSearchArea);
   const onViewportChangeRef = useRef(onViewportChange);
+  const onViewportInvalidatedRef = useRef(onViewportInvalidated);
   const fittedPlacesKey = useRef('');
   const userMarkerRef = useRef<Marker | null>(null);
   const fittedRouteKey = useRef('');
@@ -274,9 +284,11 @@ export default function MapLibreMapView({
   const [supports3D, setSupports3D] = useState(false);
   const [mapZoom, setMapZoom] = useState(11.5);
   const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
+  const [inventoryViewportEligible, setInventoryViewportEligible] = useState(true);
   const userMovedMap = useRef(false);
+  const authoritativeInventory = inventoryFeatures !== undefined;
   const renderedInventoryFeatures = useMemo(
-    () => clusterInventoryFeatures(inventoryFeatures, mapZoom),
+    () => clusterInventoryFeatures(inventoryFeatures ?? [], mapZoom),
     [inventoryFeatures, mapZoom]
   );
 
@@ -303,6 +315,10 @@ export default function MapLibreMapView({
   useEffect(() => {
     onViewportChangeRef.current = onViewportChange;
   }, [onViewportChange]);
+
+  useEffect(() => {
+    onViewportInvalidatedRef.current = onViewportInvalidated;
+  }, [onViewportInvalidated]);
 
   useEffect(() => {
     const element = containerRef.current as unknown as HTMLElement | null;
@@ -347,8 +363,13 @@ export default function MapLibreMapView({
         setMapZoom(map.getZoom());
         if (userMovedMap.current) {
           const viewport = viewportFromMap(map);
+          const eligible = viewportIsLiveInventoryEligible(viewport.bounds);
           if (onSearchAreaRef.current) setPendingViewport(viewport);
-          if (onViewportChangeRef.current && viewportIsLiveInventoryEligible(viewport.bounds)) {
+          setInventoryViewportEligible(eligible);
+          onViewportInvalidatedRef.current?.(viewport);
+          if (!eligible) {
+            if (inventoryTimer) clearTimeout(inventoryTimer);
+          } else if (onViewportChangeRef.current) {
             if (inventoryTimer) clearTimeout(inventoryTimer);
             inventoryTimer = setTimeout(() => {
               void onViewportChangeRef.current?.(viewport);
@@ -381,9 +402,14 @@ export default function MapLibreMapView({
     if (!map || !ready) return;
 
     currentPlaces.current = new Map(places.map((place) => [place.id, place]));
-    const features = renderedInventoryFeatures.length ? [] : clusterPlaces(places, mapZoom);
-    const renderedIds = renderedInventoryFeatures.length
-      ? renderedInventoryFeatures.map((feature) => feature.id)
+    const markersVisible = shouldRenderMapInventory({
+      viewportEligible: inventoryViewportEligible,
+      inventorySuppressed: markersSuppressed,
+    });
+    const visibleInventoryFeatures = markersVisible ? renderedInventoryFeatures : [];
+    const features = markersVisible && !authoritativeInventory ? clusterPlaces(places, mapZoom) : [];
+    const renderedIds = visibleInventoryFeatures.length
+      ? visibleInventoryFeatures.map((feature) => feature.id)
       : features.map((feature) => feature.id);
     const nextIds = new Set(renderedIds);
     markerRefs.current.forEach(({ marker }, id) => {
@@ -392,7 +418,7 @@ export default function MapLibreMapView({
         markerRefs.current.delete(id);
       }
     });
-    for (const inventoryFeature of renderedInventoryFeatures) {
+    for (const inventoryFeature of visibleInventoryFeatures) {
       const signature = inventoryFeature.type === 'cluster'
         ? `cluster:${inventoryFeature.count}:${inventoryFeature.dominantCategory}:${mapClusterCategorySignature(inventoryFeature.categoryCounts)}`
         : `place:${inventoryFeature.businessId ?? ''}:${inventoryFeature.name ?? ''}:${inventoryFeature.logoUrl ?? ''}`;
@@ -499,7 +525,7 @@ export default function MapLibreMapView({
         map.fitBounds(bounds, { duration: motionDuration(reduceMotion, 450), maxZoom: 14, padding: 70 });
       }
     }
-  }, [mapZoom, places, ready, reduceMotion, renderedInventoryFeatures, selectedId]);
+  }, [authoritativeInventory, inventoryViewportEligible, mapZoom, markersSuppressed, places, ready, reduceMotion, renderedInventoryFeatures, selectedId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -683,6 +709,28 @@ export default function MapLibreMapView({
           <Text style={styles.searchAreaText}>Search this area</Text>
         </Pressable>
       ) : null}
+      {ready && (!inventoryViewportEligible || markersSuppressed) ? (
+        <View
+          accessibilityLiveRegion="polite"
+          accessibilityRole={inventoryError ? 'alert' : undefined}
+          style={styles.inventoryStatus}>
+          <Text style={styles.inventoryStatusText}>
+            {!inventoryViewportEligible
+              ? 'Zoom in to show place markers'
+              : inventoryError
+                ? 'Map places need a refresh'
+                : 'Refreshing this map area…'}
+          </Text>
+          {inventoryViewportEligible && inventoryError && onRetryInventory ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onRetryInventory}
+              style={styles.inventoryRetry}>
+              <Text style={styles.inventoryRetryText}>Retry</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
       <Pressable
         accessibilityRole="link"
         onPress={() => void Linking.openURL(mapAttributionUrl)}
@@ -740,6 +788,38 @@ const styles = StyleSheet.create({
   searchAreaText: {
     color: '#FFFFFF',
     fontSize: 12,
+    fontWeight: '900',
+  },
+  inventoryStatus: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(255, 253, 248, 0.94)',
+    borderColor: 'rgba(23, 44, 42, 0.12)',
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    bottom: 14,
+    flexDirection: 'row',
+    gap: 10,
+    minHeight: 34,
+    paddingHorizontal: 13,
+    position: 'absolute',
+    justifyContent: 'center',
+  },
+  inventoryStatusText: {
+    color: palette.ink,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  inventoryRetry: {
+    borderLeftColor: palette.line,
+    borderLeftWidth: 1,
+    minHeight: 26,
+    paddingLeft: 10,
+    justifyContent: 'center',
+  },
+  inventoryRetryText: {
+    color: palette.accentDeep,
+    fontSize: 10,
     fontWeight: '900',
   },
   controlButton: {

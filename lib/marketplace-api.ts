@@ -772,9 +772,10 @@ function serverHoursSummary(business: Row) {
 }
 
 export async function createSignedMediaUrls(
-  paths: string[]
+  paths: string[],
+  clientOverride?: SupabaseClient,
 ): Promise<Map<string, string>> {
-  const client = supabase;
+  const client = clientOverride ?? supabase;
   const uniquePaths = [...new Set(paths.filter(Boolean))];
   const urlByPath = new Map<string, string>();
   if (!client || !uniquePaths.length) return urlByPath;
@@ -2156,10 +2157,11 @@ export async function requestAccountExport(): Promise<
 export async function updateFollowAlertPreference(
   businessIds: string[],
   field: 'live_nearby' | 'owner_bundle',
-  enabled: boolean
+  enabled: boolean,
+  expectedUserId: string,
 ): Promise<ActionResult> {
   if (!supabase) return configurationRequired();
-  const user = await authenticatedUserId();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
   if (!businessIds.length) return { ok: true };
   const client = await marketplaceMutationClient(user.data);
@@ -2183,23 +2185,25 @@ export async function updateFollowAlertPreference(
 }
 
 export async function fetchFollowAlertPreferences(
-  businessIds: string[]
+  businessIds: string[],
+  expectedUserId: string,
 ): Promise<ActionResult<{
   liveNearby: boolean;
   ownerUpdates: boolean;
 }>> {
-  const client = supabase;
-  if (!client) return configurationRequired();
+  if (!supabase) return configurationRequired();
   if (!businessIds.length) {
     return {
       ok: true,
       data: { liveNearby: false, ownerUpdates: false },
     };
   }
-  const user = await authenticatedUserId();
+  const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
 
   try {
+    const client = await marketplaceMutationClient(expectedUserId);
+    if (!client) return accountChanged();
     const { data, error } = await client
       .from('notification_preferences')
       .select('business_id, live_nearby, location_change, owner_update, menu_return')

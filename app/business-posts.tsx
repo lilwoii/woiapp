@@ -9,6 +9,7 @@ import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
+import { featureFlags } from '@/lib/features';
 import { confirmAction, showMessage } from '@/lib/platform-dialog';
 import { createMarketplaceIdempotencyKey } from '@/lib/marketplace-api';
 import { createBusinessPost, deleteBusinessPost, fetchBusinessPostMediaCandidates, fetchBusinessPosts, uploadBusinessPostMedia } from '@/lib/social-feed';
@@ -56,6 +57,13 @@ export default function BusinessPostsScreen() {
 
   const chooseUpload = async () => {
     if (!business || !accountId || uploading) return;
+    if (!featureFlags.mediaUploads) {
+      setMessage({
+        tone: 'error',
+        text: 'Photo uploads are not available in this release. Text posts remain available.',
+      });
+      return;
+    }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       showMessage('Photo permission required', 'Allow photo access to add a business post image.');
@@ -145,9 +153,17 @@ export default function BusinessPostsScreen() {
             <TextInput accessibilityLabel="Business post" maxLength={500} multiline onChangeText={setBody} placeholder="What should followers know?" placeholderTextColor={palette.mutedLight} style={styles.input} textAlignVertical="top" value={body} />
             <View style={styles.mediaHeader}>
               <Text style={styles.mediaLabel}>APPROVED PHOTOS · {selectedIds.length}/4</Text>
-              <Pressable accessibilityRole="button" disabled={uploading} onPress={() => void chooseUpload()} style={styles.uploadButton}>{uploading ? <ActivityIndicator color={palette.ink} size="small" /> : <FontAwesome6 color={palette.ink} name="image" size={10} />}<Text style={styles.uploadText}>{uploading ? 'Uploading…' : 'Upload new'}</Text></Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !featureFlags.mediaUploads || uploading, busy: uploading }}
+                disabled={!featureFlags.mediaUploads || uploading}
+                onPress={() => void chooseUpload()}
+                style={[styles.uploadButton, !featureFlags.mediaUploads && styles.disabled]}>
+                {uploading ? <ActivityIndicator color={palette.ink} size="small" /> : <FontAwesome6 color={palette.ink} name="image" size={10} />}
+                <Text style={styles.uploadText}>{uploading ? 'Uploading…' : featureFlags.mediaUploads ? 'Upload new' : 'Upload gated'}</Text>
+              </Pressable>
             </View>
-            {candidates.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}><View style={styles.candidates}>{candidates.map((candidate) => { const selected = selectedIds.includes(candidate.id); return <Pressable accessibilityLabel={`${selected ? 'Remove' : 'Select'} approved post image`} accessibilityRole="button" accessibilityState={{ selected }} key={candidate.id} onPress={() => toggleCandidate(candidate.id)} style={[styles.candidate, selected && styles.candidateSelected]}><Image source={{ uri: candidate.url }} style={styles.candidateImage} />{selected ? <View style={styles.selectedMark}><FontAwesome6 color="#FFFFFF" name="check" size={9} /></View> : null}</Pressable>; })}</View></ScrollView> : <Text style={styles.mediaHint}>New images appear here after automated safety processing and approval.</Text>}
+            {candidates.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}><View style={styles.candidates}>{candidates.map((candidate) => { const selected = selectedIds.includes(candidate.id); return <Pressable accessibilityLabel={`${selected ? 'Remove' : 'Select'} approved post image`} accessibilityRole="button" accessibilityState={{ selected }} key={candidate.id} onPress={() => toggleCandidate(candidate.id)} style={[styles.candidate, selected && styles.candidateSelected]}><Image source={{ uri: candidate.url }} style={styles.candidateImage} />{selected ? <View style={styles.selectedMark}><FontAwesome6 color="#FFFFFF" name="check" size={9} /></View> : null}</Pressable>; })}</View></ScrollView> : <Text style={styles.mediaHint}>{featureFlags.mediaUploads ? 'New images appear here after automated safety processing and approval.' : 'Text posts remain available. New photos stay off until the safety pipeline is approved.'}</Text>}
             {message ? <View accessibilityLiveRegion="polite" accessibilityRole={message.tone === 'error' ? 'alert' : undefined} style={[styles.message, message.tone === 'success' && styles.messageSuccess]}><Text style={[styles.messageText, message.tone === 'success' && styles.messageTextSuccess]}>{message.text}</Text></View> : null}
             <Pressable accessibilityRole="button" accessibilityState={{ busy: saving }} disabled={saving || (!body.trim() && !selectedIds.length)} onPress={() => void publish()} style={[styles.publishButton, (saving || (!body.trim() && !selectedIds.length)) && styles.disabled]}>{saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}<Text style={styles.publishText}>Publish post</Text><FontAwesome6 color="#FFFFFF" name="arrow-up" size={10} /></Pressable>
           </View>

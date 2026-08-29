@@ -1,7 +1,7 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { FocusAwareScreen } from '@/components/focus-aware-screen';
@@ -20,48 +20,109 @@ const filters: { id: FeedFilter; label: string }[] = [
 
 export default function FeedScreen() {
   const auth = useAuth();
+  const accountId = auth.status === 'authenticated' ? auth.account?.id : undefined;
   const [filter, setFilter] = useState<FeedFilter>('all');
-  const [snapshot, setSnapshot] = useState<{ filter: FeedFilter; items: FeedItem[]; hasMore: boolean } | null>(null);
+  const [snapshot, setSnapshot] = useState<{
+    accountId: string;
+    filter: FeedFilter;
+    generation: number;
+    items: FeedItem[];
+    hasMore: boolean;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const current = snapshot?.filter === filter ? snapshot : null;
+  const [reloadKey, setReloadKey] = useState(0);
+  const [error, setError] = useState<{
+    accountId: string;
+    filter: FeedFilter;
+    generation: number;
+    retry: 'reload' | 'load_more';
+    message: string;
+  } | null>(null);
+  const feedRequestGeneration = useRef(0);
+  const loadMoreGeneration = useRef(0);
+  const current = snapshot && snapshot.accountId === accountId && snapshot.filter === filter
+    ? snapshot
+    : null;
+  const currentError = error && error.accountId === accountId && error.filter === filter
+    ? error
+    : null;
 
   useEffect(() => {
     let active = true;
-    if (auth.status !== 'authenticated') return () => { active = false; };
+    if (!accountId) return () => { active = false; };
+    const requestedAccountId = accountId;
+    const requestedFilter = filter;
+    const generation = ++feedRequestGeneration.current;
+    loadMoreGeneration.current += 1;
+    setLoadingMore(false);
     const timer = setTimeout(() => {
-      if (!active) return;
+      if (!active || generation !== feedRequestGeneration.current) return;
       setLoading(true);
       setError(null);
-      void fetchFollowedFeed(filter).then((result) => {
-        if (!active) return;
+      void fetchFollowedFeed(requestedFilter, requestedAccountId).then((result) => {
+        if (!active || generation !== feedRequestGeneration.current) return;
         setLoading(false);
         if (!result.ok || !result.data) {
-          setError(result.ok ? 'Your feed is unavailable.' : result.reason);
+          setError({
+            accountId: requestedAccountId,
+            filter: requestedFilter,
+            generation,
+            retry: 'reload',
+            message: result.ok ? 'Your feed is unavailable.' : result.reason,
+          });
           return;
         }
-        setSnapshot({ filter, items: result.data.items, hasMore: result.data.hasMore });
+        setSnapshot({
+          accountId: requestedAccountId,
+          filter: requestedFilter,
+          generation,
+          items: result.data.items,
+          hasMore: result.data.hasMore,
+        });
       });
     }, 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [auth.status, filter]);
+  }, [accountId, filter, reloadKey]);
 
   const loadMore = async () => {
-    if (!current || !current.hasMore || loadingMore) return;
+    if (!accountId || !current || !current.hasMore || loadingMore) return;
+    const requestedAccountId = accountId;
+    const requestedFilter = filter;
+    const generation = current.generation;
+    const loadMoreRequest = ++loadMoreGeneration.current;
+    setError(null);
     setLoadingMore(true);
-    const result = await fetchFollowedFeed(filter, current.items.length);
-    setLoadingMore(false);
-    if (!result.ok || !result.data) {
-      setError(result.ok ? 'More posts are unavailable.' : result.reason);
-      return;
+    try {
+      const result = await fetchFollowedFeed(requestedFilter, requestedAccountId, current.items.length);
+      if (
+        generation !== feedRequestGeneration.current ||
+        loadMoreRequest !== loadMoreGeneration.current
+      ) return;
+      if (!result.ok || !result.data) {
+        setError({
+          accountId: requestedAccountId,
+          filter: requestedFilter,
+          generation,
+          retry: 'load_more',
+          message: result.ok ? 'More posts are unavailable.' : result.reason,
+        });
+        return;
+      }
+      setSnapshot((existing) => {
+        if (
+          !existing ||
+          existing.accountId !== requestedAccountId ||
+          existing.filter !== requestedFilter ||
+          existing.generation !== generation
+        ) return existing;
+        const byKey = new Map(existing.items.map((item) => [`${item.type}:${item.id}`, item]));
+        for (const item of result.data?.items ?? []) byKey.set(`${item.type}:${item.id}`, item);
+        return { ...existing, items: [...byKey.values()], hasMore: result.data?.hasMore ?? false };
+      });
+    } finally {
+      if (loadMoreRequest === loadMoreGeneration.current) setLoadingMore(false);
     }
-    setSnapshot((existing) => {
-      if (!existing || existing.filter !== filter) return existing;
-      const byKey = new Map(existing.items.map((item) => [`${item.type}:${item.id}`, item]));
-      for (const item of result.data?.items ?? []) byKey.set(`${item.type}:${item.id}`, item);
-      return { ...existing, items: [...byKey.values()], hasMore: result.data?.hasMore ?? false };
-    });
   };
 
   if (auth.status !== 'authenticated') {
@@ -98,9 +159,38 @@ export default function FeedScreen() {
             })}
           </View>
 
-          {error ? <View accessibilityRole="alert" style={styles.error}><Text style={styles.errorText}>{error}</Text></View> : null}
-          {loading && !current ? (
+          {currentError && current ? (
+            <View accessibilityRole="alert" style={styles.error}>
+              <Text style={styles.errorText}>{currentError.message}</Text>
+              <Pressable
+                accessibilityRole="button"
+                disabled={currentError.retry === 'load_more' ? loadingMore : loading}
+                onPress={() => {
+                  setError(null);
+                  if (currentError.retry === 'load_more') void loadMore();
+                  else setReloadKey((value) => value + 1);
+                }}
+                style={styles.retryButton}>
+                <Text style={styles.retryText}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {!current && !currentError ? (
             <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={palette.accentDeep} /><Text style={styles.loadingText}>Loading followed updates…</Text></View>
+          ) : currentError && !current ? (
+            <View accessibilityRole="alert" style={styles.error}>
+              <Text style={styles.errorText}>{currentError.message}</Text>
+              <Pressable
+                accessibilityRole="button"
+                disabled={loading}
+                onPress={() => {
+                  setError(null);
+                  setReloadKey((value) => value + 1);
+                }}
+                style={styles.retryButton}>
+                <Text style={styles.retryText}>Retry</Text>
+              </Pressable>
+            </View>
           ) : current?.items.length ? (
             <View style={styles.feed}>
               {current.items.map((item) => <FeedRow item={item} key={`${item.type}:${item.id}`} />)}
@@ -130,7 +220,7 @@ function FeedRow({ item }: { item: FeedItem }) {
   return (
     <View style={styles.item}>
       <View style={styles.itemHeader}>
-        <Pressable accessibilityRole="link" onPress={() => router.push({ pathname: '/place/[id]', params: { id: item.businessId } })} style={styles.identityIcon}>
+        <Pressable accessibilityLabel={`View ${item.businessName}`} accessibilityRole="link" onPress={() => router.push({ pathname: '/place/[id]', params: { id: item.businessId } })} style={styles.identityIcon}>
           {item.businessLogoUrl ? <Image accessibilityLabel={`${item.businessName} logo`} source={{ uri: item.businessLogoUrl }} style={styles.identityLogo} /> : <FontAwesome6 color={palette.accentDeep} name={isBusiness ? 'store' : 'utensils'} size={11} />}
         </Pressable>
         <View style={styles.itemIdentity}>
@@ -200,6 +290,8 @@ const styles = StyleSheet.create({
   loadingText: { color: palette.muted, fontSize: 10 },
   error: { backgroundColor: palette.accentSoft, borderRadius: radii.md, marginTop: spacing.md, padding: spacing.md },
   errorText: { color: palette.accentDeep, fontSize: 10, lineHeight: 16 },
+  retryButton: { alignItems: 'center', alignSelf: 'flex-start', borderColor: palette.accentDeep, borderRadius: radii.pill, borderWidth: 1, justifyContent: 'center', marginTop: spacing.sm, minHeight: 40, paddingHorizontal: spacing.md },
+  retryText: { color: palette.accentDeep, fontSize: 10, fontWeight: '900' },
   empty: { alignItems: 'center', borderBottomColor: palette.line, borderBottomWidth: 1, borderTopColor: palette.line, borderTopWidth: 1, gap: spacing.sm, marginTop: spacing.xl, paddingVertical: 54 },
   emptyTitle: { color: palette.ink, fontSize: 16, fontWeight: '900' },
   emptyBody: { color: palette.muted, fontSize: 10, lineHeight: 16, maxWidth: 380, textAlign: 'center' },

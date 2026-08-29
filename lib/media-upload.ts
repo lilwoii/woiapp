@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { toActionError } from '@/lib/errors';
+import { featureFlags } from '@/lib/features';
 import { supabase } from '@/lib/supabase';
 import { ActionResult } from '@/types/marketplace';
 
@@ -78,6 +79,13 @@ export async function stageMediaUpload(
   conversationId?: string,
   accountClient?: SupabaseClient,
 ): Promise<ActionResult<StagedMedia>> {
+  if (!featureFlags.mediaUploads) {
+    return {
+      ok: false,
+      code: 'CONFIG_REQUIRED',
+      reason: 'Photo uploads are not available in this release.',
+    };
+  }
   const client = accountClient ?? supabase;
   if (!client) {
     return {

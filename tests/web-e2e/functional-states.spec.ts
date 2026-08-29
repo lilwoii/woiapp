@@ -184,6 +184,76 @@ test('authenticated foreground navigation draws a provider route and remains use
   await expectNoSeriousAxeViolations(page);
 });
 
+test('zooming beyond the live inventory boundary removes stale server and fallback markers', async ({ page }) => {
+  await page.goto(`${fixtureAppOrigin}/`, { waitUntil: 'networkidle' });
+  await page.getByLabel('City or ZIP code').fill('Los Angeles, CA');
+  await page.getByRole('button', { name: 'Set area' }).click();
+
+  await expect(page.locator('.maplibregl-marker').first()).toBeVisible();
+  const zoomOut = page.getByRole('button', { name: 'Zoom out' });
+  for (let index = 0; index < 16; index += 1) {
+    await zoomOut.click();
+    await page.waitForTimeout(190);
+  }
+
+  await expect(page.getByText('Zoom in to show place markers')).toBeVisible();
+  await expect(page.locator('.maplibregl-marker')).toHaveCount(0);
+});
+
+test('an empty manual-area search removes markers from the previous area', async ({ page }) => {
+  const fixture = fixtureObservations.get(page);
+  if (!fixture) throw new Error('Spottr fixture was not installed.');
+
+  await page.goto(`${fixtureAppOrigin}/`, { waitUntil: 'networkidle' });
+  await page.getByLabel('City or ZIP code').fill('Los Angeles, CA');
+  await page.getByRole('button', { name: 'Set area' }).click();
+  await expect(page.locator('.maplibregl-marker').first()).toBeVisible();
+
+  await page.getByLabel('City or ZIP code').fill('No Results, ZZ');
+  await page.getByRole('button', { name: 'Set area' }).click();
+
+  await expect.poll(() => fixture.searchRequests.length).toBe(2);
+  await expect(page.locator('.maplibregl-marker')).toHaveCount(0);
+  await expect(page.getByText('No verified listings here yet')).toBeVisible();
+});
+
+test('personalized feed is loaded through the active account and renders both followed lanes', async ({ page }) => {
+  await signInThroughUi(page, 'customer');
+  await page.goto(`${fixtureAppOrigin}/feed`, { waitUntil: 'networkidle' });
+
+  await expect(page.getByText('Taco Tuesday starts at noon today.')).toBeVisible();
+  await expect(page.getByText('Fast service and excellent birria.')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText(/@taco\.scout reviewed Maya Taco Truck/u)).toBeVisible();
+  await expectNoSeriousAxeViolations(page);
+});
+
+test('switching accounts clears personalized feed state and binds the replacement session', async ({ page }) => {
+  const fixture = fixtureObservations.get(page);
+  if (!fixture) throw new Error('Spottr fixture was not installed.');
+
+  await signInThroughUi(page, 'customer');
+  await page.goto(`${fixtureAppOrigin}/feed`, { waitUntil: 'networkidle' });
+  await expect(page.getByText('Taco Tuesday starts at noon today.')).toBeVisible();
+
+  await page.goto(`${fixtureAppOrigin}/profile`, { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('button', { name: 'Sign in or create an account' })).toBeVisible();
+
+  await signInThroughUi(page, 'business');
+  await page.goto(`${fixtureAppOrigin}/feed`, { waitUntil: 'networkidle' });
+  await expect(page.getByText('Owner account feed fixture.')).toBeVisible();
+  await expect(page.getByText('Taco Tuesday starts at noon today.')).toHaveCount(0);
+  await expect.poll(() => fixture.feedRequests.some(
+    (request) => request.role === 'customer' && request.accountId === fixture.ids.customer,
+  )).toBe(true);
+  await expect.poll(() => fixture.feedRequests.some(
+    (request) => request.role === 'business' && request.accountId === fixture.ids.owner,
+  )).toBe(true);
+  expect(fixture.ids.customer).not.toBe(fixture.ids.owner);
+  await expectNoSeriousAxeViolations(page);
+});
+
 for (const account of [
   {
     role: 'customer',

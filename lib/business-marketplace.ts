@@ -1,4 +1,8 @@
-import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import {
+  createAccountBoundSupabaseClient,
+  isSupabaseConfigured,
+  supabase,
+} from "@/lib/supabase";
 
 export type MarketplaceBusinessKind = "home_kitchen" | "pop_up";
 export type PickupSiteKind = "public_meeting_place" | "commercial_site";
@@ -219,24 +223,20 @@ export function createMarketplaceOperationsKey(action: string) {
   return `marketplace-${action}-${nonce}`.slice(0, 128);
 }
 
-async function secureClient() {
+async function secureClient(expectedAccountId: string) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Live services are not configured.");
   }
-  const [{ data: userData, error: userError }, assurance] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
-  ]);
-  if (userError || !userData.user) {
-    throw Object.assign(userError ?? new Error("Not authenticated"), {
-      status: 401,
-    });
+  const client = await createAccountBoundSupabaseClient(expectedAccountId);
+  if (!client) {
+    throw Object.assign(new Error("Not authenticated"), { status: 401 });
   }
+  const assurance = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
   if (assurance.error) throw assurance.error;
   if (assurance.data.currentLevel !== "aal2") {
     throw Object.assign(new Error("AAL2 required"), { status: 403 });
   }
-  return supabase;
+  return client;
 }
 
 function failure<T>(
@@ -289,6 +289,7 @@ function failure<T>(
 }
 
 export async function loadBusinessMarketplace(
+  expectedAccountId: string,
   businessId: string,
 ): Promise<
   BusinessMarketplaceResult<
@@ -303,7 +304,7 @@ export async function loadBusinessMarketplace(
     if (!uuidPattern.test(businessId)) {
       throw new Error("Invalid business reference");
     }
-    const client = await secureClient();
+    const client = await secureClient(expectedAccountId);
     const controls = await client.rpc("get_business_marketplace_controls", {
       target_business_id: businessId,
     });
@@ -371,6 +372,7 @@ export async function loadBusinessMarketplace(
 }
 
 export async function setBusinessMeetingRoutes(
+  expectedAccountId: string,
   businessId: string,
   choiceIds: string[],
 ): Promise<BusinessMarketplaceResult<number>> {
@@ -383,7 +385,7 @@ export async function setBusinessMeetingRoutes(
     ) {
       throw new Error("Choose two or three public meeting places.");
     }
-    const client = await secureClient();
+    const client = await secureClient(expectedAccountId);
     const { data, error } = await client.rpc("set_business_meeting_routes", {
       target_business_id: businessId,
       selected_choice_public_ids: choiceIds,
@@ -404,11 +406,12 @@ export async function setBusinessMeetingRoutes(
 }
 
 export async function setNeighborhoodResidencePickup(
+  expectedAccountId: string,
   businessId: string,
   enabled: boolean,
 ): Promise<BusinessMarketplaceResult<boolean>> {
   try {
-    const client = await secureClient();
+    const client = await secureClient(expectedAccountId);
     const { data, error } = await client.rpc(
       "set_neighborhood_residence_pickup",
       {
@@ -430,11 +433,12 @@ export async function setNeighborhoodResidencePickup(
 }
 
 export async function setBusinessMarketplaceChat(
+  expectedAccountId: string,
   businessId: string,
   enabled: boolean,
 ): Promise<BusinessMarketplaceResult<boolean>> {
   try {
-    const client = await secureClient();
+    const client = await secureClient(expectedAccountId);
     const { data, error } = await client.rpc(
       "set_business_marketplace_chat_enabled",
       {
@@ -455,12 +459,13 @@ export async function setBusinessMarketplaceChat(
 }
 
 export async function submitPickupSite(
+  expectedAccountId: string,
   businessId: string,
   draft: PickupSiteDraft,
 ): Promise<BusinessMarketplaceResult<string>> {
   try {
     const clean = validatePickupSiteDraft(draft);
-    const client = await secureClient();
+    const client = await secureClient(expectedAccountId);
     const { data, error } = await client.rpc("submit_marketplace_pickup_site", {
       target_business_id: businessId,
       site_label: clean.label,
@@ -489,10 +494,11 @@ export async function submitPickupSite(
 }
 
 export async function archivePickupSite(
+  expectedAccountId: string,
   site: ManagedPickupSite,
 ): Promise<BusinessMarketplaceResult<void>> {
   try {
-    const client = await secureClient();
+    const client = await secureClient(expectedAccountId);
     const { error } = await client.rpc("archive_marketplace_pickup_site", {
       target_pickup_site_public_id: site.publicId,
       expected_updated_at: site.updatedAt,

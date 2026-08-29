@@ -675,6 +675,409 @@ begin
 end;
 $reported_review_report_state$;
 
+-- Mobile vendors can submit several candidate pins and draft stops, but only
+-- the exact staff-reviewed selection may cross into public discovery.
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+insert into auth.users (
+  id, aud, role, email, email_confirmed_at, raw_app_meta_data,
+  raw_user_meta_data, created_at, updated_at
+) values (
+  'a1000000-0000-4000-8000-000000000001',
+  'authenticated', 'authenticated', 'runtime-mobile-admin@spottr.invalid', now(),
+  '{}'::jsonb,
+  '{"username":"runtime_mobile_admin","display_name":"Runtime Mobile Admin","terms_accepted":true}'::jsonb,
+  now(), now()
+);
+
+insert into private.platform_roles (user_id, role, active)
+values ('a1000000-0000-4000-8000-000000000001', 'admin', true);
+
+insert into public.businesses (
+  id, kind, name, slug, description, state, verification, provenance, created_by
+) values (
+  '79000000-0000-4000-8000-000000000009',
+  'food_truck',
+  'Runtime Route Truck',
+  'runtime-route-truck',
+  'A complete mobile vendor submission for runtime approval tests.',
+  'draft',
+  'pending',
+  'owner',
+  '10000000-0000-4000-8000-000000000001'
+);
+
+insert into public.business_members (
+  business_id, user_id, role, status, accepted_at
+) values (
+  '79000000-0000-4000-8000-000000000009',
+  '10000000-0000-4000-8000-000000000001',
+  'owner', 'active', now()
+);
+
+insert into public.media_assets (
+  id, owner_id, business_id, storage_path, mime_type, width, height,
+  byte_size, sha256, source, quarantine_state, processed_storage_path,
+  scan_completed_at, moderation
+) values (
+  '79100000-0000-4000-8000-000000000009',
+  '10000000-0000-4000-8000-000000000001',
+  '79000000-0000-4000-8000-000000000009',
+  'published/runtime/mobile-review-logo.jpg', 'image/jpeg', 512, 512,
+  4096, repeat('e', 64), 'owner_upload', 'clean',
+  'published/runtime/mobile-review-logo-processed.jpg', now(), 'approved'
+);
+
+update public.businesses
+set logo_asset_id = '79100000-0000-4000-8000-000000000009'
+where id = '79000000-0000-4000-8000-000000000009';
+
+insert into public.business_private_details (
+  business_id, business_email
+) values (
+  '79000000-0000-4000-8000-000000000009',
+  'runtime-route-truck@spottr.invalid'
+);
+
+insert into public.business_locations (
+  id, business_id, label, address_line, city, region, postal_code,
+  point, is_primary, is_approximate, public_address, publication_state
+) values
+  (
+    '79200000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    'Runtime home route', '900 Runtime Avenue', 'Los Angeles', 'CA', '90009',
+    public.st_setsrid(public.st_makepoint(-118.250, 34.050), 4326)::public.geography,
+    true, false, true, 'private'
+  ),
+  (
+    '79300000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    'Runtime market stop', '910 Runtime Avenue', 'Los Angeles', 'CA', '90009',
+    public.st_setsrid(public.st_makepoint(-118.245, 34.055), 4326)::public.geography,
+    false, false, true, 'private'
+  ),
+  (
+    '79400000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    'Runtime unapproved stop', '920 Runtime Avenue', 'Los Angeles', 'CA', '90009',
+    public.st_setsrid(public.st_makepoint(-118.240, 34.060), 4326)::public.geography,
+    false, false, true, 'private'
+  );
+
+insert into public.weekly_hours (business_id, weekday, opens_at, closes_at, is_closed)
+select
+  '79000000-0000-4000-8000-000000000009',
+  weekday::smallint, '09:00'::time, '18:00'::time, false
+from generate_series(0, 6) weekday;
+
+insert into public.business_payments (business_id, payment)
+values ('79000000-0000-4000-8000-000000000009', 'cash');
+
+insert into public.menu_sections (id, business_id, name, is_published)
+values (
+  '79700000-0000-4000-8000-000000000009',
+  '79000000-0000-4000-8000-000000000009',
+  'Runtime truck menu', true
+);
+
+insert into public.menu_items (
+  id, section_id, name, price_minor, currency, availability, is_published
+) values (
+  '79800000-0000-4000-8000-000000000009',
+  '79700000-0000-4000-8000-000000000009',
+  'Runtime route plate', 1400, 'USD', 'available', true
+);
+
+insert into public.mobile_stops (
+  id, business_id, location_id, starts_at, ends_at, state
+) values
+  (
+    '79500000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    '79300000-0000-4000-8000-000000000009',
+    now() + interval '1 day', now() + interval '1 day 2 hours', 'draft'
+  ),
+  (
+    '79600000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    '79400000-0000-4000-8000-000000000009',
+    now() + interval '1 day 1 hour', now() + interval '1 day 3 hours', 'draft'
+  ),
+  (
+    '79900000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    '79200000-0000-4000-8000-000000000009',
+    now() - interval '2 hours', now() + interval '1 hour', 'draft'
+  );
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $mobile_owner_publication_guard$
+begin
+  begin
+    perform public.set_business_location_publication(
+      '79300000-0000-4000-8000-000000000009',
+      'published'
+    );
+    raise exception 'Mobile owner published an unreviewed secondary pin';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'MOBILE_SUBMISSION_SELECTION_REQUIRED' then raise; end if;
+  end;
+end;
+$mobile_owner_publication_guard$;
+
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+update public.businesses
+set state = 'pending'
+where id = '79000000-0000-4000-8000-000000000009';
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $mobile_review_aal_guard$
+begin
+  begin
+    perform public.get_pending_business_submission(
+      '79000000-0000-4000-8000-000000000009'
+    );
+    raise exception 'AAL1 administrator read an exact mobile submission';
+  exception
+    when insufficient_privilege then
+      if sqlerrm <> 'AAL2_REQUIRED' then raise; end if;
+  end;
+end;
+$mobile_review_aal_guard$;
+
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $mobile_submission_review_guards$
+declare
+  submission jsonb;
+begin
+  submission := public.get_pending_business_submission(
+    '79000000-0000-4000-8000-000000000009'
+  );
+  if jsonb_array_length(submission->'locations') <> 3
+    or jsonb_array_length(submission->'draft_stops') <> 3
+    or submission->'locations'->0->>'id' <> '79200000-0000-4000-8000-000000000009'
+    or submission ? 'business_email'
+    or submission ? 'business_phone'
+  then
+    raise exception 'Pending mobile submission detail was incomplete or leaked private contact data';
+  end if;
+
+  begin
+    perform public.set_business_publication(
+      '79000000-0000-4000-8000-000000000009',
+      'published', 'verified', 'Legacy mobile approval must be rejected.'
+    );
+    raise exception 'Legacy publication bypassed explicit mobile selection';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'MOBILE_SUBMISSION_SELECTION_REQUIRED' then raise; end if;
+  end;
+
+  begin
+    perform public.review_business_submission(
+      '79000000-0000-4000-8000-000000000009',
+      array['79200000-0000-4000-8000-000000000009']::uuid[],
+      array['79900000-0000-4000-8000-000000000009']::uuid[],
+      'Reject an expired initial stop window.'
+    );
+    raise exception 'Mobile review accepted a stale initial stop';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Approved mobile stop selection is invalid' then raise; end if;
+  end;
+
+  begin
+    perform public.review_business_submission(
+      '79000000-0000-4000-8000-000000000009',
+      array['79300000-0000-4000-8000-000000000009']::uuid[],
+      '{}'::uuid[],
+      'Reject selection without the primary pin.'
+    );
+    raise exception 'Mobile review accepted a selection without the primary pin';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Primary location approval is required' then raise; end if;
+  end;
+
+  begin
+    perform public.review_business_submission(
+      '79000000-0000-4000-8000-000000000009',
+      array[
+        '79200000-0000-4000-8000-000000000009',
+        '79300000-0000-4000-8000-000000000009',
+        '79400000-0000-4000-8000-000000000009'
+      ]::uuid[],
+      array[
+        '79500000-0000-4000-8000-000000000009',
+        '79600000-0000-4000-8000-000000000009'
+      ]::uuid[],
+      'Reject overlapping initial mobile stops.'
+    );
+    raise exception 'Mobile review accepted overlapping initial stops';
+  exception
+    when sqlstate '23P01' then
+      if sqlerrm <> 'MOBILE_STOP_TIME_OVERLAP' then raise; end if;
+  end;
+
+  begin
+    perform public.review_business_submission(
+      '79000000-0000-4000-8000-000000000009',
+      array[
+        '79200000-0000-4000-8000-000000000009',
+        '79300000-0000-4000-8000-000000000009'
+      ]::uuid[],
+      array['79500000-0000-4000-8000-000000000009']::uuid[],
+      'Require a complete verified contact before approval.'
+    );
+    raise exception 'Mobile review published a submission without complete contact data';
+  exception
+    when sqlstate '23514' then
+      if sqlerrm <> 'SUBMISSION_MISSING_CONTACT' then raise; end if;
+  end;
+
+  if exists (
+      select 1 from public.businesses business
+      where business.id = '79000000-0000-4000-8000-000000000009'
+        and business.state <> 'pending'
+    )
+    or exists (
+      select 1 from public.business_locations location
+      where location.business_id = '79000000-0000-4000-8000-000000000009'
+        and location.publication_state <> 'private'
+    )
+    or exists (
+      select 1 from public.mobile_stops stop
+      where stop.business_id = '79000000-0000-4000-8000-000000000009'
+        and (stop.state <> 'draft' or stop.confirmed_at is not null)
+    )
+  then
+    raise exception 'Rejected mobile review did not roll back atomically';
+  end if;
+end;
+$mobile_submission_review_guards$;
+
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+update public.business_private_details
+set business_phone = '+12135550199'
+where business_id = '79000000-0000-4000-8000-000000000009';
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+select public.review_business_submission(
+  '79000000-0000-4000-8000-000000000009',
+  array[
+    '79200000-0000-4000-8000-000000000009',
+    '79300000-0000-4000-8000-000000000009'
+  ]::uuid[],
+  array['79500000-0000-4000-8000-000000000009']::uuid[],
+  'Approved the primary pin, reviewed market location, and verified the initial schedule.'
+);
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+do $mobile_submission_review_state$
+begin
+  if not exists (
+      select 1 from public.businesses business
+      where business.id = '79000000-0000-4000-8000-000000000009'
+        and business.state = 'published'
+        and business.verification = 'verified'
+    )
+    or (
+      select count(*) from public.business_locations location
+      where location.business_id = '79000000-0000-4000-8000-000000000009'
+        and location.publication_state = 'published'
+    ) <> 2
+    or not exists (
+      select 1 from public.business_locations location
+      where location.id = '79400000-0000-4000-8000-000000000009'
+        and location.publication_state = 'private'
+    )
+    or not exists (
+      select 1 from public.mobile_stops stop
+      where stop.id = '79500000-0000-4000-8000-000000000009'
+        and stop.state = 'scheduled'
+        and stop.confirmed_at is not null
+    )
+    or not exists (
+      select 1 from public.mobile_stops stop
+      where stop.id = '79600000-0000-4000-8000-000000000009'
+        and stop.state = 'draft'
+        and stop.confirmed_at is null
+    )
+    or not exists (
+      select 1 from public.mobile_stops stop
+      where stop.id = '79900000-0000-4000-8000-000000000009'
+        and stop.state = 'draft'
+        and stop.confirmed_at is null
+    )
+    or not exists (
+      select 1 from public.audit_events event
+      where event.actor_id = 'a1000000-0000-4000-8000-000000000001'
+        and event.business_id = '79000000-0000-4000-8000-000000000009'
+        and event.event_type = 'business.submission_approved'
+    )
+  then
+    raise exception 'Approved mobile submission did not preserve its exact reviewed state';
+  end if;
+end;
+$mobile_submission_review_state$;
+
+set local role anon;
+do $mobile_submission_public_projection$
+begin
+  if not exists (
+      select 1 from public.public_business_directory directory
+      where directory.business_id = '79000000-0000-4000-8000-000000000009'
+    )
+    or (
+      select count(*) from public.public_business_locations location
+      where location.business_id = '79000000-0000-4000-8000-000000000009'
+    ) <> 2
+    or exists (
+      select 1 from public.public_business_locations location
+      where location.location_id = '79400000-0000-4000-8000-000000000009'
+    )
+    or (
+      select count(*) from public.mobile_stops stop
+      where stop.business_id = '79000000-0000-4000-8000-000000000009'
+    ) <> 1
+    or not exists (
+      select 1 from public.mobile_stops stop
+      where stop.id = '79500000-0000-4000-8000-000000000009'
+    )
+  then
+    raise exception 'Anonymous discovery did not match the reviewed mobile selection';
+  end if;
+end;
+$mobile_submission_public_projection$;
+reset role;
+
 insert into public.pricing_versions (
   id, version, region_code, currency, click_floor_minor, click_ceiling_minor,
   state, effective_at, approval_reference, approved_at
@@ -1878,8 +2281,118 @@ declare
   unfollow_handoff_event_id bigint;
   unfollow_handoff_outbox_claim record;
   unfollow_handoff_delivery_claim record;
+  ineligible_claim_event_id bigint;
+  ineligible_claim_outbox record;
+  ineligible_handoff_event_id bigint;
+  ineligible_handoff_outbox record;
+  ineligible_handoff_delivery record;
   affected integer;
 begin
+  -- Losing public eligibility after fanout must block both lease claim and the
+  -- final provider handoff. These rows are cleaned before the shared fixtures
+  -- continue so later delivery-count assertions remain isolated.
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '83100000-0000-4000-8000-000000000003'),
+    now() + interval '1 hour'
+  ) returning id into ineligible_claim_event_id;
+
+  select * into ineligible_claim_outbox
+  from private.claim_notification_outbox(
+    '84100000-0000-4000-8000-000000000004', 10, 60
+  ) where source_event_id = ineligible_claim_event_id;
+  if ineligible_claim_outbox.outbox_id is null then
+    raise exception 'Ineligible-claim fixture outbox was not claimed';
+  end if;
+  affected := private.expand_notification_outbox(
+    ineligible_claim_outbox.outbox_id,
+    ineligible_claim_outbox.lease_token,
+    20
+  );
+  if affected <> 1 then
+    raise exception 'Ineligible-claim fixture did not fan out exactly one delivery';
+  end if;
+
+  update public.businesses set state = 'suspended'
+  where id = '70000000-0000-4000-8000-000000000007';
+  if exists (
+    select 1 from private.claim_notification_deliveries(
+      '85100000-0000-4000-8000-000000000005', 20, 60
+    ) where source_event_id = ineligible_claim_event_id
+  ) or exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.source_event_id = ineligible_claim_event_id
+      and delivery.state = 'leased'
+  ) then
+    raise exception 'Ineligible business delivery crossed claim';
+  end if;
+  update private.notification_deliveries set
+    state = 'cancelled', last_provider_code = 'test_cleanup',
+    lease_token = null, lease_expires_at = null, updated_at = now()
+  where source_event_id = ineligible_claim_event_id;
+  update public.businesses set state = 'published'
+  where id = '70000000-0000-4000-8000-000000000007';
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '83200000-0000-4000-8000-000000000003'),
+    now() + interval '1 hour'
+  ) returning id into ineligible_handoff_event_id;
+
+  select * into ineligible_handoff_outbox
+  from private.claim_notification_outbox(
+    '84200000-0000-4000-8000-000000000004', 10, 60
+  ) where source_event_id = ineligible_handoff_event_id;
+  if ineligible_handoff_outbox.outbox_id is null then
+    raise exception 'Ineligible-handoff fixture outbox was not claimed';
+  end if;
+  affected := private.expand_notification_outbox(
+    ineligible_handoff_outbox.outbox_id,
+    ineligible_handoff_outbox.lease_token,
+    20
+  );
+  if affected <> 1 then
+    raise exception 'Ineligible-handoff fixture did not fan out exactly one delivery';
+  end if;
+  select * into ineligible_handoff_delivery
+  from private.claim_notification_deliveries(
+    '85200000-0000-4000-8000-000000000005', 20, 60
+  ) where source_event_id = ineligible_handoff_event_id;
+  if ineligible_handoff_delivery.delivery_id is null then
+    raise exception 'Ineligible-handoff fixture was not leased while eligible';
+  end if;
+
+  update public.businesses set state = 'suspended'
+  where id = '70000000-0000-4000-8000-000000000007';
+  begin
+    perform private.mark_notification_delivery_batch_sending(
+      array[ineligible_handoff_delivery.delivery_id],
+      array[ineligible_handoff_delivery.lease_token],
+      60
+    );
+    raise exception 'Ineligible business delivery crossed provider handoff';
+  exception when sqlstate '40001' then null;
+  end;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = ineligible_handoff_delivery.delivery_id
+      and delivery.state = 'leased'
+  ) then
+    raise exception 'Rejected ineligible handoff did not preserve the lease atomically';
+  end if;
+  update private.notification_deliveries set
+    state = 'cancelled', last_provider_code = 'test_cleanup',
+    lease_token = null, lease_expires_at = null, updated_at = now()
+  where id = ineligible_handoff_delivery.delivery_id;
+  update public.businesses set state = 'published'
+  where id = '70000000-0000-4000-8000-000000000007';
+
   insert into public.business_public_events (
     business_id, event_type, payload, expires_at
   ) values (

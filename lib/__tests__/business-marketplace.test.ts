@@ -1,9 +1,55 @@
-import { mapManagedPickupSites, mapMarketplaceControls, validatePickupSiteDraft } from '../business-marketplace';
+import { loadBusinessMarketplace, mapManagedPickupSites, mapMarketplaceControls, validatePickupSiteDraft } from '../business-marketplace';
+
+const mockCreateAccountBoundSupabaseClient = jest.fn();
+const mockGetAuthenticatorAssuranceLevel = jest.fn().mockResolvedValue({
+  data: { currentLevel: 'aal2' },
+  error: null,
+});
+jest.mock('@/lib/supabase', () => ({
+  createAccountBoundSupabaseClient: (...args: unknown[]) =>
+    mockCreateAccountBoundSupabaseClient(...args),
+  isSupabaseConfigured: true,
+  supabase: {
+    auth: {
+      mfa: {
+        getAuthenticatorAssuranceLevel: (...args: unknown[]) =>
+          mockGetAuthenticatorAssuranceLevel(...args),
+      },
+    },
+  },
+}));
 
 const businessId = 'cf844b56-696c-48cf-9f72-715d823776f3';
 const siteId = 'a418d851-2f2a-4ed8-8df8-52a1293c6211';
+const accountId = '44df8f4e-9e6d-45f3-bf3f-0a6b4c6e11c5';
 
 describe('business marketplace contracts', () => {
+  it('pins protected reads to the expected account and AAL2 client', async () => {
+    const rpc = jest.fn().mockResolvedValue({
+      data: [{
+        business_id: businessId,
+        business_name: 'Neighborhood Table',
+        business_kind: 'pop_up',
+        chat_enabled: true,
+        chat_required: false,
+        can_toggle_chat: true,
+      }],
+      error: null,
+    });
+    mockCreateAccountBoundSupabaseClient.mockResolvedValue({
+      rpc,
+    });
+
+    const result = await loadBusinessMarketplace(accountId, businessId);
+
+    expect(result.ok).toBe(true);
+    expect(mockCreateAccountBoundSupabaseClient).toHaveBeenCalledWith(accountId);
+    expect(mockGetAuthenticatorAssuranceLevel).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith('get_business_marketplace_controls', {
+      target_business_id: businessId,
+    });
+  });
+
   it('maps strict eligible chat controls', () => {
     expect(mapMarketplaceControls([{ business_id: businessId, business_name: 'Neighborhood Table', business_kind: 'home_kitchen', chat_enabled: true, chat_required: true, can_toggle_chat: false }])).toMatchObject({ chatEnabled: true, chatRequired: true, canToggleChat: false });
     expect(() => mapMarketplaceControls([{ business_id: businessId, business_name: 'Restaurant', business_kind: 'restaurant', chat_enabled: false, chat_required: false, can_toggle_chat: false }])).toThrow();

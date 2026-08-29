@@ -3,6 +3,7 @@ import {
   clusterInventoryFeatures,
   clusterPlaces,
   normalizeLongitude,
+  shouldRenderMapInventory,
   viewportIsLiveInventoryEligible,
   zoomFromLongitudeDelta,
 } from '@/lib/map-clustering';
@@ -51,6 +52,18 @@ describe('map clustering', () => {
     expect(viewportIsLiveInventoryEligible({ west: 170, south: -2, east: -178, north: 2 })).toBe(true);
     expect(viewportIsLiveInventoryEligible({ west: -20, south: -2, east: 20, north: 2 })).toBe(false);
   });
+
+  it.each([
+    { viewportEligible: true, inventorySuppressed: false, expected: true },
+    { viewportEligible: true, inventorySuppressed: true, expected: false },
+    { viewportEligible: false, inventorySuppressed: false, expected: false },
+    { viewportEligible: false, inventorySuppressed: true, expected: false },
+  ])(
+    'renders markers only for a current eligible viewport: %o',
+    ({ expected, ...state }) => {
+      expect(shouldRenderMapInventory(state)).toBe(expected);
+    }
+  );
 
   it('bounds a 1,200-feature viewport without losing represented places', () => {
     const features = Array.from({ length: 1_200 }, (_, index) => ({

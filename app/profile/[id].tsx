@@ -353,10 +353,11 @@ function ScopedPublicProfile({ id }: { id?: string }) {
                     {review.comments.map((comment) => (
                       <View key={comment.id} style={styles.commentRow}>
                         <Pressable
+                          accessibilityLabel={`View ${comment.authorDisplayName} profile`}
                           accessibilityRole="link"
                           onPress={() => router.push({ pathname: '/profile/[id]', params: { id: comment.authorId } })}
                           style={styles.commentAvatar}>
-                          {comment.authorAvatarUrl ? <Image source={{ uri: comment.authorAvatarUrl }} style={styles.commentAvatarImage} /> : <Text style={styles.commentAvatarText}>{comment.authorDisplayName.slice(0, 1).toUpperCase()}</Text>}
+                          {comment.authorAvatarUrl ? <Image accessibilityElementsHidden importantForAccessibility="no" source={{ uri: comment.authorAvatarUrl }} style={styles.commentAvatarImage} /> : <Text accessibilityElementsHidden importantForAccessibility="no" style={styles.commentAvatarText}>{comment.authorDisplayName.slice(0, 1).toUpperCase()}</Text>}
                         </Pressable>
                         <View style={styles.commentCopy}>
                           <View style={styles.commentNameRow}>

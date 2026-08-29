@@ -100,6 +100,7 @@ export default function RootLayout() {
                 <Stack.Screen name="security" options={{ headerShown: false }} />
                 <Stack.Screen name="moderation" options={{ headerShown: false }} />
                 <Stack.Screen name="marketplace-moderation" options={{ headerShown: false }} />
+                <Stack.Screen name="business-submission-moderation" options={{ headerShown: false }} />
               </Stack>
             </ThemeProvider>
           </MarketplaceStoreProvider>

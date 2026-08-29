@@ -22,6 +22,7 @@ import { palette, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/context/auth-context";
 import { useMarketplaceStore } from "@/context/marketplace-store";
 import { chatSafetyIssue, chatSafetyMessage } from "@/lib/chat-safety";
+import { featureFlags } from "@/lib/features";
 import {
   authorizeNeighborhoodPickupChoice,
   clearMarketplaceConversation,
@@ -386,6 +387,13 @@ function ScopedConversationScreen({ id }: { id?: string }) {
       !id || !expectedUserId || !conversation || threadClosed ||
       photos.length >= 4
     ) return;
+    if (!featureFlags.mediaUploads) {
+      showMessage(
+        "Photo attachments unavailable",
+        "Text chat remains available while the media safety pipeline is offline.",
+      );
+      return;
+    }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!mounted.current) return;
     if (!permission.granted) {
@@ -1210,20 +1218,29 @@ function ScopedConversationScreen({ id }: { id?: string }) {
                     </Text>
                   )
                   : null}
+                {!featureFlags.mediaUploads && !threadClosed
+                  ? (
+                    <Text style={styles.mediaUnavailable}>
+                      Photo attachments are off for this release. Text chat remains available.
+                    </Text>
+                  )
+                  : null}
                 <View style={styles.composer}>
                   <Pressable
-                    accessibilityLabel="Attach a photo"
+                    accessibilityLabel={featureFlags.mediaUploads
+                      ? "Attach a photo"
+                      : "Photo attachments unavailable"}
                     accessibilityRole="button"
                     accessibilityState={{
-                      disabled: !conversation || threadClosed ||
+                      disabled: !featureFlags.mediaUploads || !conversation || threadClosed ||
                         photos.length >= 4,
                     }}
-                    disabled={!conversation || threadClosed ||
+                    disabled={!featureFlags.mediaUploads || !conversation || threadClosed ||
                       photos.length >= 4}
                     onPress={() => void pickPhoto()}
                     style={[
                       styles.attachButton,
-                      (!conversation || threadClosed || photos.length >= 4) &&
+                      (!featureFlags.mediaUploads || !conversation || threadClosed || photos.length >= 4) &&
                       styles.attachButtonDisabled,
                     ]}
                   >
@@ -1492,6 +1509,14 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 10,
     lineHeight: 15,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  mediaUnavailable: {
+    backgroundColor: palette.bg,
+    color: palette.muted,
+    fontSize: 9,
+    lineHeight: 14,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },

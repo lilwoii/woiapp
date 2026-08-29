@@ -85,6 +85,61 @@ Deno.test("account deletion cancels and revalidates queued notification work", a
   );
 });
 
+Deno.test("queued notifications stop when a business loses public eligibility", async () => {
+  const migration = await text(
+    "migrations/20260926000000_notification_business_eligibility_lifecycle.sql",
+  );
+
+  assertMatch(
+    migration,
+    /claim_notification_deliveries[\s\S]+private\.is_business_publicly_eligible\(delivery\.business_id\)/,
+  );
+  assertMatch(
+    migration,
+    /mark_notification_delivery_batch_sending[\s\S]+private\.is_business_publicly_eligible\(delivery\.business_id\)/,
+  );
+  assert(migration.includes("lock_notification_business_eligibility"));
+  assert(migration.includes("for share of business"));
+  assert(migration.includes("for share of account"));
+  assert(migration.includes("for share of source"));
+  assert(migration.includes("for share of jurisdiction"));
+  assert(migration.includes("for share of permit"));
+  assertMatch(
+    migration,
+    /claim_notification_deliveries[\s\S]+perform private\.lock_notification_business_eligibility\(locked_business_ids\)[\s\S]+return query[\s\S]+delivery\.business_id = any\(locked_business_ids\)/,
+  );
+  assertMatch(
+    migration,
+    /mark_notification_delivery_batch_sending[\s\S]+perform private\.lock_notification_business_eligibility\(locked_business_ids\)[\s\S]+update private\.notification_deliveries/,
+  );
+  assert(migration.includes("affected <> cardinality(target_delivery_ids)"));
+});
+
+Deno.test("mobile listing approval cannot strand or bulk-publish submitted stops", async () => {
+  const migration = await text(
+    "migrations/20260927000000_business_submission_location_review.sql",
+  );
+  const review = migration.slice(
+    migration.indexOf("create or replace function public.review_business_submission"),
+    migration.indexOf("revoke all on function public.review_business_submission"),
+  );
+
+  assert(review.includes("primary_location_id = any(approved_location_ids)"));
+  assert(review.includes("stop.location_id = any(approved_location_ids)"));
+  assert(review.includes("stop.id = any(approved_stop_ids)"));
+  assert(review.includes("else 'private'::public.location_publication_state"));
+  assert(review.includes("stop.state = 'draft'"));
+  assert(review.includes("MOBILE_STOP_TIME_OVERLAP"));
+  assertMatch(
+    migration,
+    /set_business_publication[\s\S]+MOBILE_SUBMISSION_SELECTION_REQUIRED/,
+  );
+  assertMatch(
+    migration,
+    /set_business_location_publication[\s\S]+and not target_is_primary/,
+  );
+});
+
 Deno.test("account deletion can apply only its frozen terminal profile transition", async () => {
   const migration = await text(
     "migrations/20260925000000_account_deletion_profile_transition.sql",

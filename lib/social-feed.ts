@@ -5,6 +5,7 @@ import { createAccountBoundSupabaseClient, supabase } from '@/lib/supabase';
 import { publicBadgeFromCode, type PublicBadge } from '@/lib/trust-badges';
 import type { ActionResult } from '@/types/marketplace';
 import type { BusinessPostMediaCandidate, FeedFilter, FeedItem } from '@/types/feed';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Row = Record<string, unknown>;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -52,9 +53,11 @@ async function accountClient(expectedUserId: string) {
   return createAccountBoundSupabaseClient(expectedUserId);
 }
 
-async function hydrateFeedRows(feedRows: Row[]): Promise<FeedItem[]> {
-  const client = supabase;
-  if (!client || !feedRows.length) return [];
+async function hydrateFeedRows(
+  feedRows: Row[],
+  client: SupabaseClient,
+): Promise<FeedItem[]> {
+  if (!feedRows.length) return [];
   const postIds = feedRows.filter((row) => text(row.feed_type) === 'business_post').map((row) => text(row.content_id)).filter((id) => uuidPattern.test(id));
   const reviewIds = feedRows.filter((row) => text(row.feed_type) === 'user_review').map((row) => text(row.content_id)).filter((id) => uuidPattern.test(id));
   const authorIds = [...new Set(feedRows.map((row) => text(row.author_public_id)).filter((id) => uuidPattern.test(id)))];
@@ -76,7 +79,10 @@ async function hydrateFeedRows(feedRows: Row[]): Promise<FeedItem[]> {
   const badges = rows(badgesResult.data);
   const businessBadges = rows(businessBadgesResult.data);
   const businessMedia = rows(businessMediaResult.data);
-  const urls = await createSignedMediaUrls([...postMedia, ...reviewMedia, ...businessMedia].map((row) => text(row.storage_path)));
+  const urls = await createSignedMediaUrls(
+    [...postMedia, ...reviewMedia, ...businessMedia].map((row) => text(row.storage_path)),
+    client,
+  );
 
   return feedRows.map((row) => {
     const type = text(row.feed_type) === 'business_post' ? 'business_post' : 'user_review';
@@ -135,21 +141,41 @@ export async function fetchBusinessBadges(businessId: string): Promise<ActionRes
 
 export async function fetchFollowedFeed(
   filter: FeedFilter,
+  expectedUserId: string,
   offset = 0
 ): Promise<ActionResult<{ items: FeedItem[]; hasMore: boolean }>> {
-  const client = supabase;
-  if (!client) return configurationRequired();
-  if (!['all', 'business_post', 'user_review'].includes(filter) || !Number.isInteger(offset) || offset < 0 || offset > 10_000) {
+  if (!supabase) return configurationRequired();
+  if (
+    !uuidPattern.test(expectedUserId) ||
+    !['all', 'business_post', 'user_review'].includes(filter) ||
+    !Number.isInteger(offset) ||
+    offset < 0 ||
+    offset > 10_000
+  ) {
     return { ok: false, code: 'INVALID', reason: 'This feed request is invalid.' };
   }
   const pageSize = 20;
   try {
+    const client = await accountClient(expectedUserId);
+    if (!client) {
+      return {
+        ok: false,
+        code: 'AUTH_REQUIRED',
+        reason: 'The active account changed. Open the feed again from the current account.',
+      };
+    }
     let query = client.from('public_followed_feed').select('*');
     if (filter !== 'all') query = query.eq('feed_type', filter);
     const { data, error } = await query.order('created_at', { ascending: false }).range(offset, offset + pageSize);
     if (error) throw error;
     const page = rows(data);
-    return { ok: true, data: { items: await hydrateFeedRows(page.slice(0, pageSize)), hasMore: page.length > pageSize } };
+    return {
+      ok: true,
+      data: {
+        items: await hydrateFeedRows(page.slice(0, pageSize), client),
+        hasMore: page.length > pageSize,
+      },
+    };
   } catch (error) {
     return toActionError(error, 'Your feed could not be loaded.');
   }
@@ -166,7 +192,13 @@ export async function fetchBusinessPosts(businessId: string, offset = 0): Promis
     const { data, error } = await client.from('public_business_posts').select('*').eq('business_id', businessId).order('created_at', { ascending: false }).range(offset, offset + pageSize);
     if (error) throw error;
     const postRows = rows(data).map((row) => ({ ...row, feed_type: 'business_post', content_id: row.post_id }));
-    return { ok: true, data: { items: await hydrateFeedRows(postRows.slice(0, pageSize)), hasMore: postRows.length > pageSize } };
+    return {
+      ok: true,
+      data: {
+        items: await hydrateFeedRows(postRows.slice(0, pageSize), client),
+        hasMore: postRows.length > pageSize,
+      },
+    };
   } catch (error) {
     return toActionError(error, 'Business posts could not be loaded.');
   }

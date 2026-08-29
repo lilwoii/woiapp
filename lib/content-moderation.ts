@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import { createAccountBoundSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 
 export type ModerationTargetType = 'review' | 'review_comment' | 'business_post' | 'update' | 'response';
 export type ModerationDecision = 'approved' | 'rejected';
@@ -121,21 +121,20 @@ function failure<T>(error: unknown, fallback: string): ModerationResult<T> {
   return { ok: false, code: 'UNKNOWN', reason: fallback };
 }
 
-async function secureClient() {
-  if (!isSupabaseConfigured || !supabase) throw Object.assign(new Error('Live services are not configured.'), { code: 'CONFIG' });
-  const [{ data: userData, error: userError }, assurance] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
-  ]);
-  if (userError || !userData.user) throw Object.assign(userError ?? new Error('Not authenticated'), { status: 401 });
-  if (assurance.error) throw assurance.error;
-  if (assurance.data.currentLevel !== 'aal2') throw Object.assign(new Error('AAL2 authenticator verification required'), { status: 403 });
-  return supabase;
+async function secureClient(expectedAccountId: string) {
+  if (!isSupabaseConfigured) throw Object.assign(new Error('Live services are not configured.'), { code: 'CONFIG' });
+  const client = await createAccountBoundSupabaseClient(expectedAccountId);
+  if (!client) throw Object.assign(new Error('Not authenticated'), { status: 401 });
+  return client;
 }
 
-export async function loadModerationQueue(offset = 0, limit = 30): Promise<ModerationResult<ModerationQueuePage>> {
+export async function loadModerationQueue(
+  expectedAccountId: string,
+  offset = 0,
+  limit = 30,
+): Promise<ModerationResult<ModerationQueuePage>> {
   try {
-    const client = await secureClient();
+    const client = await secureClient(expectedAccountId);
     const safeOffset = Math.min(Math.max(Math.floor(offset), 0), 100);
     const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
     const queueArgs = {
@@ -162,6 +161,7 @@ export async function loadModerationQueue(offset = 0, limit = 30): Promise<Moder
 }
 
 export async function decideModerationItem(
+  expectedAccountId: string,
   item: ModerationQueueItem,
   decision: ModerationDecision,
   reason: string
@@ -171,7 +171,7 @@ export async function decideModerationItem(
     if (cleanReason.length < 3 || cleanReason.length > 1000) {
       return { ok: false, code: 'INVALID', reason: 'Record a moderation reason from 3 to 1,000 characters.' };
     }
-    const client = await secureClient();
+    const client = await secureClient(expectedAccountId);
     const reportedReview = isReportedReview(item);
     const { data, error } = reportedReview
       ? await client.rpc('decide_reported_review', {

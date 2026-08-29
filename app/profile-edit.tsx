@@ -8,6 +8,7 @@ import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
+import { featureFlags } from '@/lib/features';
 import { checkProfessionalText } from '@/lib/moderation';
 import { loadOwnSocialProfile, updateOwnSocialProfile, uploadProfileBanner, type SocialProfileWorkspace } from '@/lib/social-profile';
 import type { PublicProfileLink } from '@/types/social';
@@ -53,6 +54,13 @@ export default function ProfileEditScreen() {
 
   const chooseBanner = async () => {
     if (!accountId || !workspace?.bannerUnlocked || uploading) return;
+    if (!featureFlags.mediaUploads) {
+      setNotice({
+        tone: 'error',
+        text: 'New profile images are not available in this release. Previously approved banners can still be selected.',
+      });
+      return;
+    }
     setNotice(null);
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
@@ -161,11 +169,11 @@ export default function ProfileEditScreen() {
 
               <View style={styles.section}>
                 <Text style={styles.label}>Profile banner</Text>
-                <Text style={styles.help}>{workspace.bannerUnlocked ? 'Unlocked. Wide images are scanned before they can be selected.' : `${workspace.approvedReviewCount}/10 approved reviews — unlocks at 10.`}</Text>
+                <Text style={styles.help}>{workspace.bannerUnlocked ? featureFlags.mediaUploads ? 'Unlocked. Wide images are scanned before they can be selected.' : 'Unlocked. New uploads stay off until the safety pipeline is approved; previously approved banners remain selectable.' : `${workspace.approvedReviewCount}/10 approved reviews — unlocks at 10.`}</Text>
                 {workspace.bannerUrl && selectedBannerId === undefined ? <Image source={{ uri: workspace.bannerUrl }} style={styles.bannerPreview} /> : null}
                 {workspace.approvedBanners.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}><View style={styles.bannerChoices}>{workspace.approvedBanners.map((candidate) => { const selected = selectedBannerId === candidate.assetId; return <Pressable accessibilityLabel="Select approved profile banner" accessibilityRole="button" accessibilityState={{ selected }} key={candidate.assetId} onPress={() => setSelectedBannerId(candidate.assetId)} style={[styles.bannerChoice, selected && styles.bannerChoiceActive]}><Image source={{ uri: candidate.url }} style={styles.bannerChoiceImage} /></Pressable>; })}</View></ScrollView> : null}
                 <View style={styles.bannerActions}>
-                  <Pressable accessibilityRole="button" accessibilityState={{ disabled: !workspace.bannerUnlocked, busy: uploading }} disabled={!workspace.bannerUnlocked || uploading} onPress={() => void chooseBanner()} style={[styles.secondary, !workspace.bannerUnlocked && styles.disabled]}>{uploading ? <ActivityIndicator color={palette.ink} size="small" /> : <Text style={styles.secondaryText}>Upload new</Text>}</Pressable>
+                  <Pressable accessibilityRole="button" accessibilityState={{ disabled: !workspace.bannerUnlocked || !featureFlags.mediaUploads, busy: uploading }} disabled={!workspace.bannerUnlocked || !featureFlags.mediaUploads || uploading} onPress={() => void chooseBanner()} style={[styles.secondary, (!workspace.bannerUnlocked || !featureFlags.mediaUploads) && styles.disabled]}>{uploading ? <ActivityIndicator color={palette.ink} size="small" /> : <Text style={styles.secondaryText}>{featureFlags.mediaUploads ? 'Upload new' : 'Upload gated'}</Text>}</Pressable>
                   {(workspace.bannerUrl || selectedBannerId) ? <Pressable accessibilityRole="button" onPress={() => setSelectedBannerId(null)} style={styles.secondary}><Text style={styles.secondaryText}>Remove</Text></Pressable> : null}
                 </View>
               </View>

@@ -24,6 +24,12 @@ const serializationMigration = await Deno.readTextFile(
     import.meta.url,
   ),
 );
+const submissionLocationReview = await Deno.readTextFile(
+  new URL(
+    "../migrations/20260927000000_business_submission_location_review.sql",
+    import.meta.url,
+  ),
+);
 
 function sourceFunctionBody(source: string, name: string): string {
   const marker = `export async function ${name}(`;
@@ -273,6 +279,72 @@ Deno.test("setup RPCs and draft RLS fail closed at AAL2", () => {
     sqlFunctionBody(schema, "public.submit_business_claim"),
     /CLAIM_VERIFICATION_SERVICE_REQUIRED/,
   );
+});
+
+Deno.test("mobile submission review selects public pins and initial stops atomically", () => {
+  const detail = sqlFunctionBody(
+    submissionLocationReview,
+    "public.get_pending_business_submission",
+  );
+  const review = sqlFunctionBody(
+    submissionLocationReview,
+    "public.review_business_submission",
+  );
+  const locationPublication = sqlFunctionBody(
+    submissionLocationReview,
+    "public.set_business_location_publication",
+  );
+  const legacyPublication = sqlFunctionBody(
+    submissionLocationReview,
+    "public.set_business_publication",
+  );
+
+  for (const body of [detail, review]) {
+    assertMatch(body, /private\.require_aal2\(\)/);
+    assertMatch(body, /private\.is_platform_staff/);
+    assertMatch(body, /array\['admin'\]/);
+  }
+  assertMatch(review, /from public\.businesses business[\s\S]*?for update/);
+  assertMatch(review, /target_kind not in \('food_truck', 'pop_up'\)/);
+  assertMatch(review, /primary_location_id = any\(approved_location_ids\)/);
+  assertMatch(review, /pg_advisory_xact_lock/);
+  assertMatch(review, /MOBILE_STOP_TIME_OVERLAP/);
+  assertMatch(review, /stop\.location_id = any\(approved_location_ids\)/);
+  assertMatch(review, /stop\.state = 'draft'/);
+  assertMatch(review, /stop\.starts_at < now\(\) - interval '15 minutes'/);
+  assertMatch(review, /'business\.submission_approved'/);
+  assert(
+    review.indexOf("update public.business_locations") <
+      review.indexOf("update public.businesses"),
+    "selected locations must publish before the business publication trigger runs",
+  );
+  assert(
+    review.indexOf("update public.businesses") <
+      review.indexOf("update public.mobile_stops"),
+    "draft stops must promote only after the business is public",
+  );
+  assertMatch(locationPublication, /MOBILE_SUBMISSION_SELECTION_REQUIRED/);
+  assertMatch(locationPublication, /and not target_is_primary/);
+  assertMatch(
+    locationPublication,
+    /from public\.businesses business[\s\S]*?where business\.id = target_business_id[\s\S]*?for update/,
+  );
+  assert(
+    locationPublication.indexOf("from public.businesses business") <
+      locationPublication.indexOf("private.is_business_member"),
+    "location publication must lock the business before revalidating membership",
+  );
+  assertMatch(legacyPublication, /MOBILE_SUBMISSION_SELECTION_REQUIRED/);
+  assertMatch(legacyPublication, /old_state = 'pending'/);
+  assertMatch(
+    submissionLocationReview,
+    /revoke all on function public\.get_pending_business_submission\(uuid\) from public;/,
+  );
+  assertMatch(
+    submissionLocationReview,
+    /grant execute on function public\.review_business_submission\(uuid, uuid\[\], uuid\[\], text\)[\s\S]*?to authenticated;/,
+  );
+  assert(!submissionLocationReview.includes("to service_role"));
 });
 
 Deno.test("setup authority serialization is identical for baseline and upgrades", () => {

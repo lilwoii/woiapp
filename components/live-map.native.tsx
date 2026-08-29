@@ -8,6 +8,7 @@ import {
   clusterInventoryFeatures,
   clusterPlaces,
   normalizeLongitude,
+  shouldRenderMapInventory,
   viewportIsLiveInventoryEligible,
   zoomFromLongitudeDelta,
 } from '@/lib/map-clustering';
@@ -24,7 +25,11 @@ type Props = {
   onSelectBusinessId?: (businessId: string, locationId?: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
   onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
+  onViewportInvalidated?: (viewport: MapViewport) => void;
+  onRetryInventory?: () => void;
   inventoryFeatures?: MapInventoryFeature[];
+  inventoryError?: string | null;
+  markersSuppressed?: boolean;
   userCoordinates?: { latitude: number; longitude: number } | null;
   routeCoordinates?: NavigationCoordinate[];
   navigationMode?: TravelMode;
@@ -91,6 +96,10 @@ function VenueMapMarker({
   const [tracksLogo, setTracksLogo] = useState(Boolean(logoUrl));
   return (
     <Marker
+      accessibilityHint="Opens place details"
+      accessibilityLabel={`${title}${description ? `. ${description}` : ''}`}
+      accessibilityRole="button"
+      accessible
       coordinate={coordinate}
       description={description}
       onPress={onPress}
@@ -99,7 +108,10 @@ function VenueMapMarker({
       <VenueMarker
         category={category}
         logoUrl={logoFailed ? undefined : logoUrl}
-        onLogoError={() => setLogoFailed(true)}
+        onLogoError={() => {
+          setLogoFailed(true);
+          setTracksLogo(false);
+        }}
         onLogoSettled={() => setTracksLogo(false)}
         selected={selected}
       />
@@ -107,9 +119,19 @@ function VenueMapMarker({
   );
 }
 
-function ClusterPin({ count, categories }: { count: number; categories: Partial<Record<Place['category'], number>> }) {
+function ClusterPin({
+  count,
+  categories,
+}: {
+  count: number;
+  categories: Partial<Record<Place['category'], number>>;
+}) {
   const summary = mapClusterCategorySummary(categories);
-  return <View accessible accessibilityHint="Zooms in to show individual places" accessibilityLabel={`${count} food places in this area. ${summary.accessibilityLabel}.`} accessibilityRole="button" style={styles.clusterPin}>
+  return <View
+    accessibilityElementsHidden
+    accessible={false}
+    importantForAccessibility="no-hide-descendants"
+    style={styles.clusterPin}>
     <Text style={styles.clusterCount}>{count > 999 ? '999+' : count}</Text>
     <Text numberOfLines={1} style={styles.clusterKinds}>{summary.badges.join(' · ')}</Text>
   </View>;
@@ -141,7 +163,11 @@ export function LiveMap({
   onSelectBusinessId,
   onSearchArea,
   onViewportChange,
-  inventoryFeatures = [],
+  onViewportInvalidated,
+  onRetryInventory,
+  inventoryFeatures,
+  inventoryError = null,
+  markersSuppressed = false,
   userCoordinates,
   routeCoordinates = [],
   navigationMode,
@@ -153,18 +179,26 @@ export function LiveMap({
       : initialRegion
   );
   const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
+  const [inventoryViewportEligible, setInventoryViewportEligible] = useState(true);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [perspective, setPerspective] = useState(false);
   const userMovedMap = useRef(false);
   const inventoryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const authoritativeInventory = inventoryFeatures !== undefined;
   const clientFeatures = useMemo(
     () => clusterPlaces(places, zoomFromLongitudeDelta(region.longitudeDelta)),
     [places, region.longitudeDelta]
   );
   const renderedInventoryFeatures = useMemo(
-    () => clusterInventoryFeatures(inventoryFeatures, zoomFromLongitudeDelta(region.longitudeDelta), 120),
+    () => clusterInventoryFeatures(inventoryFeatures ?? [], zoomFromLongitudeDelta(region.longitudeDelta), 120),
     [inventoryFeatures, region.longitudeDelta]
   );
+  const markersVisible = shouldRenderMapInventory({
+    viewportEligible: inventoryViewportEligible,
+    inventorySuppressed: markersSuppressed,
+  });
+  const visibleInventoryFeatures = markersVisible ? renderedInventoryFeatures : [];
+  const visibleClientFeatures = markersVisible && !authoritativeInventory ? clientFeatures : [];
   const placesById = useMemo(
     () => new Map(places.map((place) => [place.id, place])),
     [places]
@@ -200,6 +234,8 @@ export function LiveMap({
   return (
     <View style={styles.frame}>
     <MapView
+      accessibilityHint="Pan or zoom to explore food places. Use Search this area to refresh results."
+      accessibilityLabel="Interactive map of nearby food"
       initialRegion={
         userCoordinates
           ? { ...userCoordinates, latitudeDelta: 0.12, longitudeDelta: 0.12 }
@@ -218,8 +254,13 @@ export function LiveMap({
         setRegion(nextRegion);
         if (userMovedMap.current) {
           const viewport = viewportFromRegion(nextRegion);
+          const eligible = viewportIsLiveInventoryEligible(viewport.bounds);
           if (onSearchArea) setPendingViewport(viewport);
-          if (onViewportChange && viewportIsLiveInventoryEligible(viewport.bounds)) {
+          setInventoryViewportEligible(eligible);
+          onViewportInvalidated?.(viewport);
+          if (!eligible) {
+            if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
+          } else if (onViewportChange) {
             if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
             inventoryTimer.current = setTimeout(() => {
               void onViewportChange(viewport);
@@ -240,8 +281,19 @@ export function LiveMap({
         </>
       ) : null}
       {navigationMode && userCoordinates ? (
-        <Marker coordinate={userCoordinates} tracksViewChanges={false}>
-          <View accessibilityLabel={`Your live ${navigationMode} position`} style={styles.navigationMarker}>
+        <Marker
+          accessibilityLabel={`Your live ${navigationMode} position`}
+          accessibilityRole="image"
+          accessible
+          coordinate={userCoordinates}
+          description={`Current ${navigationMode} navigation position.`}
+          title={`Your live ${navigationMode} position`}
+          tracksViewChanges={false}>
+          <View
+            accessibilityElementsHidden
+            accessible={false}
+            importantForAccessibility="no-hide-descendants"
+            style={styles.navigationMarker}>
             <FontAwesome6
               color="#FFFFFF"
               name={navigationMode === 'drive' ? 'car-side' : navigationMode === 'walk' ? 'person-walking' : 'bicycle'}
@@ -250,11 +302,18 @@ export function LiveMap({
           </View>
         </Marker>
       ) : null}
-      {renderedInventoryFeatures.map((feature) => {
+      {visibleInventoryFeatures.map((feature) => {
         if (feature.type === 'cluster') {
+          const summary = mapClusterCategorySummary(feature.categoryCounts);
+          const accessibilityLabel = `${feature.count} food places in this area. ${summary.accessibilityLabel}.`;
           return (
             <Marker
+              accessibilityHint="Zooms in to show individual places"
+              accessibilityLabel={accessibilityLabel}
+              accessibilityRole="button"
+              accessible
               coordinate={{ latitude: feature.latitude, longitude: feature.longitude }}
+              description={`${summary.accessibilityLabel}. Select to zoom in.`}
               key={`${feature.id}:${feature.count}:${feature.dominantCategory}`}
               onPress={() => {
                 userMovedMap.current = true;
@@ -263,8 +322,12 @@ export function LiveMap({
                   { duration: motionDuration(reduceMotion, 380) }
                 );
               }}
+              title={`${feature.count} food places`}
               tracksViewChanges={false}>
-              <ClusterPin categories={feature.categoryCounts} count={feature.count} />
+              <ClusterPin
+                categories={feature.categoryCounts}
+                count={feature.count}
+              />
             </Marker>
           );
         }
@@ -285,21 +348,32 @@ export function LiveMap({
           />
         );
       })}
-      {!inventoryFeatures.length ? clientFeatures.map((feature) => {
+      {visibleClientFeatures.map((feature) => {
         if (feature.kind === 'cluster') {
+          const summary = mapClusterCategorySummary(feature.categories);
+          const accessibilityLabel = `${feature.count} food places in this area. ${summary.accessibilityLabel}.`;
           return (
             <Marker
+              accessibilityHint="Zooms in to show individual places"
+              accessibilityLabel={accessibilityLabel}
+              accessibilityRole="button"
+              accessible
               coordinate={{ latitude: feature.latitude, longitude: feature.longitude }}
+              description={`${summary.accessibilityLabel}. Select to zoom in.`}
               key={feature.id}
-            onPress={() => {
-              userMovedMap.current = true;
-              mapRef.current?.animateCamera(
+              onPress={() => {
+                userMovedMap.current = true;
+                mapRef.current?.animateCamera(
                   { center: { latitude: feature.latitude, longitude: feature.longitude }, zoom: Math.min(18, zoomFromLongitudeDelta(region.longitudeDelta) + 2) },
                   { duration: motionDuration(reduceMotion, 380) }
                 );
               }}
+              title={`${feature.count} food places`}
               tracksViewChanges={false}>
-              <ClusterPin categories={feature.categories} count={feature.count} />
+              <ClusterPin
+                categories={feature.categories}
+                count={feature.count}
+              />
             </Marker>
           );
         }
@@ -319,7 +393,7 @@ export function LiveMap({
             title={place.name}
           />
         );
-      }) : null}
+      })}
     </MapView>
     <Pressable
       accessibilityLabel={perspective ? 'Use flat map view' : 'Use 3D map perspective'}
@@ -339,6 +413,7 @@ export function LiveMap({
     </Pressable>
     {pendingViewport && onSearchArea ? (
       <Pressable
+        accessibilityLabel="Search the visible map area"
         accessibilityRole="button"
         onPress={() => {
           const viewport = pendingViewport;
@@ -349,6 +424,28 @@ export function LiveMap({
         <FontAwesome6 color="#FFFFFF" name="magnifying-glass-location" size={12} />
         <Text style={styles.searchAreaText}>Search this area</Text>
       </Pressable>
+    ) : null}
+    {!inventoryViewportEligible || markersSuppressed ? (
+      <View
+        accessibilityLiveRegion="polite"
+        accessibilityRole={inventoryError ? 'alert' : undefined}
+        style={styles.inventoryStatus}>
+        <Text style={styles.inventoryStatusText}>
+          {!inventoryViewportEligible
+            ? 'Zoom in to show place markers'
+            : inventoryError
+              ? 'Map places need a refresh'
+              : 'Refreshing this map area…'}
+        </Text>
+        {inventoryViewportEligible && inventoryError && onRetryInventory ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={onRetryInventory}
+            style={styles.inventoryRetry}>
+            <Text style={styles.inventoryRetryText}>Retry</Text>
+          </Pressable>
+        ) : null}
+      </View>
     ) : null}
     </View>
   );
@@ -405,6 +502,38 @@ const styles = StyleSheet.create({
   searchAreaText: {
     color: '#FFFFFF',
     fontSize: 12,
+    fontWeight: '900',
+  },
+  inventoryStatus: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(255, 253, 248, 0.94)',
+    borderColor: 'rgba(23, 44, 42, 0.12)',
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    bottom: 14,
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'center',
+    minHeight: 34,
+    paddingHorizontal: 13,
+    position: 'absolute',
+  },
+  inventoryStatusText: {
+    color: palette.ink,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  inventoryRetry: {
+    borderLeftColor: palette.line,
+    borderLeftWidth: 1,
+    justifyContent: 'center',
+    minHeight: 26,
+    paddingLeft: 10,
+  },
+  inventoryRetryText: {
+    color: palette.accentDeep,
+    fontSize: 10,
     fontWeight: '900',
   },
   pin: {

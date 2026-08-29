@@ -268,6 +268,32 @@ Deno.test("event enqueue stores only references and bounded workers use leases",
   assert(migration.includes("last_provider_code = 'device_revoked'"));
 });
 
+Deno.test("delivery claim and provider handoff revalidate public business eligibility", async () => {
+  const migration = await text(
+    "migrations/20260926000000_notification_business_eligibility_lifecycle.sql",
+  );
+  const claimStart = migration.indexOf(
+    "create or replace function private.claim_notification_deliveries",
+  );
+  const handoffStart = migration.indexOf(
+    "create or replace function private.mark_notification_delivery_batch_sending",
+  );
+  const grantsStart = migration.indexOf(
+    "revoke all on function private.claim_notification_deliveries",
+  );
+  const claim = migration.slice(claimStart, handoffStart);
+  const handoff = migration.slice(handoffStart, grantsStart);
+
+  assert(claimStart >= 0 && handoffStart > claimStart && grantsStart > handoffStart);
+  assert(claim.includes("private.is_business_publicly_eligible(delivery.business_id)"));
+  assert(handoff.includes("private.is_business_publicly_eligible(delivery.business_id)"));
+  assertMatch(claim, /delivery\.state in \('pending', 'retry'\)/);
+  assertMatch(claim, /delivery\.state = 'leased' and delivery\.lease_expires_at <= now\(\)/);
+  assertMatch(handoff, /delivery\.state = 'leased'/);
+  assert(handoff.includes("affected <> cardinality(target_delivery_ids)"));
+  assertMatch(migration, /grant execute on function private\.claim_notification_deliveries[\s\S]+to service_role/);
+});
+
 Deno.test("registration is fail-closed and revocation remains available during shutdown", async () => {
   const edge = await text("functions/notification-device/index.ts");
   const http = await text("functions/_shared/http.ts");

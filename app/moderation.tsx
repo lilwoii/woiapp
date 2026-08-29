@@ -1,6 +1,6 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router, type Href } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -26,6 +26,15 @@ import {
 
 export default function ModerationScreen() {
   const auth = useAuth();
+  const workspaceKey = auth.status === 'authenticated'
+    ? `${auth.account?.id ?? 'missing'}:${auth.securityStatus}:${auth.assuranceLevel}:${auth.mfaEnrolled}`
+    : auth.status;
+  return <ModerationWorkspace key={workspaceKey} />;
+}
+
+function ModerationWorkspace() {
+  const auth = useAuth();
+  const accountId = auth.status === 'authenticated' ? auth.account?.id : undefined;
   const [items, setItems] = useState<ModerationQueueItem[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -34,22 +43,32 @@ export default function ModerationScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [message, setMessage] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
+  const requestGeneration = useRef(0);
+  const mounted = useRef(true);
 
   const canLoad =
     auth.status === 'authenticated' &&
+    Boolean(accountId) &&
     auth.securityStatus === 'ready' &&
     auth.mfaEnrolled &&
     auth.assuranceLevel === 'aal2';
 
+  useEffect(() => () => {
+    mounted.current = false;
+    requestGeneration.current += 1;
+  }, []);
+
   const load = useCallback(async (offset = 0) => {
-    if (!canLoad) return;
+    if (!canLoad || !accountId) return;
+    const generation = ++requestGeneration.current;
     if (offset) {
       setLoadingMore(true);
     } else {
       setLoading(true);
     }
     setMessage(null);
-    const result = await loadModerationQueue(offset);
+    const result = await loadModerationQueue(accountId, offset);
+    if (!mounted.current || generation !== requestGeneration.current) return;
     setLoading(false);
     setLoadingMore(false);
     if (!result.ok) {
@@ -69,7 +88,7 @@ export default function ModerationScreen() {
         : result.data.items
     );
     setHasMore(result.data.hasMore);
-  }, [canLoad]);
+  }, [accountId, canLoad]);
 
   useEffect(() => {
     if (!canLoad) return;
@@ -78,10 +97,12 @@ export default function ModerationScreen() {
   }, [canLoad, load]);
 
   const decide = async (item: ModerationQueueItem, decision: ModerationDecision) => {
-    if (savingId) return;
+    if (savingId || !accountId) return;
+    const generation = ++requestGeneration.current;
     setSavingId(`${item.targetType}:${item.targetId}`);
     setMessage(null);
-    const result = await decideModerationItem(item, decision, reason);
+    const result = await decideModerationItem(accountId, item, decision, reason);
+    if (!mounted.current || generation !== requestGeneration.current) return;
     setSavingId(null);
     if (!result.ok) {
       setMessage({ tone: 'error', text: result.reason });
@@ -133,6 +154,10 @@ export default function ModerationScreen() {
             <Text style={styles.subtitle}>Approve or keep only professional, relevant, safe content. Every decision requires an internal reason.</Text>
             <Pressable accessibilityHint="Open reported chat and pickup site queues" accessibilityRole="button" onPress={() => router.push('/marketplace-moderation' as Href)} style={styles.operationsLink}>
               <Text style={styles.operationsLinkText}>Chat reports &amp; pickup safety</Text>
+              <FontAwesome6 color={palette.ink} name="arrow-right" size={11} />
+            </Pressable>
+            <Pressable accessibilityHint="Open pending business listing approvals" accessibilityRole="button" onPress={() => router.push('/business-submission-moderation' as Href)} style={styles.operationsLink}>
+              <Text style={styles.operationsLinkText}>Business listing approvals</Text>
               <FontAwesome6 color={palette.ink} name="arrow-right" size={11} />
             </Pressable>
           </View>

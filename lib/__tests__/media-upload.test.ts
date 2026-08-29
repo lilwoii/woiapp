@@ -1,4 +1,4 @@
-import { detectedImageMime } from '@/lib/media-upload';
+import { detectedImageMime, stageMediaUpload } from '@/lib/media-upload';
 
 describe('media upload validation', () => {
   it('recognizes only supported image signatures', () => {
@@ -18,5 +18,18 @@ describe('media upload validation', () => {
       )
     ).toBe('image/webp');
     expect(detectedImageMime(new Uint8Array([0x47, 0x49, 0x46, 0x38]))).toBeNull();
+  });
+
+  it('fails closed before reading a file when the release upload gate is off', async () => {
+    const result = await stageMediaUpload(
+      { uri: 'file:///this-path-must-never-be-read.jpg', mimeType: 'image/jpeg' },
+      'profile_banner',
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      code: 'CONFIG_REQUIRED',
+      reason: 'Photo uploads are not available in this release.',
+    });
   });
 });

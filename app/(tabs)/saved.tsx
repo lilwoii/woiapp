@@ -1,6 +1,6 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { BrandMark } from '@/components/brand-mark';
@@ -29,27 +29,53 @@ type AlertPreference = 'live_nearby' | 'owner_bundle';
 export default function SavedScreen() {
   const { followedIds, places, toggleFollow } = useMarketplaceStore();
   const auth = useAuth();
+  const accountId = auth.status === 'authenticated' ? auth.account?.id : undefined;
   const [filter, setFilter] = useState<SavedFilter>('all');
   const [nearbyAlerts, setNearbyAlerts] = useState(false);
   const [ownerUpdates, setOwnerUpdates] = useState(false);
+  const [loadedPreferenceScope, setLoadedPreferenceScope] = useState<string | null>(null);
   const [preferenceBusy, setPreferenceBusy] = useState<AlertPreference | 'loading' | null>(null);
   const [preferenceMessage, setPreferenceMessage] = useState('');
   const [deliveryBusy, setDeliveryBusy] = useState(false);
   const [deliveryMessage, setDeliveryMessage] = useState('');
+  const preferenceGeneration = useRef(0);
+  const deliveryGeneration = useRef(0);
 
-  const followedKey = followedIds.join(',');
+  const followedKey = [...followedIds].sort().join(',');
+  const hasFollowedPlaces = followedIds.length > 0;
+  const preferenceScope = accountId && hasFollowedPlaces ? `${accountId}:${followedKey}` : null;
+  const preferenceContext = useRef({ accountId, followedKey, preferenceScope });
+  preferenceContext.current = { accountId, followedKey, preferenceScope };
+  const preferenceIsCurrent =
+    Boolean(preferenceScope) &&
+    loadedPreferenceScope === preferenceScope &&
+    preferenceBusy !== 'loading';
+  const visibleNearbyAlerts = preferenceIsCurrent ? nearbyAlerts : false;
+  const visibleOwnerUpdates = preferenceIsCurrent ? ownerUpdates : false;
 
   useEffect(() => {
-    if (!auth.isConfigured || auth.status !== 'authenticated' || !followedIds.length) return;
+    const generation = ++preferenceGeneration.current;
+    if (!auth.isConfigured || !accountId || !hasFollowedPlaces) {
+      setLoadedPreferenceScope(null);
+      setPreferenceBusy(null);
+      if (!hasFollowedPlaces) setPreferenceMessage('');
+      return () => undefined;
+    }
     let active = true;
+    const requestedAccountId = accountId;
+    const requestedFollowedIds = [...followedIds];
+    const requestedScope = `${requestedAccountId}:${followedKey}`;
     const timer = setTimeout(() => {
-      if (!active) return;
+      if (!active || generation !== preferenceGeneration.current) return;
+      setLoadedPreferenceScope(null);
       setPreferenceBusy('loading');
-      void fetchFollowAlertPreferences(followedIds).then((result) => {
-        if (!active) return;
+      setPreferenceMessage('');
+      void fetchFollowAlertPreferences(requestedFollowedIds, requestedAccountId).then((result) => {
+        if (!active || generation !== preferenceGeneration.current) return;
         if (result.ok && result.data) {
           setNearbyAlerts(result.data.liveNearby);
           setOwnerUpdates(result.data.ownerUpdates);
+          setLoadedPreferenceScope(requestedScope);
         } else if (!result.ok) {
           setPreferenceMessage(result.reason);
         }
@@ -62,7 +88,13 @@ export default function SavedScreen() {
     };
     // The stable key prevents a new request when only the array identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.isConfigured, auth.status, followedKey]);
+  }, [accountId, auth.isConfigured, followedKey, hasFollowedPlaces]);
+
+  useEffect(() => {
+    deliveryGeneration.current += 1;
+    setDeliveryBusy(false);
+    setDeliveryMessage('');
+  }, [accountId, auth.assuranceLevel, auth.securityStatus]);
 
   const savePreference = async (field: AlertPreference, next: boolean) => {
     if (auth.isConfigured && auth.status !== 'authenticated') {
@@ -70,17 +102,36 @@ export default function SavedScreen() {
       return;
     }
 
+    if (!accountId) {
+      router.push('/auth');
+      return;
+    }
+    const requestedScope = preferenceScope;
+    if (!requestedScope) return;
+    const requestedAccountId = accountId;
+    const requestedFollowedIds = [...followedIds];
+    const generation = ++preferenceGeneration.current;
     const current = {
-      live_nearby: nearbyAlerts,
-      owner_bundle: ownerUpdates,
+      live_nearby: visibleNearbyAlerts,
+      owner_bundle: visibleOwnerUpdates,
     };
     const previous = current[field];
-    if (field === 'live_nearby') setNearbyAlerts(next);
-    else setOwnerUpdates(next);
+    setNearbyAlerts(field === 'live_nearby' ? next : visibleNearbyAlerts);
+    setOwnerUpdates(field === 'owner_bundle' ? next : visibleOwnerUpdates);
+    setLoadedPreferenceScope(requestedScope);
     setPreferenceBusy(field);
     setPreferenceMessage('');
 
-    const result = await updateFollowAlertPreference(followedIds, field, next);
+    const result = await updateFollowAlertPreference(
+      requestedFollowedIds,
+      field,
+      next,
+      requestedAccountId,
+    );
+    if (
+      generation !== preferenceGeneration.current ||
+      preferenceContext.current.preferenceScope !== requestedScope
+    ) return;
     if (!result.ok) {
       if (field === 'live_nearby') setNearbyAlerts(previous);
       else setOwnerUpdates(previous);
@@ -105,13 +156,19 @@ export default function SavedScreen() {
       router.push('/security');
       return;
     }
+    const requestedAccountId = auth.account.id;
+    const generation = ++deliveryGeneration.current;
     setDeliveryBusy(true);
     setDeliveryMessage('');
     const result = mode === 'enable'
-      ? await registerPushNotificationDevice(auth.account.id)
+      ? await registerPushNotificationDevice(requestedAccountId)
       : mode === 'disable_device'
-        ? await revokePushNotificationDevice(auth.account.id)
-        : await revokeAllPushNotificationDevices(auth.account.id);
+        ? await revokePushNotificationDevice(requestedAccountId)
+        : await revokeAllPushNotificationDevices(requestedAccountId);
+    if (
+      generation !== deliveryGeneration.current ||
+      preferenceContext.current.accountId !== requestedAccountId
+    ) return;
     setDeliveryMessage(result.ok ? result.message ?? 'Device alert setting updated.' : result.reason);
     setDeliveryBusy(false);
   };
@@ -298,12 +355,12 @@ export default function SavedScreen() {
               </Text>
             </View>
             <Switch
-              accessibilityLabel="Alert when followed businesses go live nearby"
+              accessibilityLabel="Alert when a followed business goes live"
               disabled={preferenceBusy !== null || followedIds.length === 0}
               onValueChange={(next) => void savePreference('live_nearby', next)}
               thumbColor="#FFFFFF"
               trackColor={{ false: palette.line, true: palette.success }}
-              value={nearbyAlerts}
+              value={visibleNearbyAlerts}
             />
           </View>
           <View style={styles.preferenceRow}>
@@ -320,7 +377,7 @@ export default function SavedScreen() {
               onValueChange={(next) => void savePreference('owner_bundle', next)}
               thumbColor="#FFFFFF"
               trackColor={{ false: palette.line, true: palette.success }}
-              value={ownerUpdates}
+              value={visibleOwnerUpdates}
             />
           </View>
           {preferenceBusy === 'loading' ? (

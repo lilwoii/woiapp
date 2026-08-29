@@ -42,6 +42,16 @@ export function viewportIsLiveInventoryEligible(bounds: {
   return bounds.north > bounds.south && bounds.north - bounds.south <= 12 && longitudeSpan <= 12;
 }
 
+export function shouldRenderMapInventory({
+  viewportEligible,
+  inventorySuppressed,
+}: {
+  viewportEligible: boolean;
+  inventorySuppressed: boolean;
+}) {
+  return viewportEligible && !inventorySuppressed;
+}
+
 function worldPixel(latitude: number, longitude: number, zoom: number) {
   const scale = tileSize * 2 ** Math.max(0, zoom);
   const clampedLatitude = Math.max(-maxMercatorLatitude, Math.min(maxMercatorLatitude, latitude));
