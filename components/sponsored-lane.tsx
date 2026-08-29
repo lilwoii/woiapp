@@ -2,10 +2,10 @@ import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { ImageBackground, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { palette, radii, spacing } from '@/constants/theme';
-import type { Place } from '@/types/marketplace';
+import type { SponsoredPlace } from '@/types/marketplace';
 
 type Props = {
-  place: Place;
+  place: SponsoredPlace;
   reasonOpen: boolean;
   onHide: () => void;
   onOpen: () => void;

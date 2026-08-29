@@ -4,6 +4,8 @@ import {
   HOME_KITCHEN_CHAT_UNAVAILABLE_REASON,
   HOME_KITCHEN_UNAVAILABLE_REASON,
   isHomeKitchenBlocked,
+  PUBLIC_LISTING_UNAVAILABLE_REASON,
+  publicListingRouteUnavailableReason,
 } from '@/lib/features';
 import {
   getMarketplaceConversationContext,
@@ -134,6 +136,21 @@ describe('disabled home-kitchen client guards', () => {
   it('uses generic route/cache copy rather than exposing a private location', () => {
     expect(HOME_KITCHEN_UNAVAILABLE_REASON).toBe('This listing is unavailable.');
     expect(HOME_KITCHEN_CHAT_UNAVAILABLE_REASON).toBe('This conversation is unavailable.');
+  });
+
+  it('allows only published records through public-looking listing routes', () => {
+    expect(publicListingRouteUnavailableReason(undefined)).toBeNull();
+    expect(publicListingRouteUnavailableReason({
+      category: 'restaurant',
+      publicationState: 'published',
+    })).toBeNull();
+    expect(publicListingRouteUnavailableReason({
+      category: 'restaurant',
+      publicationState: 'draft',
+    })).toBe(PUBLIC_LISTING_UNAVAILABLE_REASON);
+    expect(publicListingRouteUnavailableReason({
+      category: 'restaurant',
+    })).toBe(PUBLIC_LISTING_UNAVAILABLE_REASON);
   });
 
 });

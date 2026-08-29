@@ -12,7 +12,7 @@ import { SectionHeading } from '@/components/section-heading';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
-import { featureFlags } from '@/lib/features';
+import { featureFlags, filterHomeKitchenPlaces } from '@/lib/features';
 import {
   registerPushNotificationDevice,
   revokeAllPushNotificationDevices,
@@ -27,7 +27,7 @@ type SavedFilter = 'all' | 'food_truck' | 'restaurant';
 type AlertPreference = 'live_nearby' | 'owner_bundle';
 
 export default function SavedScreen() {
-  const { followedIds, publicPlaces, toggleFollow } = useMarketplaceStore();
+  const { followedIds, places, publicPlaces, toggleFollow } = useMarketplaceStore();
   const auth = useAuth();
   const accountId = auth.status === 'authenticated' ? auth.account?.id : undefined;
   const [filter, setFilter] = useState<SavedFilter>('all');
@@ -181,12 +181,12 @@ export default function SavedScreen() {
 
   const followed = useMemo(
     () =>
-      publicPlaces.filter(
+      filterHomeKitchenPlaces(places).filter(
         (place) =>
           followedIds.includes(place.id) &&
           (filter === 'all' || (filter === 'restaurant' ? place.category !== 'food_truck' : place.category === filter))
       ),
-    [filter, followedIds, publicPlaces]
+    [filter, followedIds, places]
   );
 
   const followedWithUpdates = followed.filter((place) => place.update);

@@ -24,7 +24,7 @@ import { useMarketplaceStore } from '@/context/marketplace-store';
 import {
   featureFlags,
   HOME_KITCHEN_UNAVAILABLE_REASON,
-  isHomeKitchenBlocked,
+  publicListingRouteUnavailableReason,
 } from '@/lib/features';
 import {
   cancelShadowOrder,
@@ -186,9 +186,11 @@ export default function PickupOrderScreen() {
 
 function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSessionProps) {
   const insets = useSafeAreaInsets();
-  const { ensurePlace, publicPlaces } = useMarketplaceStore();
-  const place = publicPlaces.find((candidate) => candidate.id === placeId);
-  const placeBlocked = isHomeKitchenBlocked(place?.category);
+  const { ensurePlace, places } = useMarketplaceStore();
+  const loadedPlace = places.find((candidate) => candidate.id === placeId);
+  const placeBlockedReason = publicListingRouteUnavailableReason(loadedPlace);
+  const placeBlocked = Boolean(placeBlockedReason);
+  const place = placeBlocked ? undefined : loadedPlace;
   const [placeResolving, setPlaceResolving] = useState(!place);
   const [placeUnavailableReason, setPlaceUnavailableReason] = useState<string | null>(null);
   const [placeProbeNonce, setPlaceProbeNonce] = useState(0);
@@ -227,7 +229,7 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
       const timer = setTimeout(() => {
         if (!active) return;
         setPlaceResolving(false);
-        setPlaceUnavailableReason(HOME_KITCHEN_UNAVAILABLE_REASON);
+        setPlaceUnavailableReason(placeBlockedReason);
       }, 0);
       return () => {
         active = false;
@@ -280,7 +282,7 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
       active = false;
       clearTimeout(timer);
     };
-  }, [ensurePlace, place, placeBlocked, placeId, placeProbeNonce]);
+  }, [ensurePlace, place, placeBlocked, placeBlockedReason, placeId, placeProbeNonce]);
 
   useEffect(() => {
     let active = true;
@@ -817,7 +819,7 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
   if (placeBlocked || placeUnavailableReason) {
     return (
       <GateScreen
-        body={placeBlocked ? HOME_KITCHEN_UNAVAILABLE_REASON : placeUnavailableReason!}
+        body={placeBlockedReason ?? placeUnavailableReason!}
         icon="shield-halved"
         primaryAction={placeBlocked || !placeId
           ? undefined

@@ -18,9 +18,20 @@ export const featureFlags = Object.freeze({
 // deep link.
 export const HOME_KITCHEN_UNAVAILABLE_REASON = 'This listing is unavailable.';
 export const HOME_KITCHEN_CHAT_UNAVAILABLE_REASON = 'This conversation is unavailable.';
+export const PUBLIC_LISTING_UNAVAILABLE_REASON = 'This listing is not publicly available.';
 
 export function isHomeKitchenBlocked(kind: unknown) {
   return kind === 'home_kitchen' && !featureFlags.homeKitchens;
+}
+
+export function publicListingRouteUnavailableReason(
+  place: { category?: unknown; publicationState?: unknown } | undefined,
+) {
+  if (!place) return null;
+  if (isHomeKitchenBlocked(place.category)) return HOME_KITCHEN_UNAVAILABLE_REASON;
+  return place.publicationState === 'published'
+    ? null
+    : PUBLIC_LISTING_UNAVAILABLE_REASON;
 }
 
 export function filterHomeKitchenPlaces<

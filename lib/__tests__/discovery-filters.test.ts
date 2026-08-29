@@ -1,4 +1,5 @@
 import { seedPlaces } from '../../data/places';
+import type { SponsoredPlace } from '../../types/marketplace';
 import {
   cuisineFacets,
   discoveryFilterCount,
@@ -60,7 +61,7 @@ describe('discovery filters', () => {
 
   it('never feeds sponsored metadata into organic ranking', () => {
     const organicFirst = { ...seedPlaces[0], distanceMiles: 1 };
-    const sponsoredSecond = {
+    const sponsoredSecond: SponsoredPlace = {
       ...seedPlaces[1],
       distanceMiles: 2,
       sponsoredPlacement: {

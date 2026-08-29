@@ -21,8 +21,8 @@ import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
 import {
   featureFlags,
-  HOME_KITCHEN_UNAVAILABLE_REASON,
   isHomeKitchenBlocked,
+  publicListingRouteUnavailableReason,
 } from '@/lib/features';
 import {
   externalDirectionsUrl,
@@ -50,9 +50,10 @@ export default function NavigationScreen() {
 
 function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   const auth = useAuth();
-  const { ensurePlace, publicPlaces } = useMarketplaceStore();
-  const loadedPlace = publicPlaces.find((entry) => entry.id === placeId);
-  const placeBlocked = isHomeKitchenBlocked(loadedPlace?.category);
+  const { ensurePlace, places } = useMarketplaceStore();
+  const loadedPlace = places.find((entry) => entry.id === placeId);
+  const placeBlockedReason = publicListingRouteUnavailableReason(loadedPlace);
+  const placeBlocked = Boolean(placeBlockedReason);
   const place = placeBlocked ? undefined : loadedPlace;
   const [placeRequestPending, setPlaceRequestPending] = useState(Boolean(placeId && !place && !placeBlocked));
   const [route, setRoute] = useState<RoutePlan | null>(null);
@@ -320,7 +321,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     return <View role="main" style={styles.center}><ActivityIndicator color={palette.accentDeep} /><Text style={styles.centerText}>Preparing navigation…</Text></View>;
   }
   if (!place) {
-    return <View role="main" style={styles.center}><Text accessibilityRole="header" style={styles.centerTitle}>This destination is unavailable.</Text><Text style={styles.centerText}>{placeBlocked ? HOME_KITCHEN_UNAVAILABLE_REASON : message}</Text></View>;
+    return <View role="main" style={styles.center}><Text accessibilityRole="header" style={styles.centerTitle}>This destination is unavailable.</Text><Text style={styles.centerText}>{placeBlockedReason ?? message}</Text></View>;
   }
   if (place.category === 'home_kitchen') {
     return (

@@ -398,6 +398,7 @@ export async function handlePublicDiscovery(request: Request): Promise<Response>
     let sponsored = null;
     if (
       discoveryRequest.operation === "nearby" &&
+      discoveryRequest.result_offset === 0 &&
       Deno.env.get("SPOTTR_SPONSORED_PLACEMENTS_ENABLED")?.trim() === "true"
     ) {
       try {

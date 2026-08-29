@@ -20,6 +20,7 @@ import {
   Place,
   Review,
   ReviewInput,
+  SponsoredPlace,
   VenueStatus,
   WeeklyHours,
 } from '@/types/marketplace';
@@ -60,9 +61,26 @@ type PublicDiscoveryResponse<TOperation extends PublicDiscoveryRequest['operatio
 };
 export type MarketplacePage = {
   places: Place[];
+  sponsoredPlace?: SponsoredPlace;
   hasMore: boolean;
   nextOffset: number;
 };
+
+export function splitSponsoredPlaces(
+  mappedPlaces: Place[],
+  organicBusinessIds: ReadonlySet<string>,
+  sponsoredBusinessId: string,
+  sponsoredPlacement?: SponsoredPlace['sponsoredPlacement'],
+): Pick<MarketplacePage, 'places' | 'sponsoredPlace'> {
+  const places = mappedPlaces.filter((place) => organicBusinessIds.has(place.id));
+  const sponsoredBase = sponsoredPlacement
+    ? mappedPlaces.find((place) => place.id === sponsoredBusinessId)
+    : undefined;
+  const sponsoredPlace: SponsoredPlace | undefined = sponsoredBase && sponsoredPlacement
+    ? { ...sponsoredBase, sponsoredPlacement }
+    : undefined;
+  return { places, sponsoredPlace };
+}
 
 export type ReviewSort = 'recent' | 'top';
 
@@ -83,8 +101,54 @@ type MarketplaceFetchOptions = {
 };
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const sponsoredInteractionTokenPattern = /^([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.([0-9]{10})\.([0-9a-f]{64})$/;
 const idempotencyPattern = /^[A-Za-z0-9._:-]{16,128}$/;
 let actionIdempotencySequence = 0;
+
+export type SponsoredPlacementToken = {
+  placementId: string;
+  expiresAtSeconds: number;
+};
+
+/**
+ * Parse the signed interaction token at the same boundary used by the
+ * client-side sponsored projection. Expired tokens are rejected here so a
+ * stale paid projection cannot be opened or recorded as a fresh interaction.
+ */
+export function parseSponsoredPlacementToken(
+  value: string,
+  nowMs = Date.now(),
+): SponsoredPlacementToken | null {
+  const match = sponsoredInteractionTokenPattern.exec(value);
+  if (!match || !uuidPattern.test(match[1])) return null;
+  const expiresAtSeconds = Number(match[2]);
+  if (
+    !Number.isSafeInteger(expiresAtSeconds) ||
+    expiresAtSeconds * 1000 <= nowMs
+  ) return null;
+  return {
+    placementId: match[1],
+    expiresAtSeconds,
+  };
+}
+
+export function isValidSponsoredPlacementProjection(
+  token: string,
+  placementId: string,
+  expiresAt: string,
+  nowMs = Date.now(),
+): boolean {
+  const parsed = parseSponsoredPlacementToken(token, nowMs);
+  const declaredExpiryMs = Date.parse(expiresAt);
+  return Boolean(
+    parsed &&
+    uuidPattern.test(placementId) &&
+    parsed.placementId === placementId &&
+    Number.isFinite(declaredExpiryMs) &&
+    declaredExpiryMs > nowMs &&
+    Math.floor(declaredExpiryMs / 1000) === parsed.expiresAtSeconds
+  );
+}
 
 function configurationRequired<T = undefined>(): ActionResult<T> {
   return {
@@ -980,16 +1044,21 @@ export async function fetchMarketplacePlaces(
         result_offset: resultOffset,
       });
       nearbyRows = nearbyResultRows;
-      sponsoredRow = featureFlags.sponsoredPlacements ? sponsored : null;
+      sponsoredRow = featureFlags.sponsoredPlacements && resultOffset === 0 ? sponsored : null;
     }
 
     const nearbyIds = nearbyRows
       .map((entry) => stringValue(entry.business_id))
       .filter((id) => uuidPattern.test(id));
     const sponsoredBusinessId = stringValue(sponsoredRow?.business_id);
+    const organicBusinessIds = new Set([
+      ...nearbyIds,
+      ...includedIds,
+      ...managedIds,
+    ]);
     const directoryIds = [
       ...new Set([
-        ...nearbyIds,
+        ...organicBusinessIds,
         ...(uuidPattern.test(sponsoredBusinessId) ? [sponsoredBusinessId] : []),
       ]),
     ];
@@ -1018,6 +1087,12 @@ export async function fetchMarketplacePlaces(
       !options.origin && !options.onlyIncludedBusinesses
         ? rawPublishedRows.slice(0, resultLimit)
         : rawPublishedRows;
+    if (!options.origin && !options.onlyIncludedBusinesses) {
+      for (const business of pagePublishedRows) {
+        const id = businessIdOf(business);
+        if (uuidPattern.test(id)) organicBusinessIds.add(id);
+      }
+    }
 
     const includedResult = includedIds.length
       ? await client.from('public_business_directory').select('*').in('business_id', includedIds)
@@ -1045,6 +1120,7 @@ export async function fetchMarketplacePlaces(
         ok: true,
         data: {
           places: [],
+          sponsoredPlace: undefined,
           hasMore,
           nextOffset: hasMore ? resultOffset + resultLimit : resultOffset,
         },
@@ -1215,7 +1291,33 @@ export async function fetchMarketplacePlaces(
       }
     );
 
-    const places = displayableBusinesses.map((business): Place => {
+    const sponsoredPlacementId = stringValue(sponsoredRow?.placement_id);
+    const sponsoredToken = stringValue(sponsoredRow?.placement_token);
+    const sponsoredExpiry = stringValue(sponsoredRow?.expires_at);
+    const sponsoredDisclosure = stringValue(sponsoredRow?.disclosure);
+    const sponsoredReason = stringValue(sponsoredRow?.reason);
+    const sponsoredPlacement: SponsoredPlace['sponsoredPlacement'] | undefined =
+      sponsoredBusinessId &&
+      uuidPattern.test(sponsoredBusinessId) &&
+      uuidPattern.test(sponsoredPlacementId) &&
+      sponsoredDisclosure === 'Sponsored ad' &&
+      sponsoredReason.length > 0 &&
+      sponsoredReason.length <= 120 &&
+      isValidSponsoredPlacementProjection(
+        sponsoredToken,
+        sponsoredPlacementId,
+        sponsoredExpiry,
+      )
+        ? {
+            id: sponsoredPlacementId,
+            disclosure: 'Sponsored ad' as const,
+            reason: sponsoredReason,
+            token: sponsoredToken,
+            expiresAt: sponsoredExpiry,
+          }
+        : undefined;
+
+    const mappedPlaces = displayableBusinesses.map((business): Place => {
       const id = businessIdOf(business);
       const businessLocations = locations.filter((location) => location.business_id === id);
       const distanceMeters = distanceByBusiness.get(id);
@@ -1336,28 +1438,6 @@ export async function fetchMarketplacePlaces(
         business.state,
         'published'
       ) as Place['publicationState'];
-      const sponsoredPlacementId = stringValue(sponsoredRow?.placement_id);
-      const sponsoredToken = stringValue(sponsoredRow?.placement_token);
-      const sponsoredExpiry = stringValue(sponsoredRow?.expires_at);
-      const sponsoredDisclosure = stringValue(sponsoredRow?.disclosure);
-      const sponsoredReason = stringValue(sponsoredRow?.reason);
-      const sponsoredPlacement =
-        sponsoredBusinessId === id &&
-        uuidPattern.test(sponsoredPlacementId) &&
-        sponsoredDisclosure === 'Sponsored ad' &&
-        sponsoredReason.length > 0 &&
-        sponsoredReason.length <= 120 &&
-        sponsoredToken.length >= 110 &&
-        Number.isFinite(Date.parse(sponsoredExpiry))
-          ? {
-              id: sponsoredPlacementId,
-              disclosure: 'Sponsored ad' as const,
-              reason: sponsoredReason,
-              token: sponsoredToken,
-              expiresAt: sponsoredExpiry,
-            }
-          : undefined;
-
       return {
         id,
         ...(location ? { locationId: locationIdOf(location) } : {}),
@@ -1416,14 +1496,21 @@ export async function fetchMarketplacePlaces(
         sourceLabel: sourceLabel(business.provenance, business.verification === 'verified'),
         publicationState,
         detailsLoaded: hasDetails,
-        sponsoredPlacement,
       };
     });
+
+    const { places, sponsoredPlace } = splitSponsoredPlaces(
+      mappedPlaces,
+      organicBusinessIds,
+      sponsoredBusinessId,
+      sponsoredPlacement,
+    );
 
     return {
       ok: true,
       data: {
         places,
+        sponsoredPlace,
         hasMore,
         nextOffset: hasMore ? resultOffset + resultLimit : resultOffset,
       },
@@ -1463,7 +1550,7 @@ export async function recordSponsoredInteraction(
   const client = supabase;
   if (!client || !featureFlags.sponsoredPlacements) return configurationRequired();
   if (
-    !/^[0-9a-f-]{36}\.[0-9]{10}\.[0-9a-f]{64}$/.test(placementToken) ||
+    !parseSponsoredPlacementToken(placementToken) ||
     !['open', 'menu_view', 'directions', 'hide', 'report'].includes(interactionType)
   ) {
     return { ok: false, code: 'INVALID', reason: 'This sponsored placement is invalid.' };

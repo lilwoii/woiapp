@@ -121,6 +121,7 @@ function ScopedDiscoverScreen() {
     publicPlaces,
     refresh,
     searchArea,
+    sponsoredPlace: sponsoredProjection,
     syncMessage,
     syncStatus,
     toggleFollow,
@@ -451,13 +452,13 @@ function ScopedDiscoverScreen() {
     () => rankDiscoveryPlaces(enabledPlaces, discoveryFilters, userCoordinates),
     [discoveryFilters, enabledPlaces, userCoordinates]
   );
-  const sponsoredPlace = featureFlags.sponsoredPlacements
-    ? ranked.find(
-        (place) =>
-          place.sponsoredPlacement &&
-          !hiddenSponsoredIds.includes(place.sponsoredPlacement.id)
-      )
-    : undefined;
+  const sponsoredPlace = useMemo(() => {
+    if (!featureFlags.sponsoredPlacements || !sponsoredProjection) return undefined;
+    if (hiddenSponsoredIds.includes(sponsoredProjection.sponsoredPlacement.id)) return undefined;
+    return rankDiscoveryPlaces([sponsoredProjection], discoveryFilters, userCoordinates).length
+      ? sponsoredProjection
+      : undefined;
+  }, [discoveryFilters, hiddenSponsoredIds, sponsoredProjection, userCoordinates]);
 
   const resultsKey = JSON.stringify(discoveryFilters);
   const visibleCount = pagination.key === resultsKey ? pagination.count : 24;
@@ -506,7 +507,7 @@ function ScopedDiscoverScreen() {
 
   const selectPlace = useCallback((place: Place) => setSelectedId(place.id), []);
   const selectBusinessId = useCallback(async (businessId: string, locationId?: string) => {
-    const result = await ensurePlace(businessId, locationId);
+    const result = await ensurePlace(businessId, locationId, 'discovery');
     if (mounted.current && result.ok) setSelectedId(businessId);
   }, [ensurePlace]);
 

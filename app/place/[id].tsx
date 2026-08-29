@@ -33,6 +33,7 @@ import {
   featureFlags,
   HOME_KITCHEN_UNAVAILABLE_REASON,
   isHomeKitchenBlocked,
+  publicListingRouteUnavailableReason,
 } from '@/lib/features';
 import { phoneHref, placeShareUrl, safeHttpsUrl } from '@/lib/links';
 import { isMarketplaceChatAvailable, startMarketplaceConversation } from '@/lib/marketplace-chat';
@@ -69,13 +70,17 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
     ensurePlace,
     followedIds,
     loadMoreReviews,
-    publicPlaces,
+    places,
     toggleFollow,
   } = useMarketplaceStore();
   const { width } = useWindowDimensions();
   const wide = width >= 920;
-  const loadedPlace = publicPlaces.find((entry) => entry.id === id);
-  const placeBlocked = isHomeKitchenBlocked(loadedPlace?.category);
+  // Detail routes may resolve a deep-link-only place kept in the account/
+  // detail cache. Public discovery remains filtered by provenance in the
+  // marketplace store, while this route still has the loaded record.
+  const loadedPlace = places.find((entry) => entry.id === id);
+  const placeBlockedReason = publicListingRouteUnavailableReason(loadedPlace);
+  const placeBlocked = Boolean(placeBlockedReason);
   // A managed home-kitchen record may remain in the account-scoped store for
   // Studio. Never let that private cache become a public detail route.
   const place = placeBlocked ? undefined : loadedPlace;
@@ -119,7 +124,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
       if (!active) return;
       if (placeBlocked) {
         setListingLoading(false);
-        setListingError(HOME_KITCHEN_UNAVAILABLE_REASON);
+        setListingError(placeBlockedReason);
         return;
       }
       if (!id || ready) {
@@ -138,7 +143,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
       active = false;
       clearTimeout(timer);
     };
-  }, [auth.isConfigured, ensurePlace, id, place, placeBlocked]);
+  }, [auth.isConfigured, ensurePlace, id, place, placeBlocked, placeBlockedReason]);
 
   useEffect(() => {
     let active = true;

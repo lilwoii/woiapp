@@ -112,11 +112,6 @@ export const seedPlaces: Place[] = [
     popularityScore: 92,
     reliabilityScore: 98,
     pickup: { enabled: true, orderingMode: 'spottr', estimatedMinutes: 18 },
-    sponsoredPlacement: {
-      id: 'preview-sponsored-copper-coyote',
-      disclosure: 'Sponsored ad',
-      reason: 'This food truck paid for a clearly separated preview placement relevant to nearby food discovery.',
-    },
     sourceLabel: 'Owner verified',
   },
   {

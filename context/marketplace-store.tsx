@@ -41,6 +41,7 @@ import {
   OwnerUpdateInput,
   Place,
   ReviewInput,
+  SponsoredPlace,
   SyncStatus,
   VenueStatus,
 } from '@/types/marketplace';
@@ -48,6 +49,7 @@ import {
 type MarketplaceStoreValue = {
   places: Place[];
   publicPlaces: Place[];
+  sponsoredPlace?: SponsoredPlace;
   followedIds: string[];
   account: AccountSummary;
   scopeKey: string;
@@ -62,7 +64,11 @@ type MarketplaceStoreValue = {
   publishUpdate: (input: OwnerUpdateInput) => Promise<ActionResult>;
   setVenueStatus: (placeId: string, status: VenueStatus) => Promise<ActionResult>;
   refreshAccess: () => Promise<ActionResult>;
-  ensurePlace: (placeId: string, preferredLocationId?: string) => Promise<ActionResult>;
+  ensurePlace: (
+    placeId: string,
+    preferredLocationId?: string,
+    source?: 'detail' | 'discovery'
+  ) => Promise<ActionResult>;
   searchArea: (searchText: string) => Promise<ActionResult>;
   loadMoreResults: () => Promise<ActionResult>;
   loadMoreReviews: (placeId: string) => Promise<ActionResult>;
@@ -76,6 +82,11 @@ type MarketplaceStoreValue = {
 type MarketplaceStoreState = {
   scopeKey: string;
   places: Place[];
+  // A place loaded only to satisfy a deep link is detail-route state, not
+  // discovery state. Keep the provenance explicit so it cannot affect public
+  // ranking, map/count projections, or pagination.
+  detailOnlyPlaceIds: string[];
+  sponsoredPlace?: SponsoredPlace;
   followedIds: string[];
   syncStatus: SyncStatus;
   syncMessage: string;
@@ -122,6 +133,8 @@ function createMarketplaceStoreState(scopeKey: string): MarketplaceStoreState {
   return {
     scopeKey,
     places: [],
+    detailOnlyPlaceIds: [],
+    sponsoredPlace: undefined,
     followedIds: [],
     syncStatus: isSupabaseConfigured ? 'idle' : 'error',
     syncMessage: isSupabaseConfigured
@@ -152,6 +165,8 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   const visibleState = storeState.scopeKey === scopeKey ? storeState : fallbackState;
   const {
     places,
+    detailOnlyPlaceIds,
+    sponsoredPlace: candidateSponsoredPlace,
     followedIds,
     syncStatus,
     syncMessage,
@@ -161,8 +176,45 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
     managedPlaceIds,
   } = visibleState;
   // Keep account-scoped managed records available to Studio, but expose a
-  // separately gated collection for public discovery and deep-link surfaces.
-  const publicPlaces = useMemo(() => filterHomeKitchenPlaces(places), [places]);
+  // separately gated collection for public discovery. Detail routes read the
+  // raw places collection so deep-link-only records remain usable.
+  const detailOnlyPlaceIdSet = useMemo(
+    () => new Set(detailOnlyPlaceIds),
+    [detailOnlyPlaceIds]
+  );
+  const publicPlaces = useMemo(
+    () => filterHomeKitchenPlaces(
+      places.filter((place) => !detailOnlyPlaceIdSet.has(place.id))
+    ),
+    [detailOnlyPlaceIdSet, places]
+  );
+  const [sponsoredExpiryTick, setSponsoredExpiryTick] = useState<number | null>(null);
+  useEffect(() => {
+    const expiresAt = candidateSponsoredPlace?.sponsoredPlacement.expiresAt;
+    const expiresAtMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
+    const delay = expiresAtMs - Date.now();
+    if (!Number.isFinite(delay) || delay <= 0) return;
+    // Re-check after a small cushion so early timers or clock adjustments
+    // reschedule only while the projection is still in its valid window.
+    const timer = setTimeout(
+      () => setSponsoredExpiryTick(Date.now()),
+      Math.min(delay + 250, 2_147_483_647),
+    );
+    return () => clearTimeout(timer);
+  }, [candidateSponsoredPlace, sponsoredExpiryTick]);
+  const sponsoredPlace = useMemo(
+    () => {
+      if (!candidateSponsoredPlace) return undefined;
+      const expiresAtMs = Date.parse(candidateSponsoredPlace.sponsoredPlacement.expiresAt);
+      if (
+        !Number.isFinite(expiresAtMs) ||
+        (sponsoredExpiryTick !== null && expiresAtMs <= sponsoredExpiryTick) ||
+        isHomeKitchenBlocked(candidateSponsoredPlace.category)
+      ) return undefined;
+      return candidateSponsoredPlace;
+    },
+    [candidateSponsoredPlace, sponsoredExpiryTick]
+  );
   const activeRefresh = useRef<ActiveRefresh | null>(null);
   const activePagination = useRef<MarketplaceRequestToken | null>(null);
   const nextResultOffset = useRef(0);
@@ -230,10 +282,20 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       const token = requestGuard.begin(scopeKey, 'directory');
       if (!token) return marketplaceSessionChanged;
 
+      // Remove the previous paid projection as soon as this refresh becomes
+      // current. Do this before waiting for an older request so stale paid
+      // content cannot remain visible during the handoff.
+      commitStore(token, (current) => ({
+        ...current,
+        sponsoredPlace: undefined,
+      }));
+
       if (!isSupabaseConfigured) {
         commitStore(token, (current) => ({
           ...current,
           places: [],
+          detailOnlyPlaceIds: [],
+          sponsoredPlace: undefined,
           syncStatus: 'error',
           syncMessage: liveServicesRequired.reason,
           hasMoreResults: false,
@@ -259,6 +321,8 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
         commitStore(token, (current) => ({
           ...current,
           places: [],
+          detailOnlyPlaceIds: [],
+          sponsoredPlace: undefined,
           hasMoreResults: false,
           syncStatus: 'idle',
           syncMessage: 'Choose your location, city, or ZIP to load nearby listings.',
@@ -268,6 +332,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
 
       commitStore(token, (current) => ({
         ...current,
+        sponsoredPlace: undefined,
         syncStatus: 'syncing',
         syncMessage: 'Refreshing live listings…',
       }));
@@ -305,6 +370,10 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       commitStore(token, (current) => ({
         ...current,
         places: result.data?.places ?? [],
+        // A successful directory response is authoritative for discovery;
+        // reconcile all prior deep-link-only provenance against it.
+        detailOnlyPlaceIds: [],
+        sponsoredPlace: result.data?.sponsoredPlace,
         hasMoreResults: result.data?.hasMore ?? false,
         syncStatus: 'live',
         syncMessage: 'Live owner and community data is connected.',
@@ -393,10 +462,17 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
     nextResultOffset.current = result.data?.nextOffset ?? nextResultOffset.current;
     commitStore(token, (current) => {
       const byId = new Map(current.places.map((place) => [place.id, place]));
-      for (const place of result.data?.places ?? []) byId.set(place.id, place);
+      const returnedPlaceIds = new Set<string>();
+      for (const place of result.data?.places ?? []) {
+        byId.set(place.id, place);
+        returnedPlaceIds.add(place.id);
+      }
       return {
         ...current,
         places: [...byId.values()],
+        detailOnlyPlaceIds: current.detailOnlyPlaceIds.filter(
+          (placeId) => !returnedPlaceIds.has(placeId)
+        ),
         hasMoreResults: result.data?.hasMore ?? false,
         loadingMoreResults: false,
       };
@@ -475,10 +551,31 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   }, [commitStore, expectedUserId, refresh, requestGuard, scopeKey]);
 
   const ensurePlace = useCallback(
-    async (placeId: string, preferredLocationId?: string): Promise<ActionResult> => {
+    async (
+      placeId: string,
+      preferredLocationId?: string,
+      source: 'detail' | 'discovery' = 'detail'
+    ): Promise<ActionResult> => {
       const existingPlace = places.find((place) => place.id === placeId);
       if (isHomeKitchenBlocked(existingPlace?.category)) return homeKitchenUnavailable;
-      if (existingPlace?.detailsLoaded && (!preferredLocationId || existingPlace.locationId === preferredLocationId)) return { ok: true };
+      const existingPlaceReady = Boolean(
+        existingPlace?.detailsLoaded &&
+        (!preferredLocationId || existingPlace.locationId === preferredLocationId)
+      );
+      if (existingPlaceReady && source !== 'discovery') return { ok: true };
+      if (
+        existingPlaceReady &&
+        source === 'discovery' &&
+        existingPlace?.publicationState === 'published'
+      ) {
+        const promotionToken = requestGuard.begin(scopeKey, `place:${placeId}`);
+        if (!promotionToken) return marketplaceSessionChanged;
+        commitStore(promotionToken, (current) => ({
+          ...current,
+          detailOnlyPlaceIds: current.detailOnlyPlaceIds.filter((id) => id !== placeId),
+        }));
+        return { ok: true };
+      }
       if (!isSupabaseConfigured) return liveServicesRequired;
 
       const token = requestGuard.begin(scopeKey, `place:${placeId}`);
@@ -493,10 +590,20 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       }
       const loadedPlace = result.data;
       if (isHomeKitchenBlocked(loadedPlace.category)) return homeKitchenUnavailable;
-      commitStore(token, (current) => ({
-        ...current,
-        places: [loadedPlace, ...current.places.filter((place) => place.id !== placeId)],
-      }));
+      commitStore(token, (current) => {
+        const wasCurrentDiscoveryPlace = source === 'discovery' || (
+          current.places.some((place) => place.id === placeId) &&
+          !current.detailOnlyPlaceIds.includes(placeId)
+        );
+        const detailOnlyPlaceIds = wasCurrentDiscoveryPlace
+          ? current.detailOnlyPlaceIds.filter((id) => id !== placeId)
+          : [...new Set([...current.detailOnlyPlaceIds, placeId])];
+        return {
+          ...current,
+          places: [loadedPlace, ...current.places.filter((place) => place.id !== placeId)],
+          detailOnlyPlaceIds,
+        };
+      });
       return { ok: true };
     },
     [commitStore, expectedUserId, places, requestGuard, scopeKey]
@@ -708,6 +815,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
     () => ({
       places,
       publicPlaces,
+      sponsoredPlace,
       followedIds,
       account:
         expectedUserId && auth.account?.id === expectedUserId
@@ -745,6 +853,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       publishUpdate,
       refreshAccess,
       refresh,
+      sponsoredPlace,
       loadMoreResults,
       loadMoreReviews,
       loadingMoreResults,

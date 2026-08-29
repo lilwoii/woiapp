@@ -12,6 +12,21 @@ const edge = await Deno.readTextFile(
 const marketplace = await Deno.readTextFile(
   new URL("../../lib/marketplace-api.ts", import.meta.url),
 );
+const marketplaceStore = await Deno.readTextFile(
+  new URL("../../context/marketplace-store.tsx", import.meta.url),
+);
+const discoverScreen = await Deno.readTextFile(
+  new URL("../../app/(tabs)/index.tsx", import.meta.url),
+);
+const placeDetailScreen = await Deno.readTextFile(
+  new URL("../../app/place/[id].tsx", import.meta.url),
+);
+const navigationScreen = await Deno.readTextFile(
+  new URL("../../app/navigation/[id].tsx", import.meta.url),
+);
+const orderScreen = await Deno.readTextFile(
+  new URL("../../app/order/[id].tsx", import.meta.url),
+);
 const discoveryRanking = await Deno.readTextFile(
   new URL("../../lib/discovery-filters.ts", import.meta.url),
 );
@@ -51,6 +66,65 @@ Deno.test("selection is service-only, budget locked, privacy-safe, and organical
   assert(!discoveryRanking.includes("sponsoredPlacement"));
   assertMatch(edge, /select_sponsored_placement/);
   assertMatch(edge, /Ads must fail closed without taking organic discovery down/);
+});
+
+Deno.test("sponsored projection stays out of organic list, ranking, and pagination", () => {
+  assertMatch(marketplace, /sponsoredPlace\?: SponsoredPlace/);
+  assertMatch(marketplace, /const sponsoredPlace: SponsoredPlace \| undefined/);
+  assertMatch(marketplace, /sponsoredInteractionTokenPattern/);
+  assertMatch(marketplace, /parseSponsoredPlacementToken/);
+  assertMatch(marketplace, /isValidSponsoredPlacementProjection/);
+  assertMatch(marketplace, /sponsoredRow = featureFlags\.sponsoredPlacements && resultOffset === 0/);
+  assertMatch(marketplace, /const organicBusinessIds = new Set\(/);
+  assertMatch(marketplace, /const directoryIds = \[[\s\S]*organicBusinessIds[\s\S]*sponsoredBusinessId/);
+  assertMatch(marketplace, /!options\.origin && !options\.onlyIncludedBusinesses[\s\S]*organicBusinessIds\.add/);
+  assertMatch(marketplace, /splitSponsoredPlaces\([\s\S]*organicBusinessIds/);
+  assertMatch(edge, /operation === "nearby"[\s\S]*result_offset === 0/);
+
+  const placesStart = marketplace.indexOf("const mappedPlaces = displayableBusinesses.map");
+  const sponsorStart = marketplace.indexOf("const { places, sponsoredPlace } = splitSponsoredPlaces", placesStart);
+  assert(placesStart >= 0 && sponsorStart > placesStart);
+  assert(
+    !marketplace.slice(placesStart, sponsorStart).includes("sponsoredPlacement"),
+    "Organic place mapping must not carry sponsored metadata",
+  );
+
+  assertMatch(marketplaceStore, /sponsoredPlace: result\.data\?\.sponsoredPlace/);
+  assertMatch(marketplaceStore, /detailOnlyPlaceIds: \[\]/);
+  assertMatch(marketplaceStore, /!detailOnlyPlaceIdSet\.has\(place\.id\)/);
+  assertMatch(marketplaceStore, /detailOnlyPlaceIds: current\.detailOnlyPlaceIds\.filter/);
+  assertMatch(
+    marketplaceStore,
+    /existingPlaceReady[\s\S]*source === 'discovery'[\s\S]*publicationState === 'published'[\s\S]*detailOnlyPlaceIds: current\.detailOnlyPlaceIds\.filter/,
+  );
+  assertMatch(marketplaceStore, /candidateSponsoredPlace\?\.sponsoredPlacement\.expiresAt/);
+  assertMatch(marketplaceStore, /setSponsoredExpiryTick/);
+  assertMatch(placeDetailScreen, /const loadedPlace = places\.find/);
+  assertMatch(navigationScreen, /const loadedPlace = places\.find/);
+  assertMatch(orderScreen, /const loadedPlace = places\.find/);
+  assertMatch(placeDetailScreen, /publicListingRouteUnavailableReason\(loadedPlace\)/);
+  assertMatch(navigationScreen, /publicListingRouteUnavailableReason\(loadedPlace\)/);
+  assertMatch(orderScreen, /publicListingRouteUnavailableReason\(loadedPlace\)/);
+  const refreshTokenStart = marketplaceStore.indexOf(
+    "const token = requestGuard.begin(scopeKey, 'directory')",
+  );
+  const sponsorClear = marketplaceStore.indexOf(
+    "sponsoredPlace: undefined",
+    refreshTokenStart,
+  );
+  const priorRefreshWait = marketplaceStore.indexOf(
+    "await priorRefresh.request",
+    refreshTokenStart,
+  );
+  assert(
+    refreshTokenStart >= 0 && sponsorClear > refreshTokenStart &&
+      sponsorClear < priorRefreshWait,
+    "A new directory refresh must clear stale sponsorship before waiting on a prior refresh",
+  );
+  assertMatch(discoverScreen, /sponsoredPlace: sponsoredProjection/);
+  assertMatch(discoverScreen, /ensurePlace\(businessId, locationId, 'discovery'\)/);
+  assertMatch(discoverScreen, /rankDiscoveryPlaces\(\[sponsoredProjection\]/);
+  assertMatch(discoverScreen, /const mappedPlaces = ranked/);
 });
 
 Deno.test("interaction receipts are token-bound, idempotent, and never trust client price", () => {
