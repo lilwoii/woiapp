@@ -92,6 +92,7 @@ Deno.test("account deletion can apply only its frozen terminal profile transitio
 
   assert(migration.includes("server_fields_changed"));
   assert(migration.includes("new.status = 'deleted'"));
+  assert(migration.includes("auth.uid() = old.user_id"));
   assert(migration.includes("new.user_id is not distinct from old.user_id"));
   assert(migration.includes("private.account_deletion_freezes freeze"));
   assert(migration.includes("request.user_id = freeze.user_id"));
@@ -119,6 +120,10 @@ Deno.test("account deletion can apply only its frozen terminal profile transitio
   assertMatch(
     migration,
     /insert into private\.account_deletion_freezes[\s\S]+set_config\([\s\S]+spottr\.account_deletion_request_id[\s\S]+update public\.profiles[\s\S]+set status = 'deleted'/,
+  );
+  assertMatch(
+    migration,
+    /begin\s+perform pg_catalog\.set_config\([\s\S]+spottr\.account_deletion_request_id', '', true/,
   );
   assertMatch(
     migration,

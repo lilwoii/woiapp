@@ -26,7 +26,8 @@ begin
     and server_fields_changed
   then
     authorized_deletion_transition :=
-      new.user_id is not distinct from old.user_id
+      auth.uid() = old.user_id
+      and new.user_id is not distinct from old.user_id
       and new.status = 'deleted'
       and new.status is distinct from old.status
       and new.terms_accepted_at is not distinct from old.terms_accepted_at
@@ -98,6 +99,10 @@ as $$
 declare
   fingerprint text;
 begin
+  perform pg_catalog.set_config(
+    'spottr.account_deletion_request_id', '', true
+  );
+
   if target_user_id is null
     or char_length(coalesce(request_key, '')) not between 16 and 128
     or request_key !~ '^[A-Za-z0-9._:-]+$'

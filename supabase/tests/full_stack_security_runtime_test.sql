@@ -2429,6 +2429,12 @@ begin
     raise exception 'Frozen account deletion did not apply the terminal profile status';
   end if;
 
+  if coalesce(
+    current_setting('spottr.account_deletion_request_id', true), '<missing>'
+  ) <> '' then
+    raise exception 'Account deletion left its profile-transition marker active';
+  end if;
+
   begin
     update public.profiles
     set status = 'active'
