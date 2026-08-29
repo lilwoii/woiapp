@@ -93,10 +93,24 @@ Deno.test("rating and body revisions atomically clear reactions and helpful stat
 });
 
 Deno.test("canonical reaction/comment RPCs retain account-only execution", () => {
-  assertMatch(migration, /revoke all on function public\.set_review_reaction\(uuid, smallint\) from public/);
+  assertMatch(
+    migration,
+    /revoke all on function public\.set_review_reaction\(uuid, smallint\)\s+from public, anon, authenticated, service_role/,
+  );
   assertMatch(migration, /grant execute on function public\.set_review_reaction\(uuid, smallint\) to authenticated/);
-  assertMatch(migration, /revoke all on function public\.add_review_profile_comment\(uuid, text\) from public/);
+  assertMatch(
+    migration,
+    /revoke all on function public\.add_review_profile_comment\(uuid, text\)\s+from public, anon, authenticated, service_role/,
+  );
   assertMatch(migration, /grant execute on function public\.add_review_profile_comment\(uuid, text\) to authenticated/);
+  assertMatch(
+    migration,
+    /revoke all on function public\.delete_own_review_profile_comment\(uuid\)\s+from public, anon, authenticated, service_role/,
+  );
+  assertMatch(
+    migration,
+    /grant execute on function public\.delete_own_review_profile_comment\(uuid\) to authenticated/,
+  );
   assert(migration.includes("Removing a pre-existing reaction remains available"));
 });
 

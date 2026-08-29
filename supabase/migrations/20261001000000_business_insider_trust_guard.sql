@@ -405,7 +405,12 @@ revoke all on function private.reset_review_trust_signals_on_revision()
   from public, anon, authenticated, service_role;
 revoke all on function private.sync_review_helpful_count()
   from public, anon, authenticated, service_role;
-revoke all on function public.set_review_reaction(uuid, smallint) from public;
+revoke all on function public.set_review_reaction(uuid, smallint)
+  from public, anon, authenticated, service_role;
 grant execute on function public.set_review_reaction(uuid, smallint) to authenticated;
-revoke all on function public.add_review_profile_comment(uuid, text) from public;
+revoke all on function public.add_review_profile_comment(uuid, text)
+  from public, anon, authenticated, service_role;
 grant execute on function public.add_review_profile_comment(uuid, text) to authenticated;
+revoke all on function public.delete_own_review_profile_comment(uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.delete_own_review_profile_comment(uuid) to authenticated;

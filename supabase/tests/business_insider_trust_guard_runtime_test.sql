@@ -331,6 +331,11 @@ begin
       'public.add_review_profile_comment(uuid, text)',
       'execute'
     )
+    or not has_function_privilege(
+      'authenticated',
+      'public.delete_own_review_profile_comment(uuid)',
+      'execute'
+    )
     or has_function_privilege(
       'anon',
       'public.set_review_reaction(uuid, smallint)',
@@ -339,6 +344,26 @@ begin
     or has_function_privilege(
       'anon',
       'public.add_review_profile_comment(uuid, text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.delete_own_review_profile_comment(uuid)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.set_review_reaction(uuid, smallint)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.add_review_profile_comment(uuid, text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.delete_own_review_profile_comment(uuid)',
       'execute'
     )
   then
