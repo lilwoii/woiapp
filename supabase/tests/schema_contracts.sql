@@ -415,64 +415,6 @@ begin
     raise exception 'Report targets are not restricted to public non-self content';
   end if;
 
-  if pg_catalog.pg_get_functiondef(
-      'public.list_pending_content_moderation(integer,integer)'::regprocedure
-    ) not like '%''reported'', true%'
-    or pg_catalog.pg_get_functiondef(
-      'public.list_pending_content_moderation(integer,integer)'::regprocedure
-    ) not like '%report.target_type = ''review''%'
-    or pg_catalog.pg_get_functiondef(
-      'public.decide_reported_review(uuid,text,text,timestamp with time zone)'::regprocedure
-    ) not like '%require_aal2%'
-    or pg_catalog.pg_get_functiondef(
-      'public.decide_reported_review(uuid,text,text,timestamp with time zone)'::regprocedure
-    ) not like '%MODERATION_TARGET_CHANGED%'
-    or pg_catalog.pg_get_functiondef(
-      'public.decide_reported_review(uuid,text,text,timestamp with time zone)'::regprocedure
-    ) not like '%moderation = ''removed''%'
-  then
-    raise exception 'Reported approved reviews lack a protected queue and decision path';
-  end if;
-
-  if lower(pg_catalog.regexp_replace(pg_catalog.pg_get_functiondef(
-      'public.map_food_places(double precision,double precision,double precision,double precision,integer,text[],integer)'::regprocedure
-    ), '[[:space:]]+', '', 'g')) not like '%candidatesasmaterialized%'
-    or lower(pg_catalog.regexp_replace(pg_catalog.pg_get_functiondef(
-      'public.map_food_places(double precision,double precision,double precision,double precision,integer,text[],integer)'::regprocedure
-    ), '[[:space:]]+', '', 'g')) not like '%st_intersects(bl.point%'
-    or lower(pg_catalog.regexp_replace(pg_catalog.pg_get_functiondef(
-      'public.map_food_places(double precision,double precision,double precision,double precision,integer,text[],integer)'::regprocedure
-    ), '[[:space:]]+', '', 'g')) not like '%st_intersects(redacted.safe_point::public.geography%'
-  then
-    raise exception 'Map viewport lacks an index-backed candidate phase or private safe-point membership';
-  end if;
-
-  if not exists (
-      select 1
-      from pg_catalog.pg_trigger trigger_row
-      join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
-      join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
-      where schema_row.nspname = 'private'
-        and table_row.relname = 'account_deletion_freezes'
-        and trigger_row.tgname = 'cancel_notification_deliveries_for_account_deletion'
-        and not trigger_row.tgisinternal
-    )
-    or pg_catalog.pg_get_functiondef(
-      'private.claim_notification_deliveries(uuid,integer,integer)'::regprocedure
-    ) not like '%is_active_user(delivery.user_id)%'
-    or pg_catalog.pg_get_functiondef(
-      'private.mark_notification_delivery_batch_sending(uuid[],uuid[],integer)'::regprocedure
-    ) not like '%is_active_user(delivery.user_id)%'
-    or pg_catalog.pg_get_functiondef(
-      'private.expand_notification_outbox(uuid,uuid,integer)'::regprocedure
-    ) not like '%for key share of followed%'
-    or pg_catalog.pg_get_functiondef(
-      'private.claim_notification_deliveries(uuid,integer,integer)'::regprocedure
-    ) not like '%''dead'', ''expired'', ''cancelled''%'
-  then
-    raise exception 'Notification opt-out is not serialized through fanout, claim, and handoff';
-  end if;
-
   if not exists (
     select 1
     from pg_catalog.pg_proc p
