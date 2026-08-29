@@ -9,9 +9,9 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 
 ## Verified release-candidate evidence
 
-- Source commit `072d68a67022d517b69d6d8c738dcd9a03a3b41f` passed the GitHub
-  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33225632539) and
-  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33225632585) workflows.
+- Source commit `09365720fb757eb6a7ec027a2d40e53ff5249157` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33227031387) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33227031404) workflows.
   The last web publication source, commit
   `cf76a56b424f19991bb480b162d7f07a9113ec85`, also passed both workflows. A
   second green
@@ -35,9 +35,11 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   bounded outbox/delivery leases, fanout cursor, device-owner consistency,
   atomic provider handoff, delayed receipt checks, ambiguous-send handling,
   and invalid-token retirement passed the full PostgreSQL migration and
-  runtime replay. Dispatch and receipt Edge contracts use fixed Expo endpoints,
-  generic lock-screen copy, bounded provider batches, versioned token keys, and
-  independent fail-closed worker/provider switches.
+  runtime replay. Active native registrations are now bound to a verified Auth
+  session; missing, expired, and removed sessions are rejected or retired, and
+  queued deliveries are cancelled. Dispatch and receipt Edge contracts use
+  fixed Expo endpoints, generic lock-screen copy, bounded provider batches,
+  versioned token keys, and independent fail-closed worker/provider switches.
 - Sites version 46 was built from exact verified web commit
   `cf76a56b424f19991bb480b162d7f07a9113ec85` and deployed to
   `https://noshatlas-live.lilwoi.chatgpt.site` with owner-only access.
