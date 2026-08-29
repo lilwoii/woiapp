@@ -2120,6 +2120,27 @@ begin
       'authenticated', 'public.submit_business_claim(uuid,text,text)', 'execute'
     )
     or pg_catalog.has_function_privilege(
+      'service_role', 'public.submit_business_claim(uuid,text,text)', 'execute'
+    )
+    or pg_catalog.has_table_privilege(
+      'anon', 'public.business_claims', 'insert'
+    )
+    or pg_catalog.has_table_privilege(
+      'anon', 'public.business_claims', 'update'
+    )
+    or pg_catalog.has_table_privilege(
+      'anon', 'public.business_claims', 'delete'
+    )
+    or pg_catalog.has_table_privilege(
+      'authenticated', 'public.business_claims', 'insert'
+    )
+    or pg_catalog.has_table_privilege(
+      'authenticated', 'public.business_claims', 'update'
+    )
+    or pg_catalog.has_table_privilege(
+      'authenticated', 'public.business_claims', 'delete'
+    )
+    or pg_catalog.has_function_privilege(
       'anon', 'public.review_business_claim(uuid,text,text)', 'execute'
     )
     or pg_catalog.has_function_privilege(
@@ -2255,6 +2276,233 @@ begin
   end if;
 end;
 $business_claim_verification_guard$;
+
+-- Prove the replacement partial indexes enforce live authority while allowing
+-- repeated terminal history. These writes are rollback-only test fixtures.
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+insert into public.businesses (
+  id, kind, name, slug, state, provenance, created_by
+)
+values
+  (
+    '70110000-0000-4000-8000-000000000001',
+    'restaurant',
+    'Runtime Claim History',
+    'runtime-claim-history',
+    'draft',
+    'community',
+    '10000000-0000-4000-8000-000000000001'
+  ),
+  (
+    '70110000-0000-4000-8000-000000000002',
+    'restaurant',
+    'Runtime Approved Claim Invariant',
+    'runtime-approved-claim-invariant',
+    'draft',
+    'community',
+    '10000000-0000-4000-8000-000000000001'
+  ),
+  (
+    '70110000-0000-4000-8000-000000000003',
+    'restaurant',
+    'Runtime Claim Replay',
+    'runtime-claim-replay',
+    'draft',
+    'community',
+    '10000000-0000-4000-8000-000000000001'
+  );
+
+insert into public.business_claims (
+  id, business_id, claimant_id, method, state
+)
+values
+  (
+    '80110000-0000-4000-8000-000000000001',
+    '70110000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'rejected'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000002',
+    '70110000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'rejected'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000003',
+    '70110000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'withdrawn'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000004',
+    '70110000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'pending'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000007',
+    '70110000-0000-4000-8000-000000000003',
+    '20000000-0000-4000-8000-000000000002',
+    'listed_phone',
+    'pending'
+  );
+
+do $business_claim_partial_index_behavior$
+begin
+  begin
+    insert into public.business_claims (
+      id, business_id, claimant_id, method, state
+    ) values (
+      '80110000-0000-4000-8000-000000000005',
+      '70110000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000001',
+      'domain_email',
+      'pending'
+    );
+    raise exception 'Duplicate pending claim bypassed the live-claim invariant';
+  exception
+    when unique_violation then null;
+  end;
+
+  if (
+    select count(*)
+    from public.business_claims claim
+    where claim.business_id = '70110000-0000-4000-8000-000000000001'
+      and claim.claimant_id = '10000000-0000-4000-8000-000000000001'
+      and claim.state in ('rejected', 'withdrawn')
+  ) <> 3 then
+    raise exception 'Repeated terminal claim history was not preserved';
+  end if;
+end;
+$business_claim_partial_index_behavior$;
+
+alter table public.business_claims
+  disable trigger require_business_claim_verification_receipt;
+
+insert into public.business_claims (
+  id, business_id, claimant_id, method, state
+) values (
+  '80110000-0000-4000-8000-000000000006',
+  '70110000-0000-4000-8000-000000000002',
+  '10000000-0000-4000-8000-000000000001',
+  'listed_phone',
+  'approved'
+);
+
+do $business_claim_approved_index_behavior$
+begin
+  begin
+    insert into public.business_claims (
+      id, business_id, claimant_id, method, state
+    ) values (
+      '80110000-0000-4000-8000-000000000008',
+      '70110000-0000-4000-8000-000000000002',
+      '20000000-0000-4000-8000-000000000002',
+      'domain_email',
+      'approved'
+    );
+    raise exception 'A second approved claim bypassed the ownership invariant';
+  exception
+    when unique_violation then null;
+  end;
+end;
+$business_claim_approved_index_behavior$;
+
+alter table public.business_claims
+  enable trigger require_business_claim_verification_receipt;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $business_claim_null_decision_behavior$
+begin
+  begin
+    perform public.review_business_claim(
+      '80110000-0000-4000-8000-000000000007',
+      null,
+      'Runtime null decision must fail.'
+    );
+    raise exception 'A null business-claim decision was accepted';
+  exception
+    when invalid_parameter_value then null;
+  end;
+end;
+$business_claim_null_decision_behavior$;
+
+reset role;
+
+do $business_claim_null_decision_result$
+begin
+  if not exists (
+    select 1
+    from public.business_claims claim
+    where claim.id = '80110000-0000-4000-8000-000000000007'
+      and claim.state = 'pending'
+  ) then
+    raise exception 'A null claim decision mutated the pending claim';
+  end if;
+end;
+$business_claim_null_decision_result$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $business_claim_decision_replay_behavior$
+begin
+  perform public.review_business_claim(
+    '80110000-0000-4000-8000-000000000007',
+    'rejected',
+    'Runtime verified rejection.'
+  );
+  perform public.review_business_claim(
+    '80110000-0000-4000-8000-000000000007',
+    'rejected',
+    'Runtime verified rejection replay.'
+  );
+end;
+$business_claim_decision_replay_behavior$;
+
+reset role;
+
+do $business_claim_decision_result$
+declare
+  decision_audit_count integer;
+begin
+  if not exists (
+    select 1
+    from public.business_claims claim
+    where claim.id = '80110000-0000-4000-8000-000000000007'
+      and claim.state = 'rejected'
+  ) then
+    raise exception 'Claim rejection did not produce the expected terminal state';
+  end if;
+
+  select count(*)
+  into decision_audit_count
+  from public.audit_events audit
+  where audit.event_type = 'business.claim_decided'
+    and audit.target_type = 'business_claim'
+    and audit.target_id = '80110000-0000-4000-8000-000000000007';
+
+  if decision_audit_count <> 1 then
+    raise exception 'Terminal claim replay duplicated its audit event';
+  end if;
+end;
+$business_claim_decision_result$;
 
 -- Push remains disabled in production, but the database foundation must prove
 -- consent/preference races, lease bounds, and identity consistency before a
@@ -4064,6 +4312,8 @@ do $business_claim_evidence_catalog_contract$
 declare
   intake_enabled boolean;
   purge_enabled boolean;
+  barrier_function regprocedure;
+  barrier_definition text;
 begin
   if has_table_privilege('anon', 'private.business_claim_evidence', 'select')
     or has_table_privilege('authenticated', 'private.business_claim_evidence', 'select')
@@ -4150,9 +4400,38 @@ begin
       'public.finalize_media_quarantine_cleanup(text[])',
       'execute'
     )
+    or has_function_privilege(
+      'authenticated',
+      'public.checkpoint_account_deletion_storage_batch(uuid,uuid,text[])',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.checkpoint_account_deletion_storage_batch(uuid,uuid,text[])',
+      'execute'
+    )
   then
     raise exception 'Claim-evidence service RPC ACL is unsafe';
   end if;
+
+  foreach barrier_function in array array[
+    'public.prepare_business_claim_evidence_purge_batch()'::regprocedure,
+    'public.finalize_business_claim_evidence_purge_batch(uuid,text[])'::regprocedure,
+    'public.prepare_media_cleanup_batch()'::regprocedure,
+    'public.finalize_media_cleanup_batch(uuid,text[])'::regprocedure,
+    'public.prepare_account_deletion_storage_batch(uuid,uuid)'::regprocedure,
+    'public.checkpoint_account_deletion_storage_batch(uuid,uuid,text[])'::regprocedure
+  ] loop
+    select pg_catalog.pg_get_functiondef(barrier_function)
+    into barrier_definition;
+    if position(
+      'pg_catalog.pg_advisory_xact_lock_shared(7742004, 1)'
+      in barrier_definition
+    ) <= 0 then
+      raise exception 'Storage mutation RPC % does not share the maintenance barrier',
+        barrier_function;
+    end if;
+  end loop;
 
   select config.intake_enabled, config.purge_enabled
   into intake_enabled, purge_enabled

@@ -10,7 +10,10 @@ const onboardingRoute = await Deno.readTextFile(
   new URL("../../app/business-onboarding.tsx", import.meta.url),
 );
 const recoveryPanel = await Deno.readTextFile(
-  new URL("../../components/business-claim-recovery-panel.tsx", import.meta.url),
+  new URL(
+    "../../components/business-claim-recovery-panel.tsx",
+    import.meta.url,
+  ),
 );
 const types = await Deno.readTextFile(
   new URL("../../types/marketplace.ts", import.meta.url),
@@ -18,6 +21,12 @@ const types = await Deno.readTextFile(
 const migration = await Deno.readTextFile(
   new URL(
     "../migrations/20261003000000_business_claim_recovery_boundary.sql",
+    import.meta.url,
+  ),
+);
+const aclMigration = await Deno.readTextFile(
+  new URL(
+    "../migrations/20261005000000_business_claim_acl_drift_hardening.sql",
     import.meta.url,
   ),
 );
@@ -63,7 +72,10 @@ Deno.test("claim history indexes replace the all-state uniqueness constraint saf
   const dropConstraint = migration.indexOf(
     "drop constraint business_claims_business_id_claimant_id_state_key",
   );
-  assert(pendingIndex >= 0 && approvedIndex > pendingIndex && dropConstraint > approvedIndex);
+  assert(
+    pendingIndex >= 0 && approvedIndex > pendingIndex &&
+      dropConstraint > approvedIndex,
+  );
   assertMatch(
     migration,
     /business_claims_one_pending_per_claimant_business_idx[\s\S]+\(business_id, claimant_id\)[\s\S]+where state = 'pending'/,
@@ -71,6 +83,17 @@ Deno.test("claim history indexes replace the all-state uniqueness constraint saf
   assertMatch(
     migration,
     /business_claims_one_approved_per_business_idx[\s\S]+\(business_id\)[\s\S]+where state = 'approved'/,
+  );
+});
+
+Deno.test("claim table and submission ACLs are reasserted after the migration chain", () => {
+  assertMatch(
+    aclMigration,
+    /revoke all privileges on table public\.business_claims\s+from public, anon, authenticated;/,
+  );
+  assertMatch(
+    aclMigration,
+    /revoke all on function public\.submit_business_claim\(uuid, text, text\)\s+from public, anon, authenticated, service_role;[\s\S]+grant execute on function public\.submit_business_claim\(uuid, text, text\)\s+to authenticated;/,
   );
 });
 
@@ -126,9 +149,18 @@ Deno.test("own withdrawal locks business before claim and is server-idempotent",
   );
   assertMatch(withdraw, /private\.require_aal2\(\)/);
   assertMatch(withdraw, /private\.is_active_user\(actor\)/);
-  assertMatch(withdraw, /if target_state = 'withdrawn' then[\s\S]+return query select target_claim_id, 'withdrawn'::text/);
-  assertMatch(withdraw, /if target_state <> 'pending' then[\s\S]+CLAIM_NOT_WITHDRAWABLE/);
-  assertMatch(withdraw, /set state = 'withdrawn'[\s\S]+claim\.state = 'pending'/);
+  assertMatch(
+    withdraw,
+    /if target_state = 'withdrawn' then[\s\S]+return query select target_claim_id, 'withdrawn'::text/,
+  );
+  assertMatch(
+    withdraw,
+    /if target_state <> 'pending' then[\s\S]+CLAIM_NOT_WITHDRAWABLE/,
+  );
+  assertMatch(
+    withdraw,
+    /set state = 'withdrawn'[\s\S]+claim\.state = 'pending'/,
+  );
   assertMatch(withdraw, /'business\.claim_withdrawn'/);
   assertMatch(
     migration,
@@ -158,8 +190,14 @@ Deno.test("claim receipts preserve server identifiers and valid states", () => {
   assertMatch(submitClaim, /verifiedClaim\.method !== method/);
   assertMatch(submitClaim, /verifiedClaim\.state !== 'pending'/);
   assertMatch(submitClaim, /submissionMayExist/);
-  assertMatch(submitClaim, /Refresh the ownership claims list before trying again/);
-  assertMatch(types, /export type BusinessClaimState = 'pending' \| 'approved' \| 'rejected' \| 'withdrawn'/);
+  assertMatch(
+    submitClaim,
+    /Refresh the ownership claims list before trying again/,
+  );
+  assertMatch(
+    types,
+    /export type BusinessClaimState = 'pending' \| 'approved' \| 'rejected' \| 'withdrawn'/,
+  );
   assertMatch(types, /export type BusinessClaimReceipt/);
 });
 
@@ -173,8 +211,14 @@ Deno.test("onboarding claim status stays flag-gated and handles recovery states"
     onboardingRoute,
     /useEffect\(\(\) => \{[\s\S]+import\('@\/components\/business-onboarding-screen'\)/,
   );
-  assertMatch(onboardingRoute, /if \(!Screen\) return <BusinessOnboardingLoading \/>/);
-  assertMatch(onboardingRoute, /if \(loadFailed\) return <BusinessOnboardingLoadError \/>/);
+  assertMatch(
+    onboardingRoute,
+    /if \(!Screen\) return <BusinessOnboardingLoading \/>/,
+  );
+  assertMatch(
+    onboardingRoute,
+    /if \(loadFailed\) return <BusinessOnboardingLoadError \/>/,
+  );
   assertMatch(onboardingRoute, /spottr:route-content-ready/);
   assert(!onboardingRoute.includes("lazy("));
   assert(!onboardingRoute.includes("<Suspense"));
@@ -187,7 +231,10 @@ Deno.test("onboarding claim status stays flag-gated and handles recovery states"
   assertMatch(onboarding, /expectedUserId=\{expectedUserId\}/);
   assertMatch(onboarding, /secureSession=\{secureSession\}/);
   assertMatch(onboarding, /refreshToken=\{claimsRefreshToken\}/);
-  assertMatch(onboarding, /setClaimsRefreshToken\(\(current\) => current \+ 1\)/);
+  assertMatch(
+    onboarding,
+    /setClaimsRefreshToken\(\(current\) => current \+ 1\)/,
+  );
   assert(!onboarding.includes("fetchMyBusinessClaims"));
   assert(!onboarding.includes("withdrawBusinessClaim"));
   assert(!onboarding.includes("claimsRequestGeneration"));
@@ -196,14 +243,28 @@ Deno.test("onboarding claim status stays flag-gated and handles recovery states"
   assertMatch(recoveryPanel, /useAuth\(\)/);
   assertMatch(recoveryPanel, /featureFlags\.businessClaims/);
   assertMatch(recoveryPanel, /fetchMyBusinessClaims\(accountAtStart\)/);
-  assertMatch(recoveryPanel, /withdrawBusinessClaim\(claim\.id, accountAtStart\)/);
+  assertMatch(
+    recoveryPanel,
+    /withdrawBusinessClaim\(claim\.id, accountAtStart\)/,
+  );
   assertMatch(recoveryPanel, /claimsRequestGeneration/);
   assertMatch(recoveryPanel, /claimMutationGeneration/);
-  for (const state of statuses) assertMatch(recoveryPanel, new RegExp(`${state}:`));
-  assertMatch(recoveryPanel, /Verification evidence and reviewer details are never shown here/);
-  assertMatch(recoveryPanel, /confirmAction\(\{[\s\S]+Withdraw this ownership claim/);
+  for (const state of statuses) {
+    assertMatch(recoveryPanel, new RegExp(`${state}:`));
+  }
+  assertMatch(
+    recoveryPanel,
+    /Verification evidence and reviewer details are never shown here/,
+  );
+  assertMatch(
+    recoveryPanel,
+    /confirmAction\(\{[\s\S]+Withdraw this ownership claim/,
+  );
   assertMatch(recoveryPanel, /Refresh ownership claims/);
-  assertMatch(onboarding, /const \[selectedClaimId, setSelectedClaimId\] = useState<string \| null>\(null\)/);
+  assertMatch(
+    onboarding,
+    /const \[selectedClaimId, setSelectedClaimId\] = useState<string \| null>\(null\)/,
+  );
   assertMatch(onboarding, /place\.publicationState === 'published'/);
   assertMatch(onboarding, /place\.sourceLabel === 'Licensed provider'/);
   assertMatch(onboarding, /place\.sourceLabel === 'Community added'/);

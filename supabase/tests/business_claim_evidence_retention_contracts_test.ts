@@ -84,13 +84,72 @@ Deno.test("legacy public paths are validated, backfilled, nulled, and retired", 
   );
   assertMatch(migration, /LEGACY_CLAIM_EVIDENCE_OBJECT_MISSING/);
   assertMatch(migration, /LEGACY_CLAIM_EVIDENCE_CLEANUP_CONFLICT/);
-  assertMatch(migration, /LEGACY_CLAIM_EVIDENCE_ALREADY_DELETED/);
+  assertMatch(
+    migration,
+    /deletion_item\.state in \('pending', 'deleted'\)[\s\S]+LEGACY_CLAIM_EVIDENCE_ACCOUNT_DELETION_CONFLICT/,
+  );
   assertMatch(migration, /LEGACY_CLAIM_EVIDENCE_UPLOAD_CAPABILITY_ACTIVE/);
   assertMatch(migration, /LEGACY_CLAIM_EVIDENCE_STAGE_GRANT_MISMATCH/);
   assertMatch(migration, /LEGACY_CLAIM_EVIDENCE_DELETION_ALREADY_SEALED/);
   assertMatch(
     migration,
     /business_claims_legacy_evidence_path_retired[\s\S]+check \(evidence_private_path is null\)/,
+  );
+});
+
+Deno.test("storage mutation barrier precedes cleanup, deletion, and migration row locks", () => {
+  const migrationBarrier = migration.indexOf(
+    "select pg_catalog.pg_advisory_xact_lock(7742004, 1);",
+  );
+  const firstTableLock = migration.indexOf(
+    "lock table public.business_claims in share row exclusive mode;",
+  );
+  assert(migrationBarrier >= 0 && firstTableLock > migrationBarrier);
+
+  const sections = [
+    section(
+      "create or replace function public.prepare_business_claim_evidence_purge_batch()",
+      "revoke all on function public.prepare_business_claim_evidence_purge_batch()",
+    ),
+    section(
+      "create or replace function public.finalize_business_claim_evidence_purge_batch(",
+      "revoke all on function public.finalize_business_claim_evidence_purge_batch(uuid, text[])",
+    ),
+    section(
+      "create or replace function public.prepare_media_cleanup_batch()",
+      "revoke all on function public.prepare_media_cleanup_batch()",
+    ),
+    section(
+      "create or replace function public.finalize_media_cleanup_batch(",
+      "revoke all on function public.finalize_media_cleanup_batch(uuid, text[])",
+    ),
+    section(
+      "create or replace function public.prepare_account_deletion_storage_batch(",
+      "revoke all on function public.prepare_account_deletion_storage_batch(uuid, uuid)",
+    ),
+    section(
+      "create or replace function public.checkpoint_account_deletion_storage_batch(",
+      "revoke all on function public.checkpoint_account_deletion_storage_batch(uuid, uuid, text[])",
+    ),
+  ];
+  for (const body of sections) {
+    assertMatch(
+      body,
+      /begin\s+perform pg_catalog\.pg_advisory_xact_lock_shared\(7742004, 1\);/,
+    );
+  }
+
+  const preflightStart = migration.indexOf(
+    "do $legacy_claim_evidence_validation$",
+  );
+  const backfillStart = migration.indexOf(
+    "insert into private.business_claim_evidence (",
+    preflightStart,
+  );
+  const preflight = migration.slice(preflightStart, backfillStart);
+  assertMatch(preflight, /deletion_item\.state in \('pending', 'deleted'\)/);
+  assert(
+    !preflight.includes("delete from private.account_deletion_storage_items"),
   );
 });
 

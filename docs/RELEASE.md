@@ -331,11 +331,13 @@ existing environment, export and investigate every previously approved claim
 and the owner memberships it created; do not automatically revoke a legitimate
 owner or accept a historical approval as proof.
 
-Migrations `20261002000000_business_claim_approval_serialization.sql` and
-`20261003000000_business_claim_recovery_boundary.sql` provide business-row
+Migrations `20261002000000_business_claim_approval_serialization.sql`,
+`20261003000000_business_claim_recovery_boundary.sql`, and
+`20261005000000_business_claim_acl_drift_hardening.sql` provide business-row
 approval serialization, terminal-decision idempotency, one-approved-claim and
-one-live-claim invariants, an account-only safe status projection, and
-business-before-claim withdrawal locking. They do not make claims launchable.
+one-live-claim invariants, an account-only safe status projection,
+business-before-claim withdrawal locking, and an explicit final table/RPC ACL
+reset. They do not make claims launchable.
 Provider account/source, permit, and jurisdiction eligibility is still a
 point-in-time predicate; keep claims disabled until claim review and provider
 ingestion/lifecycle share a tested lock or signed-epoch protocol. A legally
@@ -349,10 +351,17 @@ media cleanup, direct authenticated quarantine deletion, and account-deletion
 storage manifests, and records an account-deletion preservation exception.
 Evidence intake and purge both default off. The bounded purge RPC is only a
 disabled receipt boundary; it is not authorization to release a hold or a
-retention schedule. Pause media-cleanup and account-deletion workers while this
-migration is applied to an existing environment, investigate any fail-closed
-legacy-path preflight error, and do not enable either gate until counsel and the
-security reviewer approve the exact production policy and worker.
+retention schedule. The migration takes the exclusive side of the global
+storage-mutation barrier before inspecting legacy paths; updated cleanup,
+purge, and account-deletion prepare/finalize RPCs take the shared side before
+their other locks. Its preflight aborts when a legacy evidence path has a
+pending or deleted account-deletion item instead of erasing that receipt. Pause
+and fully drain media-cleanup and account-deletion workers before the first
+rollout anyway: a legacy worker can already be between its database claim and
+external Storage request, which a database advisory lock cannot cancel.
+Investigate every fail-closed legacy-path preflight error, and do not enable
+either gate until counsel and the security reviewer approve the exact
+production policy and worker.
 
 ### Home kitchens
 

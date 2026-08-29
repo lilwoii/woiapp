@@ -7,6 +7,11 @@
 -- counsel-approved policy_version and purge_after values are required before
 -- an evidence object can ever become purge eligible.
 
+-- Global storage-mutation maintenance barrier. Updated cleanup/deletion RPCs
+-- take the shared side before any user/path/table lock. A future maintenance
+-- transaction takes the exclusive side before inspecting or moving paths.
+select pg_catalog.pg_advisory_xact_lock(7742004, 1);
+
 create table private.business_claim_evidence_runtime_config (
   singleton boolean primary key default true check (singleton),
   intake_enabled boolean not null default false,
@@ -409,9 +414,9 @@ begin
     join private.account_deletion_storage_items deletion_item
       on deletion_item.storage_path = claim.evidence_private_path
     where claim.evidence_private_path is not null
-      and deletion_item.state = 'deleted'
+      and deletion_item.state in ('pending', 'deleted')
   ) then
-    raise exception using errcode = '55000', message = 'LEGACY_CLAIM_EVIDENCE_ALREADY_DELETED';
+    raise exception using errcode = '55000', message = 'LEGACY_CLAIM_EVIDENCE_ACCOUNT_DELETION_CONFLICT';
   end if;
 end;
 $legacy_claim_evidence_validation$;
@@ -453,17 +458,6 @@ delete from private.media_cleanup_items cleanup
 using private.business_claim_evidence evidence
 where cleanup.storage_path = evidence.storage_path
   and cleanup.state = 'pending';
-
-delete from private.account_deletion_storage_items deletion_item
-using private.business_claim_evidence evidence
-where deletion_item.storage_path = evidence.storage_path
-  and deletion_item.state = 'pending'
-  and exists (
-    select 1
-    from private.business_claim_evidence_account_deletion_exceptions exception_row
-    where exception_row.request_id = deletion_item.request_id
-      and exception_row.evidence_id = evidence.id
-  );
 
 update public.business_claims
 set evidence_private_path = null
@@ -543,6 +537,8 @@ declare
   paths text[];
   path_hashes text[];
 begin
+  perform pg_catalog.pg_advisory_xact_lock_shared(7742004, 1);
+
   if not coalesce((
     select config.purge_enabled
     from private.business_claim_evidence_runtime_config config
@@ -677,6 +673,8 @@ declare
   receipt private.business_claim_evidence_purge_receipts%rowtype;
   finalized_count integer := 0;
 begin
+  perform pg_catalog.pg_advisory_xact_lock_shared(7742004, 1);
+
   if target_batch_id is null
     or cardinality(paths) = 0
     or cardinality(paths) > 100
@@ -824,6 +822,8 @@ declare
   target_storage_path text;
   paths text[];
 begin
+  perform pg_catalog.pg_advisory_xact_lock_shared(7742004, 1);
+
   update private.media_stage_grants
   set state = 'expired', registered_asset_id = null, updated_at = now()
   where state in ('issued', 'registered') and expires_at <= now();
@@ -995,6 +995,8 @@ declare
   paths text[] := coalesce(deleted_storage_paths, '{}'::text[]);
   deleted_assets integer := 0;
 begin
+  perform pg_catalog.pg_advisory_xact_lock_shared(7742004, 1);
+
   if target_batch_id is null
     or cardinality(paths) > 500
     or cardinality(paths) <> (
@@ -1106,6 +1108,8 @@ declare
   pending_count integer;
   preserved_evidence_count integer;
 begin
+  perform pg_catalog.pg_advisory_xact_lock_shared(7742004, 1);
+
   if not exists (
     select 1
     from private.account_deletion_requests request
@@ -1279,6 +1283,80 @@ $$;
 revoke all on function public.prepare_account_deletion_storage_batch(uuid, uuid)
   from public, anon, authenticated, service_role;
 grant execute on function public.prepare_account_deletion_storage_batch(uuid, uuid)
+  to service_role;
+
+create or replace function public.checkpoint_account_deletion_storage_batch(
+  target_request_id uuid,
+  target_user_id uuid,
+  deleted_storage_paths text[]
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  paths text[] := coalesce(deleted_storage_paths, '{}'::text[]);
+  pending_count integer;
+begin
+  perform pg_catalog.pg_advisory_xact_lock_shared(7742004, 1);
+
+  if cardinality(paths) > 500
+    or cardinality(paths) <> (
+      select count(distinct supplied.path)
+      from unnest(paths) as supplied(path)
+    )
+    or exists (
+      select 1
+      from unnest(paths) as supplied(path)
+      where not private.is_valid_media_storage_path(supplied.path)
+    )
+    or exists (
+      select 1
+      from unnest(paths) supplied(path)
+      where not exists (
+        select 1
+        from private.account_deletion_storage_items item
+        where item.request_id = target_request_id
+          and item.storage_path = supplied.path
+          and item.state in ('pending', 'deleted')
+      )
+    )
+    or not exists (
+      select 1
+      from private.account_deletion_freezes deletion_freeze
+      where deletion_freeze.user_id = target_user_id
+        and deletion_freeze.request_id = target_request_id
+    )
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'INVALID_ACCOUNT_DELETION_STORAGE_RECEIPT';
+  end if;
+
+  update private.account_deletion_storage_items
+  set state = 'deleted', deleted_at = now()
+  where request_id = target_request_id
+    and storage_path = any(paths)
+    and state = 'pending';
+
+  select count(*)
+  into pending_count
+  from private.account_deletion_storage_items
+  where request_id = target_request_id
+    and state = 'pending';
+
+  return jsonb_build_object(
+    'pending_count', pending_count,
+    'storage_complete', pending_count = 0
+  );
+end;
+$$;
+
+revoke all on function public.checkpoint_account_deletion_storage_batch(uuid, uuid, text[])
+  from public, anon, authenticated, service_role;
+grant execute on function public.checkpoint_account_deletion_storage_batch(uuid, uuid, text[])
   to service_role;
 
 create or replace function private.enforce_claim_evidence_account_deletion_seal()

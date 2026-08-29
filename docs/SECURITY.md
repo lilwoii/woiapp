@@ -129,7 +129,12 @@ key. The ordinary storage manifest excludes those paths, and the storage seal
 fails closed if a retained evidence path was included or lacks its exact
 private exception. Retention duration, hold release, staff access, and purge
 authorization remain external legal/security decisions; both evidence intake
-and the dedicated purge boundary default off. A private deletion
+and the dedicated purge boundary default off. The retention migration and the
+updated storage-mutation RPCs use exclusive/shared advisory-lock sides to order
+database path decisions, and migration preflight rejects pending or completed
+account-deletion receipts for legacy evidence. Initial rollout still requires
+workers to be paused and drained because an older worker may already be making
+an external Storage request after its database transaction ended. A private deletion
 receipt is idempotent and expires; failures return a retryable error rather than
 claiming completion. A per-user advisory lock and live-request unique index reuse
 one deletion receipt across devices. The client keeps its verified session open
