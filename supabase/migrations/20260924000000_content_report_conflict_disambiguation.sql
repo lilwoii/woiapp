@@ -2,6 +2,65 @@
 -- `target_type` is both a public parameter and a table column, so the named
 -- unique constraint is the only unambiguous conflict target.
 
+do $constraint$
+declare
+  existing_constraint name;
+begin
+  if exists (
+    select 1
+    from pg_catalog.pg_constraint constraint_row
+    where constraint_row.conrelid = 'public.content_reports'::regclass
+      and constraint_row.conname =
+        'content_reports_reporter_id_target_type_target_id_key'
+  ) then
+    if not exists (
+      select 1
+      from pg_catalog.pg_constraint constraint_row
+      where constraint_row.conrelid = 'public.content_reports'::regclass
+        and constraint_row.conname =
+          'content_reports_reporter_id_target_type_target_id_key'
+        and constraint_row.contype = 'u'
+        and pg_catalog.regexp_replace(
+          lower(pg_catalog.pg_get_constraintdef(constraint_row.oid)),
+          '[[:space:]]+',
+          '',
+          'g'
+        ) = 'unique(reporter_id,target_type,target_id)'
+    ) then
+      raise exception using
+        errcode = '55000',
+        message = 'CONTENT_REPORT_UNIQUE_CONSTRAINT_INVALID';
+    end if;
+  else
+    select constraint_row.conname
+    into existing_constraint
+    from pg_catalog.pg_constraint constraint_row
+    where constraint_row.conrelid = 'public.content_reports'::regclass
+      and constraint_row.contype = 'u'
+      and pg_catalog.regexp_replace(
+        lower(pg_catalog.pg_get_constraintdef(constraint_row.oid)),
+        '[[:space:]]+',
+        '',
+        'g'
+      ) = 'unique(reporter_id,target_type,target_id)'
+    order by constraint_row.oid
+    limit 1;
+
+    if existing_constraint is null then
+      alter table public.content_reports
+        add constraint content_reports_reporter_id_target_type_target_id_key
+        unique (reporter_id, target_type, target_id);
+    else
+      execute pg_catalog.format(
+        'alter table public.content_reports rename constraint %I to %I',
+        existing_constraint,
+        'content_reports_reporter_id_target_type_target_id_key'
+      );
+    end if;
+  end if;
+end;
+$constraint$;
+
 create or replace function public.submit_content_report(
   target_type text,
   target_id uuid,

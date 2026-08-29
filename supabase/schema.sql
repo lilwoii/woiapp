@@ -535,7 +535,8 @@ create table if not exists public.content_reports (
     )
   ),
   constraint content_reports_detail_length check (detail is null or char_length(detail) <= 2000),
-  unique (reporter_id, target_type, target_id)
+  constraint content_reports_reporter_id_target_type_target_id_key
+    unique (reporter_id, target_type, target_id)
 );
 
 create table if not exists public.user_blocks (

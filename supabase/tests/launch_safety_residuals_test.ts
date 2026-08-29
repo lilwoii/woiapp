@@ -33,7 +33,14 @@ Deno.test("content report upserts use an unambiguous conflict target", async () 
   const safeTarget =
     "on conflict on constraint content_reports_reporter_id_target_type_target_id_key";
 
+  assert(
+    schema.includes(
+      "constraint content_reports_reporter_id_target_type_target_id_key\n    unique",
+    ),
+  );
   assert(schema.includes(safeTarget));
+  assert(repair.includes("rename constraint %I to %I"));
+  assert(repair.includes("add constraint content_reports_reporter_id_target_type_target_id_key"));
   assert(repair.includes(safeTarget));
   assert(!repair.includes("on conflict (reporter_id, target_type, target_id)"));
 });
