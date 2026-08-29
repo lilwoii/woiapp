@@ -23,14 +23,23 @@ import { useMarketplaceStore } from '@/context/marketplace-store';
 import { featureFlags, filterHomeKitchenPlaces } from '@/lib/features';
 import {
   createBusinessDraft,
+  fetchMyBusinessClaims,
   searchMarketplacePlaces,
   submitBusinessClaim,
   uploadBusinessLogo,
+  withdrawBusinessClaim,
 } from '@/lib/marketplace-api';
 import type { LocalMedia } from '@/lib/media-upload';
 import { checkProfessionalText } from '@/lib/moderation';
-import { showMessage } from '@/lib/platform-dialog';
-import { BusinessCategory, PaymentMethod, Place } from '@/types/marketplace';
+import { confirmAction, showMessage } from '@/lib/platform-dialog';
+import {
+  BusinessCategory,
+  BusinessClaim,
+  BusinessClaimMethod,
+  BusinessClaimState,
+  PaymentMethod,
+  Place,
+} from '@/types/marketplace';
 
 const categories: {
   id: BusinessCategory;
@@ -55,6 +64,66 @@ const payments: PaymentMethod[] = [
   'Cash App',
   'Venmo',
 ];
+
+const claimStateMeta: Record<
+  BusinessClaimState,
+  {
+    label: string;
+    icon: keyof typeof FontAwesome6.glyphMap;
+    color: string;
+    background: string;
+  }
+> = {
+  pending: {
+    label: 'Pending',
+    icon: 'clock',
+    color: palette.warning,
+    background: palette.warningSoft,
+  },
+  approved: {
+    label: 'Approved',
+    icon: 'circle-check',
+    color: palette.success,
+    background: palette.successSoft,
+  },
+  rejected: {
+    label: 'Rejected',
+    icon: 'circle-exclamation',
+    color: palette.accentDeep,
+    background: palette.accentSoft,
+  },
+  withdrawn: {
+    label: 'Withdrawn',
+    icon: 'rotate-left',
+    color: palette.muted,
+    background: palette.bg,
+  },
+};
+
+const claimMethodLabels: Record<BusinessClaimMethod, string> = {
+  listed_phone: 'Listed phone',
+  domain_email: 'Domain email',
+  document: 'Document',
+  permit: 'Permit',
+};
+
+function formatClaimDate(value: string) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return 'Submitted recently';
+  return `Submitted ${new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(timestamp))}`;
+}
+
+function eligibleClaimPlaces(places: readonly Place[]) {
+  return filterHomeKitchenPlaces(places).filter(
+    (place) =>
+      place.publicationState === 'published' &&
+      (place.sourceLabel === 'Licensed provider' || place.sourceLabel === 'Community added')
+  );
+}
 
 type BusinessOnboardingContentProps = {
   claimRequested: boolean;
@@ -166,11 +235,19 @@ function BusinessOnboardingContent({
   const [claimExisting, setClaimExisting] = useState(
     featureFlags.businessClaims && claimRequested
   );
-  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(initialClaimId);
+  // A deep link is only a hint. It becomes selectable after the live search
+  // returns the same published, currently eligible listing.
+  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
   const [claimMethod, setClaimMethod] = useState<'listed_phone' | 'domain_email'>('listed_phone');
   const [claimSearchResults, setClaimSearchResults] = useState<Place[]>([]);
   const [claimSearching, setClaimSearching] = useState(false);
   const [claimSearchError, setClaimSearchError] = useState<string | null>(null);
+  const [claims, setClaims] = useState<BusinessClaim[]>([]);
+  const [claimsLoading, setClaimsLoading] = useState(false);
+  const [claimsError, setClaimsError] = useState<string | null>(null);
+  const [claimsRetryVersion, setClaimsRetryVersion] = useState(0);
+  const [claimActionError, setClaimActionError] = useState<string | null>(null);
+  const [withdrawingClaimId, setWithdrawingClaimId] = useState<string | null>(null);
   const [accuracyConfirmed, setAccuracyConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
@@ -179,6 +256,8 @@ function BusinessOnboardingContent({
   const mounted = useRef(true);
   const mutationGeneration = useRef(0);
   const mutationBusy = useRef(false);
+  const claimsRequestGeneration = useRef(0);
+  const claimMutationGeneration = useRef(0);
   const navigationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const secureSession =
     Boolean(expectedUserId) &&
@@ -193,6 +272,8 @@ function BusinessOnboardingContent({
     return () => {
       mounted.current = false;
       mutationGeneration.current += 1;
+      claimsRequestGeneration.current += 1;
+      claimMutationGeneration.current += 1;
       mutationBusy.current = false;
       if (navigationTimer.current) clearTimeout(navigationTimer.current);
       navigationTimer.current = null;
@@ -230,7 +311,15 @@ function BusinessOnboardingContent({
       !featureFlags.businessClaims ||
       !claimExisting ||
       businessName.trim().length < 2;
-    const timer = setTimeout(() => {
+    const resetTimer = setTimeout(() => {
+      if (!active || !mounted.current) return;
+      setClaimSearchResults([]);
+      setSelectedClaimId(null);
+      setClaimSearchError(null);
+      setClaimSearching(!unavailable);
+    }, 0);
+    const searchTimer = setTimeout(() => {
+      if (!active || !mounted.current) return;
       if (unavailable) {
         setClaimSearchResults([]);
         setClaimSearchError(null);
@@ -245,16 +334,96 @@ function BusinessOnboardingContent({
         if (!result.ok) {
           setClaimSearchResults([]);
           setClaimSearchError(result.reason);
+          setSelectedClaimId(null);
           return;
         }
-        setClaimSearchResults(filterHomeKitchenPlaces(result.data?.places ?? []).slice(0, 5));
+        const eligibleMatches = eligibleClaimPlaces(result.data?.places ?? []);
+        const deepLinkedPlace = initialClaimId
+          ? eligibleMatches.find((place) => place.id === initialClaimId)
+          : undefined;
+        const visibleMatches = eligibleMatches.slice(0, 5);
+        if (
+          deepLinkedPlace &&
+          !visibleMatches.some((place) => place.id === deepLinkedPlace.id)
+        ) {
+          visibleMatches.push(deepLinkedPlace);
+        }
+        setClaimSearchResults(visibleMatches);
+        setSelectedClaimId(deepLinkedPlace?.id ?? null);
       });
     }, unavailable ? 0 : 450);
     return () => {
       active = false;
-      clearTimeout(timer);
+      clearTimeout(resetTimer);
+      clearTimeout(searchTimer);
     };
-  }, [auth.isConfigured, businessName, claimExisting]);
+  }, [auth.isConfigured, businessName, claimExisting, initialClaimId]);
+
+  useEffect(() => {
+    const requestGeneration = claimsRequestGeneration.current + 1;
+    claimsRequestGeneration.current = requestGeneration;
+    const accountAtStart = expectedUserId;
+    let active = true;
+
+    if (
+      !featureFlags.businessClaims ||
+      !accountAtStart ||
+      auth.status !== 'authenticated' ||
+      !secureSession
+    ) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const loadingTimer = setTimeout(() => {
+      if (!active || !mounted.current) return;
+      setClaimsLoading(true);
+      setClaimsError(null);
+    }, 0);
+    void fetchMyBusinessClaims(accountAtStart)
+      .then((result) => {
+        if (
+          !active ||
+          !mounted.current ||
+          claimsRequestGeneration.current !== requestGeneration ||
+          auth.account?.id !== accountAtStart
+        ) {
+          return;
+        }
+        setClaimsLoading(false);
+        if (!result.ok) {
+          setClaimsError(result.reason);
+          return;
+        }
+        setClaims(result.data ?? []);
+      })
+      .catch(() => {
+        if (
+          !active ||
+          !mounted.current ||
+          claimsRequestGeneration.current !== requestGeneration ||
+          auth.account?.id !== accountAtStart
+        ) {
+          return;
+        }
+        setClaimsLoading(false);
+        setClaimsError('Your ownership claims could not be loaded. Try again.');
+      });
+
+    return () => {
+      active = false;
+      clearTimeout(loadingTimer);
+      claimsRequestGeneration.current += 1;
+    };
+  }, [auth.account?.id, auth.status, claimsRetryVersion, expectedUserId, secureSession]);
+
+  const refreshClaims = () => {
+    if (claimsLoading) return;
+    setClaimsError(null);
+    setClaimsLoading(true);
+    setClaimsRetryVersion((current) => current + 1);
+  };
 
   if (!auth.isConfigured) {
     return (
@@ -605,6 +774,15 @@ function BusinessOnboardingContent({
       setFormMessage({ type: 'error', text: 'Choose an existing listing first.' });
       return;
     }
+    const selectedClaim = claimMatches.find((place) => place.id === selectedClaimId);
+    if (!selectedClaim || selectedClaim.publicationState !== 'published') {
+      setSelectedClaimId(null);
+      setFormMessage({
+        type: 'error',
+        text: 'Choose an eligible published listing from the results before continuing.',
+      });
+      return;
+    }
     if (!accuracyConfirmed) {
       setFormMessage({
         type: 'error',
@@ -612,11 +790,14 @@ function BusinessOnboardingContent({
       });
       return;
     }
+    const targetClaimId = selectedClaimId;
+    const targetClaimMethod = claimMethod;
+    const targetBusinessName = selectedClaim.name;
     const generation = beginMutation();
     if (generation === null) return;
     const result = await submitBusinessClaim(
-      selectedClaimId,
-      claimMethod,
+      targetClaimId,
+      targetClaimMethod,
       expectedUserId
     );
     if (!isCurrentMutation(generation) || !finishMutation(generation)) return;
@@ -624,7 +805,99 @@ function BusinessOnboardingContent({
       setFormMessage({ type: 'error', text: result.reason });
       return;
     }
+    const receipt = result.data;
+    if (receipt?.claimId) {
+      setClaims((current) => {
+        const existing = current.find((claim) => claim.id === receipt.claimId);
+        const nextClaim: BusinessClaim = {
+          id: receipt.claimId,
+          businessId: targetClaimId,
+          businessName: targetBusinessName,
+          method: targetClaimMethod,
+          state: receipt.state,
+          createdAt: new Date().toISOString(),
+        };
+        return existing
+          ? current.map((claim) => (claim.id === nextClaim.id ? { ...claim, state: nextClaim.state } : claim))
+          : [nextClaim, ...current].slice(0, 100);
+      });
+    }
     setFormMessage({ type: 'success', text: result.message ?? 'Claim submitted for verification.' });
+  };
+
+  const withdrawClaim = async (claim: BusinessClaim) => {
+    if (
+      !featureFlags.businessClaims ||
+      claim.state !== 'pending' ||
+      withdrawingClaimId ||
+      submitting ||
+      !expectedUserId ||
+      auth.status !== 'authenticated' ||
+      auth.account?.id !== expectedUserId ||
+      !secureSession
+    ) {
+      return;
+    }
+    const accountAtStart = expectedUserId;
+    const mutationGeneration = claimMutationGeneration.current + 1;
+    claimMutationGeneration.current = mutationGeneration;
+    setWithdrawingClaimId(claim.id);
+    setClaimActionError(null);
+    let confirmed = false;
+    try {
+      confirmed = await confirmAction({
+        title: 'Withdraw this ownership claim?',
+        message: 'This stops the pending review. You can submit a new claim later.',
+        confirmLabel: 'Withdraw claim',
+        destructive: true,
+      });
+    } catch {
+      confirmed = false;
+    }
+    if (!mounted.current || claimMutationGeneration.current !== mutationGeneration) {
+      return;
+    }
+    if (
+      !confirmed ||
+      expectedUserId !== accountAtStart ||
+      auth.status !== 'authenticated' ||
+      auth.account?.id !== accountAtStart ||
+      !secureSession
+    ) {
+      setWithdrawingClaimId(null);
+      if (!confirmed) return;
+      setClaimActionError('Your secure account session changed. Refresh and try again.');
+      return;
+    }
+    let result: Awaited<ReturnType<typeof withdrawBusinessClaim>>;
+    try {
+      result = await withdrawBusinessClaim(claim.id, accountAtStart);
+    } catch {
+      result = {
+        ok: false,
+        code: 'UNKNOWN',
+        reason: 'This ownership claim could not be withdrawn. Try again.',
+      };
+    }
+    if (
+      !mounted.current ||
+      claimMutationGeneration.current !== mutationGeneration ||
+      expectedUserId !== accountAtStart ||
+      auth.status !== 'authenticated' ||
+      auth.account?.id !== accountAtStart
+    ) {
+      return;
+    }
+    setWithdrawingClaimId(null);
+    if (!result.ok) {
+      setClaimActionError(result.reason);
+      return;
+    }
+    setClaims((current) =>
+      current.map((item) =>
+        item.id === claim.id ? { ...item, state: result.data?.state ?? 'withdrawn' } : item
+      )
+    );
   };
 
   return (
@@ -674,7 +947,10 @@ function BusinessOnboardingContent({
                     accessibilityRole="radio"
                     aria-checked={!claimExisting}
                     accessibilityState={{ checked: !claimExisting }}
-                    onPress={() => setClaimExisting(false)}
+                    onPress={() => {
+                      setClaimExisting(false);
+                      setSelectedClaimId(null);
+                    }}
                     style={[styles.modeOption, !claimExisting && styles.modeOptionActive]}>
                     <Text style={[styles.modeText, !claimExisting && styles.modeTextActive]}>Add new</Text>
                   </Pressable>
@@ -697,6 +973,104 @@ function BusinessOnboardingContent({
                     </Text>
                   </Pressable>
                 </View>
+
+                {featureFlags.businessClaims ? (
+                  <View accessibilityLabel="Your ownership claims" style={styles.claimsPanel}>
+                    <View style={styles.claimsHeader}>
+                      <View style={styles.claimsIcon}>
+                        <FontAwesome6 color={palette.accentDeep} name="key" size={14} />
+                      </View>
+                      <View style={styles.claimsHeaderCopy}>
+                        <Text style={styles.claimsTitle}>Your ownership claims</Text>
+                        <Text style={styles.claimsSubtitle}>
+                          Private account status. Verification evidence and reviewer details are never shown here.
+                        </Text>
+                      </View>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                          claimsError ? 'Retry loading ownership claims' : 'Refresh ownership claims'
+                        }
+                        accessibilityState={{ disabled: claimsLoading }}
+                        disabled={claimsLoading}
+                        hitSlop={4}
+                        onPress={refreshClaims}
+                        style={styles.claimRefreshButton}>
+                        {claimsLoading ? (
+                          <ActivityIndicator color={palette.accentDeep} size="small" />
+                        ) : (
+                          <FontAwesome6 color={palette.accentDeep} name="arrows-rotate" size={11} />
+                        )}
+                        <Text style={styles.claimRefreshText}>{claimsError ? 'Retry' : 'Refresh'}</Text>
+                      </Pressable>
+                    </View>
+
+                    {claimsLoading ? (
+                      <View accessibilityLabel="Loading your ownership claims" style={styles.claimsLoading}>
+                        <ActivityIndicator color={palette.accentDeep} size="small" />
+                        <Text style={styles.claimsEmpty}>Loading claims…</Text>
+                      </View>
+                    ) : claimsError ? (
+                      <View style={styles.claimsErrorRow}>
+                        <Text accessibilityRole="alert" style={styles.claimsErrorText}>
+                          {claimsError}
+                        </Text>
+                      </View>
+                    ) : claims.length ? (
+                      <View style={styles.claimsList}>
+                        {claims.map((claim) => {
+                          const status = claimStateMeta[claim.state];
+                          const businessLabel = claim.businessName ?? 'Spottr listing';
+                          const canWithdraw = claim.state === 'pending';
+                          const withdrawing = withdrawingClaimId === claim.id;
+                          return (
+                            <View key={claim.id} style={styles.claimStatusRow}>
+                              <View style={[styles.claimStatusIcon, { backgroundColor: status.background }]}>
+                                <FontAwesome6 color={status.color} name={status.icon} size={12} />
+                              </View>
+                              <View style={styles.claimStatusCopy}>
+                                <Text numberOfLines={1} style={styles.claimStatusName}>
+                                  {businessLabel}
+                                </Text>
+                                <Text style={styles.claimStatusMeta}>
+                                  {claimMethodLabels[claim.method]} · {formatClaimDate(claim.createdAt)}
+                                </Text>
+                              </View>
+                              <View style={styles.claimStatusSide}>
+                                <View style={[styles.claimStatePill, { backgroundColor: status.background }]}>
+                                  <Text style={[styles.claimStateText, { color: status.color }]}>{status.label}</Text>
+                                </View>
+                                {canWithdraw ? (
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Withdraw pending claim for ${businessLabel}`}
+                                    accessibilityState={{ disabled: Boolean(withdrawingClaimId) }}
+                                    disabled={Boolean(withdrawingClaimId)}
+                                    hitSlop={4}
+                                    onPress={() => void withdrawClaim(claim)}
+                                    style={styles.claimWithdrawButton}>
+                                    {withdrawing ? (
+                                      <ActivityIndicator color={palette.accentDeep} size="small" />
+                                    ) : (
+                                      <Text style={styles.claimWithdrawText}>Withdraw</Text>
+                                    )}
+                                  </Pressable>
+                                ) : null}
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ) : (
+                      <Text style={styles.claimsEmpty}>No ownership claims yet.</Text>
+                    )}
+                    {claimActionError ? (
+                      <Text accessibilityRole="alert" style={styles.claimActionError}>
+                        {claimActionError}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
 
                 {!featureFlags.businessClaims ? (
                   <View style={styles.claimUnavailable}>
@@ -836,7 +1210,7 @@ function BusinessOnboardingContent({
                 ) : selectedClaimId ? (
                   <View style={styles.claimMethodPanel}>
                     <Text style={styles.label}>Verification method</Text>
-                    <Text style={styles.fieldDetail}>
+                    <Text style={styles.claimMethodDetail}>
                       This request is checked against contact information already associated with the listing. No
                       challenge is sent until the production verification service is connected.
                     </Text>
@@ -1296,6 +1670,150 @@ const styles = StyleSheet.create({
   modeTextActive: {
     color: palette.ink,
   },
+  claimsPanel: {
+    backgroundColor: palette.bg,
+    borderColor: palette.line,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  claimsHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  claimsIcon: {
+    alignItems: 'center',
+    backgroundColor: palette.accentSoft,
+    borderRadius: 999,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  claimsHeaderCopy: {
+    flex: 1,
+    gap: 3,
+    minWidth: 150,
+  },
+  claimsTitle: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  claimsSubtitle: {
+    color: palette.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  claimRefreshButton: {
+    alignItems: 'center',
+    borderColor: palette.accentDeep,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+  },
+  claimRefreshText: {
+    color: palette.accentDeep,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  claimsLoading: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 32,
+  },
+  claimsEmpty: {
+    color: palette.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  claimsErrorRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  claimsErrorText: {
+    color: palette.accentDeep,
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  claimsList: {
+    gap: spacing.sm,
+  },
+  claimStatusRow: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.surface,
+    borderColor: palette.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  claimStatusIcon: {
+    alignItems: 'center',
+    borderRadius: 999,
+    height: 28,
+    justifyContent: 'center',
+    width: 28,
+  },
+  claimStatusCopy: {
+    flexBasis: 140,
+    flex: 1,
+    gap: 3,
+    minWidth: 0,
+  },
+  claimStatusName: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  claimStatusMeta: {
+    color: palette.muted,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  claimStatusSide: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    marginLeft: 'auto',
+  },
+  claimStatePill: {
+    borderRadius: radii.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  claimStateText: {
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  claimWithdrawButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 8,
+  },
+  claimWithdrawText: {
+    color: palette.accentDeep,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  claimActionError: {
+    color: palette.accentDeep,
+    fontSize: 12,
+    lineHeight: 18,
+  },
   claimUnavailable: {
     alignItems: 'flex-start',
     backgroundColor: palette.accentSoft,
@@ -1315,8 +1833,8 @@ const styles = StyleSheet.create({
   },
   claimUnavailableText: {
     color: palette.muted,
-    fontSize: 10,
-    lineHeight: 16,
+    fontSize: 12,
+    lineHeight: 18,
   },
   field: {
     gap: 8,
@@ -1377,6 +1895,11 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     gap: spacing.sm,
     padding: spacing.md,
+  },
+  claimMethodDetail: {
+    color: palette.muted,
+    fontSize: 11,
+    lineHeight: 17,
   },
   claimMethod: {
     alignItems: 'center',

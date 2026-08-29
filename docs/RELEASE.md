@@ -331,6 +331,17 @@ existing environment, export and investigate every previously approved claim
 and the owner memberships it created; do not automatically revoke a legitimate
 owner or accept a historical approval as proof.
 
+Migrations `20261002000000_business_claim_approval_serialization.sql` and
+`20261003000000_business_claim_recovery_boundary.sql` provide business-row
+approval serialization, terminal-decision idempotency, one-approved-claim and
+one-live-claim invariants, an account-only safe status projection, and
+business-before-claim withdrawal locking. They do not make claims launchable.
+Provider account/source, permit, and jurisdiction eligibility is still a
+point-in-time predicate; keep claims disabled until claim review and provider
+ingestion/lifecycle share a tested lock or signed-epoch protocol. A legally
+approved, claim-specific evidence retention/hold/purge policy and worker must
+also exist before document evidence is accepted.
+
 ### Home kitchens
 
 Keep `EXPO_PUBLIC_HOME_KITCHENS_ENABLED=false` until each enabled jurisdiction

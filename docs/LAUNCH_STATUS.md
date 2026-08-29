@@ -10,11 +10,13 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 ## Verified release-candidate evidence
 
 - Source and web publication commit
-  `a5bd8c90fc3ec1177f92101636353d18c6ae3b8a` passed the GitHub
-  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33239235434) and
-  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33239235413) workflows.
-  The Quality run produced the commit-bound Sites artifact and passed both the
-  full PostgreSQL schema/migration/runtime replay and the independent shadow
+  `f5ca34d875b443f0f6bed00a5af1275344efca9e` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33252508105) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33252508037) workflows.
+  A second, manually dispatched
+  [Quality run](https://github.com/lilwoii/woiapp/actions/runs/33252854791)
+  produced the commit-bound Sites artifact after passing both the full
+  PostgreSQL schema/migration/runtime replay and the independent shadow
   migration-order replay.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
@@ -49,8 +51,8 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   marker until local cleanup is proven. Dispatch and receipt Edge contracts use
   fixed Expo endpoints, generic lock-screen copy, bounded provider batches,
   versioned token keys, and independent fail-closed worker/provider switches.
-- Sites version 47 was built, saved, and privately deployed from exact verified
-  web commit `a5bd8c90fc3ec1177f92101636353d18c6ae3b8a` on 2026-08-29 UTC at
+- Sites version 49 was built, saved, and privately deployed from exact verified
+  web commit `f5ca34d875b443f0f6bed00a5af1275344efca9e` on 2026-08-29 UTC at
   `https://noshatlas-live.lilwoi.chatgpt.site`. The access policy was rechecked
   immediately before deployment: the caller is the owner, custom access allows
   exactly one account user, and no workspace groups, tenant groups, or external

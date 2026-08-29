@@ -13,6 +13,10 @@ import {
 import {
   ActionResult,
   BusinessCategory,
+  BusinessClaim,
+  BusinessClaimMethod,
+  BusinessClaimReceipt,
+  BusinessClaimState,
   BusinessUpdate,
   MenuSection,
   OwnerUpdateInput,
@@ -271,6 +275,19 @@ const paymentLabels: Record<string, PaymentMethod> = {
 const paymentKeys = Object.fromEntries(
   Object.entries(paymentLabels).map(([key, label]) => [label, key])
 ) as Record<PaymentMethod, string>;
+
+const businessClaimStates: BusinessClaimState[] = [
+  'pending',
+  'approved',
+  'rejected',
+  'withdrawn',
+];
+const businessClaimMethods: BusinessClaimMethod[] = [
+  'listed_phone',
+  'domain_email',
+  'document',
+  'permit',
+];
 
 const weekdayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -2207,11 +2224,135 @@ export async function createBusinessDraft(
   }
 }
 
+function mapBusinessClaim(value: unknown): BusinessClaim | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Row;
+  const id = stringValue(row.id);
+  const businessId = stringValue(row.business_id);
+  const businessName = stringValue(row.business_name).trim().slice(0, 160) || null;
+  const method = stringValue(row.method) as BusinessClaimMethod;
+  const state = stringValue(row.state) as BusinessClaimState;
+  const createdAt = stringValue(row.created_at);
+  if (
+    !uuidPattern.test(id) ||
+    !uuidPattern.test(businessId) ||
+    !businessClaimMethods.includes(method) ||
+    !businessClaimStates.includes(state) ||
+    !createdAt ||
+    !Number.isFinite(Date.parse(createdAt))
+  ) {
+    return null;
+  }
+  return {
+    id,
+    businessId,
+    businessName,
+    method,
+    state,
+    createdAt,
+  };
+}
+
+export function parseBusinessClaimReceipt(value: unknown): BusinessClaimReceipt | null {
+  const candidate = Array.isArray(value) ? (value.length === 1 ? value[0] : null) : value;
+  if (!candidate || typeof candidate !== 'object') return null;
+  const row = candidate as Row;
+  const claimId = stringValue(row.claim_id);
+  const rawState = stringValue(row.state);
+  if (
+    !uuidPattern.test(claimId) ||
+    !businessClaimStates.includes(rawState as BusinessClaimState)
+  ) return null;
+  return {
+    claimId,
+    state: rawState as BusinessClaimState,
+  };
+}
+
+function parseSubmittedClaimId(value: unknown): string | null {
+  const candidate = Array.isArray(value) ? (value.length === 1 ? value[0] : null) : value;
+  if (typeof candidate === 'string') return uuidPattern.test(candidate) ? candidate : null;
+  if (!candidate || typeof candidate !== 'object') return null;
+  const claimId = stringValue((candidate as Row).claim_id);
+  return uuidPattern.test(claimId) ? claimId : null;
+}
+
+function claimsUnavailable<T = undefined>(): ActionResult<T> {
+  return {
+    ok: false,
+    code: 'FORBIDDEN',
+    reason: 'Ownership claims are unavailable until secure verification is connected.',
+  };
+}
+
+export async function fetchMyBusinessClaims(
+  expectedUserId: string,
+): Promise<ActionResult<BusinessClaim[]>> {
+  if (!featureFlags.businessClaims) return claimsUnavailable();
+  if (!supabase) return configurationRequired();
+  if (!uuidPattern.test(expectedUserId)) return accountChanged();
+  const user = await authenticatedUserId(expectedUserId);
+  if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return accountChanged();
+
+  try {
+    const { data, error } = await client.rpc('list_my_business_claims', {
+      target_claim_id: null,
+      result_limit: 100,
+    });
+    if (error) throw error;
+    if (!Array.isArray(data)) throw new Error('INVALID_BUSINESS_CLAIMS_RESPONSE');
+    const claims = data.map((entry) => mapBusinessClaim(entry));
+    if (claims.some((claim) => !claim)) throw new Error('INVALID_BUSINESS_CLAIMS_RESPONSE');
+
+    return {
+      ok: true,
+      data: claims as BusinessClaim[],
+    };
+  } catch (error) {
+    return toActionError(error, 'Your ownership claims could not be loaded.');
+  }
+}
+
+export async function withdrawBusinessClaim(
+  claimId: string,
+  expectedUserId: string,
+): Promise<ActionResult<BusinessClaimReceipt>> {
+  if (!featureFlags.businessClaims) return claimsUnavailable();
+  if (!supabase) return configurationRequired();
+  if (!uuidPattern.test(claimId) || !uuidPattern.test(expectedUserId)) {
+    return { ok: false, code: 'INVALID', reason: 'This ownership claim is invalid.' };
+  }
+  const user = await authenticatedUserId(expectedUserId);
+  if (!user.ok) return user;
+  const client = await marketplaceMutationClient(expectedUserId);
+  if (!client) return accountChanged();
+
+  try {
+    const { data, error } = await client.rpc('withdraw_own_business_claim', {
+      target_claim_id: claimId,
+    });
+    if (error) throw error;
+    const receipt = parseBusinessClaimReceipt(data);
+    if (!receipt || receipt.claimId !== claimId || receipt.state !== 'withdrawn') {
+      throw new Error('INVALID_CLAIM_WITHDRAWAL_RECEIPT');
+    }
+    return {
+      ok: true,
+      data: receipt,
+      message: 'Ownership claim withdrawn.',
+    };
+  } catch (error) {
+    return toActionError(error, 'This ownership claim could not be withdrawn.');
+  }
+}
+
 export async function submitBusinessClaim(
   businessId: string,
-  method: 'listed_phone' | 'domain_email' | 'document' | 'permit',
+  method: BusinessClaimMethod,
   expectedUserId: string,
-): Promise<ActionResult> {
+): Promise<ActionResult<BusinessClaimReceipt>> {
   if (!featureFlags.businessClaims) {
     return {
       ok: false,
@@ -2220,23 +2361,57 @@ export async function submitBusinessClaim(
     };
   }
   if (!supabase) return configurationRequired();
+  if (!uuidPattern.test(businessId) || !businessClaimMethods.includes(method)) {
+    return { ok: false, code: 'INVALID', reason: 'This ownership claim is invalid.' };
+  }
   const user = await authenticatedUserId(expectedUserId);
   if (!user.ok) return user;
   const client = await marketplaceMutationClient(expectedUserId);
   if (!client) return accountChanged();
 
+  let submissionMayExist = false;
   try {
-    const { error } = await client.rpc('submit_business_claim', {
+    const { data, error } = await client.rpc('submit_business_claim', {
       target_business_id: businessId,
       claim_method: method,
       evidence_private_path: null,
     });
     if (error) throw error;
+    submissionMayExist = true;
+    const claimId = parseSubmittedClaimId(data);
+    if (!claimId) throw new Error('INVALID_CLAIM_RECEIPT');
+    const verified = await client.rpc('list_my_business_claims', {
+      target_claim_id: claimId,
+      result_limit: 1,
+    });
+    if (verified.error || !Array.isArray(verified.data) || verified.data.length !== 1) {
+      throw verified.error ?? new Error('INVALID_CLAIM_RECEIPT');
+    }
+    const verifiedClaim = mapBusinessClaim(verified.data[0]);
+    if (
+      !verifiedClaim ||
+      verifiedClaim.id !== claimId ||
+      verifiedClaim.businessId !== businessId ||
+      verifiedClaim.method !== method ||
+      verifiedClaim.state !== 'pending'
+    ) {
+      throw new Error('INVALID_CLAIM_RECEIPT');
+    }
+    const receipt: BusinessClaimReceipt = { claimId, state: 'pending' };
     return {
       ok: true,
+      data: receipt,
       message: 'Claim submitted. Ownership verification is now pending.',
     };
   } catch (error) {
+    if (submissionMayExist) {
+      return {
+        ok: false,
+        code: 'UNKNOWN',
+        reason:
+          'Your claim may have been received. Refresh the ownership claims list before trying again.',
+      };
+    }
     return toActionError(error, 'The business claim could not be submitted.');
   }
 }

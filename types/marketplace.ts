@@ -185,3 +185,30 @@ export type ActionResult<T = undefined> =
         | 'RATE_LIMITED'
         | 'UNKNOWN';
     };
+
+export type BusinessClaimState = 'pending' | 'approved' | 'rejected' | 'withdrawn';
+
+export type BusinessClaimMethod =
+  | 'listed_phone'
+  | 'domain_email'
+  | 'document'
+  | 'permit';
+
+/**
+ * The account-facing claim projection intentionally contains no evidence path
+ * or reviewer identity. Those fields are private operational data and never
+ * belong in a client response.
+ */
+export type BusinessClaim = {
+  id: string;
+  businessId: string;
+  businessName: string | null;
+  method: BusinessClaimMethod;
+  state: BusinessClaimState;
+  createdAt: string;
+};
+
+export type BusinessClaimReceipt = {
+  claimId: string;
+  state: BusinessClaimState;
+};

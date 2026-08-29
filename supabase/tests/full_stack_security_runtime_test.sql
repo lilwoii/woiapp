@@ -2119,6 +2119,27 @@ begin
     or not pg_catalog.has_function_privilege(
       'authenticated', 'public.submit_business_claim(uuid,text,text)', 'execute'
     )
+    or pg_catalog.has_function_privilege(
+      'anon', 'public.review_business_claim(uuid,text,text)', 'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'service_role', 'public.review_business_claim(uuid,text,text)', 'execute'
+    )
+    or not pg_catalog.has_function_privilege(
+      'authenticated', 'public.review_business_claim(uuid,text,text)', 'execute'
+    )
+    or pg_catalog.pg_get_functiondef(
+      'public.review_business_claim(uuid,text,text)'::regprocedure
+    ) not like '%if decision is null%'
+    or pg_catalog.pg_get_functiondef(
+      'public.review_business_claim(uuid,text,text)'::regprocedure
+    ) not like '%for update of b%'
+    or pg_catalog.pg_get_functiondef(
+      'public.review_business_claim(uuid,text,text)'::regprocedure
+    ) not like '%CLAIM_ALREADY_DECIDED%'
+    or pg_catalog.pg_get_functiondef(
+      'public.review_business_claim(uuid,text,text)'::regprocedure
+    ) not like '%CLAIMANT_ALREADY_BUSINESS_MEMBER%'
     or not exists (
       select 1
       from pg_catalog.pg_trigger trigger_row
@@ -2132,6 +2153,103 @@ begin
     or pg_catalog.pg_get_functiondef(
       'private.require_business_claim_verification_receipt()'::regprocedure
     ) not like '%CLAIM_VERIFICATION_RECEIPT_REQUIRED%'
+    or pg_catalog.has_table_privilege(
+      'anon', 'public.business_claims', 'select'
+    )
+    or pg_catalog.has_table_privilege(
+      'authenticated', 'public.business_claims', 'select'
+    )
+    or not pg_catalog.has_table_privilege(
+      'service_role', 'public.business_claims', 'select'
+    )
+    or pg_catalog.has_function_privilege(
+      'anon', 'public.list_my_business_claims(uuid,integer)', 'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'service_role', 'public.list_my_business_claims(uuid,integer)', 'execute'
+    )
+    or not pg_catalog.has_function_privilege(
+      'authenticated', 'public.list_my_business_claims(uuid,integer)', 'execute'
+    )
+    or pg_catalog.pg_get_functiondef(
+      'public.list_my_business_claims(uuid,integer)'::regprocedure
+    ) not like '%private.require_aal2%'
+    or pg_catalog.pg_get_functiondef(
+      'public.list_my_business_claims(uuid,integer)'::regprocedure
+    ) not like '%private.is_active_user(actor)%'
+    or pg_catalog.pg_get_functiondef(
+      'public.list_my_business_claims(uuid,integer)'::regprocedure
+    ) like '%evidence_private_path%'
+    or pg_catalog.pg_get_functiondef(
+      'public.list_my_business_claims(uuid,integer)'::regprocedure
+    ) like '%reviewed_by%'
+    or pg_catalog.has_function_privilege(
+      'anon', 'public.withdraw_own_business_claim(uuid)', 'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'service_role', 'public.withdraw_own_business_claim(uuid)', 'execute'
+    )
+    or not pg_catalog.has_function_privilege(
+      'authenticated', 'public.withdraw_own_business_claim(uuid)', 'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'authenticated', 'public.withdraw_business_claim(uuid)', 'execute'
+    )
+    or pg_catalog.pg_get_functiondef(
+      'public.withdraw_business_claim(uuid)'::regprocedure
+    ) not like '%withdraw_own_business_claim%'
+    or pg_catalog.strpos(
+      pg_catalog.pg_get_functiondef(
+        'public.withdraw_own_business_claim(uuid)'::regprocedure
+      ),
+      'from public.businesses business'
+    ) = 0
+    or pg_catalog.strpos(
+      pg_catalog.pg_get_functiondef(
+        'public.withdraw_own_business_claim(uuid)'::regprocedure
+      ),
+      'select claim.state'
+    ) = 0
+    or pg_catalog.strpos(
+      pg_catalog.pg_get_functiondef(
+        'public.withdraw_own_business_claim(uuid)'::regprocedure
+      ),
+      'from public.businesses business'
+    ) >= pg_catalog.strpos(
+      pg_catalog.pg_get_functiondef(
+        'public.withdraw_own_business_claim(uuid)'::regprocedure
+      ),
+      'select claim.state'
+    )
+    or pg_catalog.pg_get_functiondef(
+      'public.withdraw_own_business_claim(uuid)'::regprocedure
+    ) not like '%business.claim_withdrawn%'
+    or exists (
+      select 1
+      from pg_catalog.pg_constraint constraint_row
+      where constraint_row.conrelid = 'public.business_claims'::regclass
+        and constraint_row.conname = 'business_claims_business_id_claimant_id_state_key'
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_index index_row
+      join pg_catalog.pg_class index_class on index_class.oid = index_row.indexrelid
+      where index_row.indrelid = 'public.business_claims'::regclass
+        and index_class.relname = 'business_claims_one_pending_per_claimant_business_idx'
+        and index_row.indisunique
+        and pg_catalog.pg_get_indexdef(index_row.indexrelid) like '%(business_id, claimant_id)%'
+        and pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid) like '%state = ''pending''%'
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_index index_row
+      join pg_catalog.pg_class index_class on index_class.oid = index_row.indexrelid
+      where index_row.indrelid = 'public.business_claims'::regclass
+        and index_class.relname = 'business_claims_one_approved_per_business_idx'
+        and index_row.indisunique
+        and pg_catalog.pg_get_indexdef(index_row.indexrelid) like '%(business_id)%'
+        and pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid) like '%state = ''approved''%'
+    )
   then
     raise exception 'Business claim authority guard was weakened after migrations';
   end if;
