@@ -69,6 +69,9 @@ type SignUpInput = {
 type AuthContextValue = {
   account: AccountSummary | null;
   status: AuthStatus;
+  sessionEpoch: number;
+  sessionHydrating: boolean;
+  sessionReady: boolean;
   isConfigured: boolean;
   isBusy: boolean;
   recoveryReady: boolean;
@@ -177,6 +180,23 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const committedSession = useRef<CommittedAuthSession | null>(null);
   const rejectedNativeIdentity = useRef<string | null>(null);
   const sessionHydration = useMemo(() => createSessionHydrationGuard(), []);
+  const [sessionEpoch, setSessionEpoch] = useState(
+    () => sessionHydration.current().epoch
+  );
+  const [sessionHydrating, setSessionHydrating] = useState(isSupabaseConfigured);
+  const [sessionReady, setSessionReady] = useState(!isSupabaseConfigured);
+  const publishSessionHydration = useCallback((token: SessionHydrationToken) => {
+    setSessionEpoch(token.epoch);
+    setSessionHydrating(true);
+    setSessionReady(false);
+    return token;
+  }, []);
+  const finishSessionHydration = useCallback((token: SessionHydrationToken) => {
+    if (!mounted.current || !sessionHydration.isCurrent(token)) return false;
+    setSessionHydrating(false);
+    setSessionReady(true);
+    return true;
+  }, [sessionHydration]);
 
   const failClosedSessionReconciliation = useCallback(async (
     reason: string,
@@ -187,7 +207,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     if (expectedToken && expectedUserId !== undefined && expectedToken.userId !== expectedUserId) {
       return false;
     }
-    const failureToken = sessionHydration.begin(null);
+    const failureToken = publishSessionHydration(sessionHydration.begin(null));
     committedSession.current = null;
     deletionIdempotencyKey.current = null;
     recoveryIntentUsers.current.clear();
@@ -200,7 +220,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setSecurityStatus('error');
     setMessage(reason);
     const client = supabase;
-    if (!client) return true;
+    if (!client) {
+      finishSessionHydration(failureToken);
+      return true;
+    }
     client.realtime.disconnect();
     await Promise.all([
       resetRealtimeAuthToAnonymous().catch(() => undefined),
@@ -208,8 +231,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
     ]);
     if (!mounted.current || !sessionHydration.isCurrent(failureToken)) return true;
     client.realtime.disconnect();
+    finishSessionHydration(failureToken);
     return true;
-  }, [sessionHydration]);
+  }, [finishSessionHydration, publishSessionHydration, sessionHydration]);
 
   const hydrateSession = useCallback(async (
     session: Session | null,
@@ -218,7 +242,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const targetUserId = session?.user?.id ?? null;
     const identityChanged =
       reservation?.identityChanged ?? sessionHydration.current().userId !== targetUserId;
-    const hydration = reservation?.token ?? sessionHydration.begin(targetUserId);
+    const hydration = reservation?.token ?? publishSessionHydration(sessionHydration.begin(targetUserId));
     if (
       hydration.userId !== targetUserId ||
       !mounted.current ||
@@ -245,6 +269,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     if (!session?.user) {
       setStatus('anonymous');
       setSecurityStatus('ready');
+      finishSessionHydration(hydration);
       return;
     }
     if (identityChanged) {
@@ -258,6 +283,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (!mounted.current || !sessionHydration.isCurrent(hydration)) return;
       setAccount(fallback);
       setStatus('authenticated');
+      finishSessionHydration(hydration);
       return;
     }
 
@@ -284,6 +310,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setAssuranceLevel(null);
       setSecurityStatus('error');
       setStatus('authenticated');
+      finishSessionHydration(hydration);
       return;
     }
 
@@ -306,7 +333,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setAssuranceLevel(assuranceResult.data?.currentLevel ?? null);
     setSecurityStatus(securityFailed ? 'error' : 'ready');
     setStatus('authenticated');
-  }, [sessionHydration]);
+    finishSessionHydration(hydration);
+  }, [finishSessionHydration, publishSessionHydration, sessionHydration]);
 
   const reconcileSessionAfterRevocation = useCallback(async (
     expectedUserId: string
@@ -392,7 +420,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         const replacementUserId = activeSession.user.id;
         const reservation: SessionHydrationReservation = {
           identityChanged: sessionHydration.current().userId !== replacementUserId,
-          token: sessionHydration.begin(replacementUserId),
+          token: publishSessionHydration(sessionHydration.begin(replacementUserId)),
         };
         try {
           await client.realtime.setAuth(activeSession.access_token);
@@ -437,11 +465,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
     if (finalResult.token.userId !== expectedUserId) return false;
     const reservation: SessionHydrationReservation = {
       identityChanged: sessionHydration.current().userId !== null,
-      token: sessionHydration.begin(null),
+      token: publishSessionHydration(sessionHydration.begin(null)),
     };
     await hydrateSession(null, reservation);
     return true;
-  }, [failClosedSessionReconciliation, hydrateSession, sessionHydration]);
+  }, [failClosedSessionReconciliation, hydrateSession, publishSessionHydration, sessionHydration]);
 
   const refreshSecurity = useCallback(async (): Promise<ActionResult> => {
     const client = supabase;
@@ -529,8 +557,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
       };
     }
 
-    const restoreRequest = sessionHydration.advance();
+    // Publish the initial restore transition synchronously so viewer-scoped
+    // routes invalidate before the asynchronous session read settles.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    const restoreRequest = publishSessionHydration(sessionHydration.advance());
     const initialRestoreBarrier = createInitialAuthRestoreBarrier();
+    let initialRestoreOutcome: boolean | null = null;
     void (async () => {
       let restoreSucceeded = false;
       let activeRestoreRequest = restoreRequest;
@@ -571,7 +603,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
           if (!mounted.current || !sessionHydration.isCurrent(restoreRequest)) return;
           const anonymousReservation: SessionHydrationReservation = {
             identityChanged: sessionHydration.current().userId !== null,
-            token: sessionHydration.begin(null),
+            token: publishSessionHydration(sessionHydration.begin(null)),
           };
           activeRestoreRequest = anonymousReservation.token;
           await hydrateSession(null, anonymousReservation);
@@ -586,7 +618,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         const restoredUserId = restoredSession?.user.id ?? null;
         const restoredReservation: SessionHydrationReservation = {
           identityChanged: sessionHydration.current().userId !== restoredUserId,
-          token: sessionHydration.begin(restoredUserId),
+          token: publishSessionHydration(sessionHydration.begin(restoredUserId)),
         };
         activeRestoreRequest = restoredReservation.token;
         await hydrateSession(restoredSession, restoredReservation);
@@ -598,18 +630,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
           activeRestoreRequest
         );
       } finally {
+        initialRestoreOutcome = restoreSucceeded;
         initialRestoreBarrier.settle(restoreSucceeded);
       }
     })();
 
-    const handleAuthStateChange = (event: AuthChangeEvent, session: Session | null) => {
-      const priorUserId = sessionHydration.current().userId;
-      const priorSession = committedSession.current;
+    const handleAuthStateChange = (
+      event: AuthChangeEvent,
+      session: Session | null,
+      authEventRequest: SessionHydrationToken,
+      priorUserId: string | null,
+      priorSession: CommittedAuthSession | null,
+    ) => {
       const recoveryHintUserId = session?.user?.id ?? null;
       if (event === 'PASSWORD_RECOVERY' && recoveryHintUserId) {
         recoveryIntentUsers.current.add(recoveryHintUserId);
       }
-      const authEventRequest = sessionHydration.advance();
       let realtimePreparation: Promise<void> | null = null;
 
       if (Platform.OS === 'web') {
@@ -753,7 +789,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
             );
             const reservation: SessionHydrationReservation = {
               identityChanged: sessionHydration.current().userId !== targetUserId,
-              token: sessionHydration.begin(targetUserId),
+              token: publishSessionHydration(sessionHydration.begin(targetUserId)),
             };
             activeRequest = reservation.token;
             if (reservation.identityChanged) {
@@ -788,7 +824,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const {
       data: { subscription },
     } = client.auth.onAuthStateChange((event, session) => {
-      void initialRestoreBarrier.ready.then((restoreSucceeded) => {
+      const processAuthEvent = (restoreSucceeded: boolean) => {
         if (
           !mounted.current ||
           !canProcessAuthEventAfterInitialRestore(
@@ -797,8 +833,26 @@ export function AuthProvider({ children }: PropsWithChildren) {
             authMutationGate.current()?.kind ?? null
           )
         ) return;
-        handleAuthStateChange(event, session);
-      });
+        const priorUserId = sessionHydration.current().userId;
+        const priorSession = committedSession.current;
+        // Startup callbacks must not invalidate the restore token. Once the
+        // barrier is settled, publish synchronously so an established account
+        // cannot issue viewer-scoped work under a replacement client token.
+        const authEventRequest = publishSessionHydration(sessionHydration.advance());
+        handleAuthStateChange(
+          event,
+          session,
+          authEventRequest,
+          priorUserId,
+          priorSession,
+        );
+      };
+
+      if (initialRestoreOutcome !== null) {
+        processAuthEvent(initialRestoreOutcome);
+        return;
+      }
+      void initialRestoreBarrier.ready.then(processAuthEvent);
     });
 
     const handleDeepLink = async ({ url }: { url: string }) => {
@@ -889,7 +943,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       subscription.unsubscribe();
       linkSubscription.remove();
     };
-  }, [failClosedSessionReconciliation, hydrateSession, sessionHydration]);
+  }, [failClosedSessionReconciliation, hydrateSession, publishSessionHydration, sessionHydration]);
 
   const checkUsername = useCallback(
     async (username: string): Promise<ActionResult<{ available: boolean }>> => {
@@ -1569,6 +1623,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
     () => ({
       account,
       status,
+      sessionEpoch,
+      sessionHydrating,
+      sessionReady,
       isConfigured: isSupabaseConfigured,
       isBusy,
       recoveryReady,
@@ -1604,6 +1661,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signUp,
       status,
       securityStatus,
+      sessionEpoch,
+      sessionHydrating,
+      sessionReady,
       updatePassword,
     ]
   );

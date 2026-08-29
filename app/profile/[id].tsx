@@ -1,7 +1,7 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Linking, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { FocusAwareScreen } from '@/components/focus-aware-screen';
@@ -17,29 +17,97 @@ import type { PublicProfile } from '@/types/social';
 
 export default function PublicProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  return <ScopedPublicProfile id={id} key={id ?? 'missing-profile'} />;
+  const auth = useAuth();
+  const accountId = auth.status === 'authenticated' ? auth.account?.id ?? null : null;
+  const profileScopeKey = `${auth.status}:${accountId ?? 'none'}:epoch-${auth.sessionEpoch}:hydrating-${auth.sessionHydrating}:ready-${auth.sessionReady}:${auth.securityStatus}:${auth.assuranceLevel ?? 'none'}:${auth.mfaEnrolled}`;
+  return (
+    <ScopedPublicProfile
+      id={id}
+      key={`${profileScopeKey}:profile:${id ?? 'missing-profile'}`}
+      scopeKey={profileScopeKey}
+    />
+  );
 }
 
-function ScopedPublicProfile({ id }: { id?: string }) {
+function ScopedPublicProfile({ id, scopeKey }: { id?: string; scopeKey: string }) {
   const auth = useAuth();
   const { managedPlaceIds } = useMarketplaceStore();
-  const [snapshot, setSnapshot] = useState<{ id: string; profile: PublicProfile } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<{
+    id: string;
+    profile: PublicProfile;
+    scopeKey: string;
+  } | null>(null);
+  const [error, setError] = useState<{
+    id: string;
+    message: string;
+    scopeKey: string;
+  } | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState<string | null>(null);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
-  const profile = id && snapshot?.id === id ? snapshot.profile : null;
+  const mounted = useRef(true);
+  const profileRequestGeneration = useRef(0);
+  const followGeneration = useRef(0);
+  const reviewGeneration = useRef(0);
+  const profile = id && snapshot?.id === id && snapshot.scopeKey === scopeKey
+    ? snapshot.profile
+    : null;
+  const currentError = error && error.id === id && error.scopeKey === scopeKey
+    ? error.message
+    : null;
+  const sessionAuthoritative = auth.sessionReady && !auth.sessionHydrating;
+
+  const isCurrentScope = useCallback((requestedId: string, requestedScopeKey: string) =>
+    mounted.current &&
+    id === requestedId &&
+    scopeKey === requestedScopeKey, [id, scopeKey]);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      profileRequestGeneration.current += 1;
+      followGeneration.current += 1;
+      reviewGeneration.current += 1;
+    };
+  }, []);
 
   useEffect(() => {
     let current = true;
-    if (!id) return () => { current = false; };
+    const generation = ++profileRequestGeneration.current;
+    const requestedScopeKey = scopeKey;
+
+    // The route key synchronously remounts this state for every viewer scope;
+    // the scope-tagged projection below also keeps any transitional snapshot
+    // hidden while the new public request is in flight.
+    followGeneration.current += 1;
+    reviewGeneration.current += 1;
+
+    if (!id || !sessionAuthoritative) return () => { current = false; };
+    const requestedId = id;
     void fetchPublicProfile(id).then((result) => {
-      if (!current) return;
-      if (result.ok && result.data) setSnapshot({ id, profile: result.data });
-      else setError(result.ok ? 'This profile is unavailable.' : result.reason);
+      if (
+        !current ||
+        !isCurrentScope(requestedId, requestedScopeKey) ||
+        profileRequestGeneration.current !== generation
+      ) return;
+      if (result.ok && result.data) {
+        setSnapshot({ id: requestedId, profile: result.data, scopeKey: requestedScopeKey });
+      } else {
+        setError({
+          id: requestedId,
+          message: result.ok ? 'This profile is unavailable.' : result.reason,
+          scopeKey: requestedScopeKey,
+        });
+      }
     });
-    return () => { current = false; };
-  }, [id]);
+    return () => {
+      current = false;
+      if (profileRequestGeneration.current === generation) {
+        profileRequestGeneration.current += 1;
+      }
+    };
+  }, [id, isCurrentScope, scopeKey, sessionAuthoritative]);
 
   useEffect(() => {
     if (typeof document === 'undefined' || !profile) return;
@@ -73,19 +141,27 @@ function ScopedPublicProfile({ id }: { id?: string }) {
 
   const toggleFollow = async () => {
     if (!profile || followBusy) return;
+    if (!sessionAuthoritative) return;
     if (auth.status !== 'authenticated' || !auth.account?.id) {
       router.push('/auth');
       return;
     }
+    const requestedId = profile.id;
+    const requestedScopeKey = scopeKey;
+    const generation = ++followGeneration.current;
     setFollowBusy(true);
     const next = !profile.followedByViewer;
-    const result = await setProfileFollow(profile.id, next, auth.account.id);
+    const result = await setProfileFollow(requestedId, next, auth.account.id);
+    if (
+      !isCurrentScope(requestedId, requestedScopeKey) ||
+      followGeneration.current !== generation
+    ) return;
     setFollowBusy(false);
     if (!result.ok) {
       showMessage('Follow unavailable', result.reason);
       return;
     }
-    setSnapshot((current) => current?.id === profile.id ? {
+    setSnapshot((current) => current?.id === requestedId && current.scopeKey === requestedScopeKey ? {
       ...current,
       profile: {
         ...current.profile,
@@ -97,6 +173,7 @@ function ScopedPublicProfile({ id }: { id?: string }) {
 
   const reactToReview = async (reviewId: string, reaction: -1 | 1) => {
     if (!profile || reviewBusy) return;
+    if (!sessionAuthoritative) return;
     if (auth.status !== 'authenticated' || !auth.account?.id) {
       router.push('/auth');
       return;
@@ -104,15 +181,22 @@ function ScopedPublicProfile({ id }: { id?: string }) {
     const review = profile.reviews.find((candidate) => candidate.id === reviewId);
     if (!review) return;
     const nextReaction = review.viewerReaction === reaction ? 0 : reaction;
+    const requestedId = profile.id;
+    const requestedScopeKey = scopeKey;
+    const generation = ++reviewGeneration.current;
     setReviewBusy(reviewId);
     const result = await setReviewReaction(reviewId, nextReaction, auth.account.id);
+    if (
+      !isCurrentScope(requestedId, requestedScopeKey) ||
+      reviewGeneration.current !== generation
+    ) return;
     setReviewBusy(null);
     if (!result.ok || !result.data) {
       showMessage('Reaction unavailable', result.ok ? 'Your reaction could not be saved.' : result.reason);
       return;
     }
     const reactionData = result.data;
-    setSnapshot((current) => current?.id === profile.id ? {
+    setSnapshot((current) => current?.id === requestedId && current.scopeKey === requestedScopeKey ? {
       ...current,
       profile: {
         ...current.profile,
@@ -129,37 +213,75 @@ function ScopedPublicProfile({ id }: { id?: string }) {
 
   const postComment = async (reviewId: string) => {
     if (!profile || reviewBusy) return;
+    if (!sessionAuthoritative) return;
     if (auth.status !== 'authenticated' || !auth.account?.id) {
       router.push('/auth');
       return;
     }
     const body = (commentDrafts[reviewId] ?? '').trim();
     if (!body) return;
+    const requestedId = profile.id;
+    const requestedScopeKey = scopeKey;
+    const generation = ++reviewGeneration.current;
     setReviewBusy(reviewId);
     const result = await addReviewProfileComment(reviewId, body, auth.account.id);
+    if (
+      !isCurrentScope(requestedId, requestedScopeKey) ||
+      reviewGeneration.current !== generation
+    ) return;
     if (!result.ok) {
       setReviewBusy(null);
       showMessage('Comment unavailable', result.reason);
       return;
     }
-    const refreshed = await fetchPublicProfile(profile.id);
+    const profileRequest = ++profileRequestGeneration.current;
+    const refreshed = await fetchPublicProfile(requestedId);
+    if (
+      !isCurrentScope(requestedId, requestedScopeKey) ||
+      reviewGeneration.current !== generation ||
+      profileRequestGeneration.current !== profileRequest
+    ) return;
     setReviewBusy(null);
     if (refreshed.ok && refreshed.data) {
-      setSnapshot({ id: profile.id, profile: refreshed.data });
+      const refreshedProfile = refreshed.data;
+      setSnapshot((current) => {
+        if (
+          !current ||
+          current.id !== requestedId ||
+          current.scopeKey !== requestedScopeKey
+        ) return current;
+        return {
+          id: requestedId,
+          scopeKey: requestedScopeKey,
+          profile: {
+            ...refreshedProfile,
+            followedByViewer: current.profile.followedByViewer,
+            followerCount: current.profile.followerCount,
+          },
+        };
+      });
       setCommentDrafts((current) => ({ ...current, [reviewId]: '' }));
     }
   };
 
   const removeComment = async (reviewId: string, commentId: string) => {
     if (!profile || reviewBusy || auth.status !== 'authenticated' || !auth.account?.id) return;
+    if (!sessionAuthoritative) return;
+    const requestedId = profile.id;
+    const requestedScopeKey = scopeKey;
+    const generation = ++reviewGeneration.current;
     setReviewBusy(reviewId);
     const result = await deleteReviewProfileComment(commentId, auth.account.id);
+    if (
+      !isCurrentScope(requestedId, requestedScopeKey) ||
+      reviewGeneration.current !== generation
+    ) return;
     setReviewBusy(null);
     if (!result.ok || !result.data) {
       showMessage('Delete unavailable', result.ok ? 'This comment was already removed.' : result.reason);
       return;
     }
-    setSnapshot((current) => current?.id === profile.id ? {
+    setSnapshot((current) => current?.id === requestedId && current.scopeKey === requestedScopeKey ? {
       ...current,
       profile: {
         ...current.profile,
@@ -184,7 +306,7 @@ function ScopedPublicProfile({ id }: { id?: string }) {
     }
   };
 
-  if (!profile && !error) {
+  if (!profile && !currentError) {
     return (
       <FocusAwareScreen>
         <View style={styles.centered}>
@@ -201,7 +323,7 @@ function ScopedPublicProfile({ id }: { id?: string }) {
         <View style={styles.centered}>
           <View style={styles.emptyIcon}><FontAwesome6 color={palette.accentDeep} name="user-shield" size={20} /></View>
           <Text accessibilityRole="header" style={styles.emptyTitle}>Profile unavailable</Text>
-          <Text style={styles.emptyBody}>{error}</Text>
+          <Text style={styles.emptyBody}>{currentError}</Text>
           <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backAction}><Text style={styles.backActionText}>Go back</Text></Pressable>
         </View>
       </FocusAwareScreen>
