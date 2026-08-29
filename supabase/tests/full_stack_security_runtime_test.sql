@@ -3395,6 +3395,16 @@ insert into public.home_kitchen_permits (
   now()
 );
 
+select public.create_media_stage_grant(
+  '10000000-0000-4000-8000-000000000001',
+  'quarantine/10000000-0000-4000-8000-000000000001/e2000000-0000-4000-8000-000000000001.jpg',
+  'business_logo',
+  'e1000000-0000-4000-8000-000000000001',
+  null,
+  'image/jpeg',
+  4096
+);
+
 insert into public.media_assets (
   id, owner_id, business_id, storage_path, mime_type, width, height,
   byte_size, sha256, source, license_note, quarantine_state,
@@ -3403,7 +3413,7 @@ insert into public.media_assets (
   'e2000000-0000-4000-8000-000000000001',
   '10000000-0000-4000-8000-000000000001',
   'e1000000-0000-4000-8000-000000000001',
-  'published/runtime/global-gate-kitchen-logo.jpg',
+  'quarantine/10000000-0000-4000-8000-000000000001/e2000000-0000-4000-8000-000000000001.jpg',
   'image/jpeg', 512, 512, 4096, repeat('e', 64), 'owner_upload',
   'Runtime global-gate fixture', 'clean',
   'published/runtime/global-gate-kitchen-logo-processed.jpg', now(), 'approved'
