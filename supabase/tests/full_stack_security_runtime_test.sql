@@ -3348,6 +3348,25 @@ $push_dispatch_service_wrapper_runtime$;
 -- fully eligible on jurisdiction, permit, publication, location, and chat
 -- state so a negative result proves the global gate rather than a missing
 -- prerequisite. The whole runtime file rolls back at the end.
+insert into auth.users (
+  id, aud, role, email, email_confirmed_at, raw_app_meta_data,
+  raw_user_meta_data, created_at, updated_at
+) values
+  (
+    'e9000000-0000-4000-8000-000000000001',
+    'authenticated', 'authenticated',
+    'runtime-home-merchant@spottr.invalid', now(), '{}',
+    '{"username":"runtime_home_merchant","display_name":"Runtime Home Merchant","terms_accepted":true}',
+    now(), now()
+  ),
+  (
+    'ea000000-0000-4000-8000-000000000001',
+    'authenticated', 'authenticated',
+    'runtime-home-customer@spottr.invalid', now(), '{}',
+    '{"username":"runtime_home_customer","display_name":"Runtime Home Customer","terms_accepted":true}',
+    now(), now()
+  );
+
 insert into public.jurisdictions (
   id, country_code, region_code, locality, home_kitchens_enabled,
   legal_reviewed_at, rules_url
@@ -3370,7 +3389,7 @@ insert into public.businesses (
   'America/Los_Angeles',
   'e0000000-0000-4000-8000-000000000001',
   'owner',
-  '10000000-0000-4000-8000-000000000001'
+  'e9000000-0000-4000-8000-000000000001'
 );
 
 insert into public.business_private_details (
@@ -3391,13 +3410,13 @@ insert into public.home_kitchen_permits (
   'Runtime Health Authority',
   current_date + 30,
   'verified',
-  '10000000-0000-4000-8000-000000000001',
+  'e9000000-0000-4000-8000-000000000001',
   now()
 );
 
 select public.create_media_stage_grant(
-  '10000000-0000-4000-8000-000000000001',
-  'quarantine/10000000-0000-4000-8000-000000000001/e2000000-0000-4000-8000-000000000001.jpg',
+  'e9000000-0000-4000-8000-000000000001',
+  'quarantine/e9000000-0000-4000-8000-000000000001/e2000000-0000-4000-8000-000000000001.jpg',
   'business_logo',
   'e1000000-0000-4000-8000-000000000001',
   null,
@@ -3411,9 +3430,9 @@ insert into public.media_assets (
   processed_storage_path, scan_completed_at, moderation
 ) values (
   'e2000000-0000-4000-8000-000000000001',
-  '10000000-0000-4000-8000-000000000001',
+  'e9000000-0000-4000-8000-000000000001',
   'e1000000-0000-4000-8000-000000000001',
-  'quarantine/10000000-0000-4000-8000-000000000001/e2000000-0000-4000-8000-000000000001.jpg',
+  'quarantine/e9000000-0000-4000-8000-000000000001/e2000000-0000-4000-8000-000000000001.jpg',
   'image/jpeg', 512, 512, 4096, repeat('e', 64), 'owner_upload',
   'Runtime global-gate fixture', 'clean',
   'published/runtime/global-gate-kitchen-logo-processed.jpg', now(), 'approved'
@@ -3481,7 +3500,7 @@ insert into public.business_members (
   business_id, user_id, role, status, accepted_at
 ) values (
   'e1000000-0000-4000-8000-000000000001',
-  '10000000-0000-4000-8000-000000000001',
+  'e9000000-0000-4000-8000-000000000001',
   'owner',
   'active',
   now()
@@ -3494,8 +3513,8 @@ insert into public.marketplace_conversations (
   'e6000000-0000-4000-8000-000000000001',
   'e6010000-0000-4000-8000-000000000001',
   'e1000000-0000-4000-8000-000000000001',
-  '60000000-0000-4000-8000-000000000006',
-  '10000000-0000-4000-8000-000000000001',
+  'ea000000-0000-4000-8000-000000000001',
+  'e9000000-0000-4000-8000-000000000001',
   'open',
   1,
   now()
@@ -3507,7 +3526,7 @@ insert into public.marketplace_messages (
   'e7000000-0000-4000-8000-000000000001',
   'e7010000-0000-4000-8000-000000000001',
   'e6000000-0000-4000-8000-000000000001',
-  '10000000-0000-4000-8000-000000000001',
+  'e9000000-0000-4000-8000-000000000001',
   1,
   'Runtime gate fixture message.'
 );
@@ -3528,13 +3547,13 @@ begin
     'e8000000-0000-4000-8000-000000000001',
     'e8010000-0000-4000-8000-000000000001',
     'e6000000-0000-4000-8000-000000000001',
-    '60000000-0000-4000-8000-000000000006',
+    'ea000000-0000-4000-8000-000000000001',
     fixture_now + interval '1 hour',
     fixture_now + interval '2 hours',
     null,
     'authorized',
     2,
-    '10000000-0000-4000-8000-000000000001',
+    'e9000000-0000-4000-8000-000000000001',
     fixture_now,
     'seller_residence',
     '2026-08-01',
@@ -3556,7 +3575,7 @@ begin
     '90001',
     34.05,
     -118.24,
-    '10000000-0000-4000-8000-000000000001',
+    'e9000000-0000-4000-8000-000000000001',
     fixture_now,
     fixture_now + interval '4 hours'
   );
@@ -3604,7 +3623,7 @@ $home_kitchen_global_gate_default_off$;
 set local role authenticated;
 select pg_catalog.set_config(
   'request.jwt.claims',
-  '{"sub":"60000000-0000-4000-8000-000000000006","role":"authenticated","aal":"aal1"}',
+  '{"sub":"ea000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal1"}',
   true
 );
 
@@ -3791,7 +3810,7 @@ $home_kitchen_global_gate_toggle$;
 set local role authenticated;
 select pg_catalog.set_config(
   'request.jwt.claims',
-  '{"sub":"60000000-0000-4000-8000-000000000006","role":"authenticated","aal":"aal1"}',
+  '{"sub":"ea000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal1"}',
   true
 );
 
