@@ -1,6 +1,6 @@
 # Spottr launch status
 
-Last verified: 2026-08-28 (UTC)
+Last verified: 2026-08-29 (UTC)
 
 Spottr is not yet authorized for a public launch. The application code and
 release automation have reached a strong release-candidate baseline, but the
@@ -9,8 +9,9 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 
 ## Verified release-candidate evidence
 
-- Source commit `1576e5e3b628736b90ddce9de721cc2c71586083` passed the GitHub Quality and
-  CodeQL workflows.
+- Source commit `6b249e6d5b203ea8146618d90b2316a3f9c0e736` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33223697878) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33223697864) workflows.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
   Edge contracts, Expo alignment and Doctor, iOS and Android exports,
@@ -26,8 +27,12 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   AAL2 gated, server priced, idempotent, review gated, and unable to activate or
   charge itself. A released budget reservation cannot later create a debit.
 - The push foundation's private tables, grants, consent/preference races,
-  bounded outbox/delivery leases, fanout cursor, and device-owner consistency
-  passed the full PostgreSQL migration and runtime replay.
+  bounded outbox/delivery leases, fanout cursor, device-owner consistency,
+  atomic provider handoff, delayed receipt checks, ambiguous-send handling,
+  and invalid-token retirement passed the full PostgreSQL migration and
+  runtime replay. Dispatch and receipt Edge contracts use fixed Expo endpoints,
+  generic lock-screen copy, bounded provider batches, versioned token keys, and
+  independent fail-closed worker/provider switches.
 - Sites version 45 was built from the exact verified commit and deployed to
   `https://noshatlas-live.lilwoi.chatgpt.site` with owner-only access.
   Anonymous requests return `401`, proving it is not publicly accessible.
@@ -79,9 +84,11 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   existing fail-closed feature gates until their runbooks have live evidence.
 - Push now has a private encrypted-device, explicit-consent, outbox, delivery-
   lease, preference-RPC, revocation, and fail-closed Expo dispatch/receipt
-  foundation. It has no accepted live-provider or web-push path; registration,
-  enqueueing, delivery, provider, both workers, and the client flag remain off.
-  Expo/APNs/FCM credentials and DPA, VAPID, key-rotation and receipt drills,
+  foundation. Its Expo provider and receipt lifecycle is implemented and
+  contract-tested but has no accepted production credentials, scheduler,
+  signed-device evidence, or web-push path; registration, enqueueing, delivery,
+  provider, both workers, and the client flag remain off. Expo/APNs/FCM
+  credentials and DPA, VAPID, key-rotation and receipt drills,
   scheduler/alerts, signed-device acceptance, and legal/store review remain
   external blockers.
 - Launch requires a legal entity, counsel-reviewed terms/privacy and
