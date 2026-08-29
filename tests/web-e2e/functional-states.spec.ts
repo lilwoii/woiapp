@@ -209,6 +209,7 @@ test('an empty manual-area search removes markers from the previous area', async
   await page.getByRole('button', { name: 'Set area' }).click();
   await expect(page.locator('.maplibregl-marker').first()).toBeVisible();
 
+  await page.getByRole('button', { name: /Search area:/u }).click();
   await page.getByLabel('City or ZIP code').fill('No Results, ZZ');
   await page.getByRole('button', { name: 'Set area' }).click();
 

@@ -122,7 +122,7 @@ export default function BusinessPostsScreen() {
   if (!canManage || !business) {
     return (
       <FocusAwareScreen>
-        <View style={styles.gate}>
+        <View role="main" style={styles.gate}>
           <View style={styles.gateIcon}><FontAwesome6 color={palette.accentDeep} name="shield-halved" size={20} /></View>
           <Text accessibilityRole="header" style={styles.gateTitle}>Protected publishing</Text>
           <Text style={styles.gateBody}>Choose a managed business and verify a current authenticator code before publishing.</Text>

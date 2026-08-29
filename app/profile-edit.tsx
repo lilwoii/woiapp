@@ -127,12 +127,24 @@ export default function ProfileEditScreen() {
 
   if (auth.status !== 'authenticated') {
     return (
-      <FocusAwareScreen><View style={styles.centered}><Text style={styles.title}>Sign in to edit your profile</Text><Pressable accessibilityRole="button" onPress={() => router.replace('/auth')} style={styles.primary}><Text style={styles.primaryText}>Sign in</Text></Pressable></View></FocusAwareScreen>
+      <FocusAwareScreen>
+        <View role="main" style={styles.centered}>
+          <Text accessibilityRole="header" style={styles.title}>Sign in to edit your profile</Text>
+          <Pressable accessibilityRole="button" onPress={() => router.replace('/auth')} style={styles.primary}><Text style={styles.primaryText}>Sign in</Text></Pressable>
+        </View>
+      </FocusAwareScreen>
     );
   }
   if (auth.assuranceLevel !== 'aal2') {
     return (
-      <FocusAwareScreen><View style={styles.centered}><View style={styles.lockIcon}><FontAwesome6 color={palette.accentDeep} name="shield-halved" size={20} /></View><Text style={styles.title}>Security check required</Text><Text style={styles.centerBody}>Verify your authenticator code before changing public profile details.</Text><Pressable accessibilityRole="button" onPress={() => router.replace('/security')} style={styles.primary}><Text style={styles.primaryText}>Open Security</Text></Pressable></View></FocusAwareScreen>
+      <FocusAwareScreen>
+        <View role="main" style={styles.centered}>
+          <View style={styles.lockIcon}><FontAwesome6 color={palette.accentDeep} name="shield-halved" size={20} /></View>
+          <Text accessibilityRole="header" style={styles.title}>Security check required</Text>
+          <Text style={styles.centerBody}>Verify your authenticator code before changing public profile details.</Text>
+          <Pressable accessibilityRole="button" onPress={() => router.replace('/security')} style={styles.primary}><Text style={styles.primaryText}>Open Security</Text></Pressable>
+        </View>
+      </FocusAwareScreen>
     );
   }
 

@@ -152,7 +152,7 @@ export default function FeedScreen() {
             {filters.map((item) => {
               const selected = item.id === filter;
               return (
-                <Pressable accessibilityRole="tab" accessibilityState={{ selected }} key={item.id} onPress={() => setFilter(item.id)} style={[styles.filter, selected && styles.filterActive]}>
+                <Pressable accessibilityRole="tab" accessibilityState={{ selected }} aria-selected={selected} key={item.id} onPress={() => setFilter(item.id)} style={[styles.filter, selected && styles.filterActive]}>
                   <Text style={[styles.filterText, selected && styles.filterTextActive]}>{item.label}</Text>
                 </Pressable>
               );
