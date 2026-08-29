@@ -9,9 +9,12 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 
 ## Verified release-candidate evidence
 
-- Source commit `6b249e6d5b203ea8146618d90b2316a3f9c0e736` passed the GitHub
-  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33223697878) and
-  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33223697864) workflows.
+- Source commit `cf76a56b424f19991bb480b162d7f07a9113ec85` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33224125035) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33224125006) workflows.
+  A second green
+  [artifact run](https://github.com/lilwoii/woiapp/actions/runs/33224557558)
+  produced the commit-bound Sites release bundle.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
   Edge contracts, Expo alignment and Doctor, iOS and Android exports,
@@ -33,7 +36,7 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   runtime replay. Dispatch and receipt Edge contracts use fixed Expo endpoints,
   generic lock-screen copy, bounded provider batches, versioned token keys, and
   independent fail-closed worker/provider switches.
-- Sites version 45 was built from the exact verified commit and deployed to
+- Sites version 46 was built from the exact verified commit and deployed to
   `https://noshatlas-live.lilwoi.chatgpt.site` with owner-only access.
   Anonymous requests return `401`, proving it is not publicly accessible.
 
