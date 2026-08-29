@@ -633,19 +633,32 @@ begin
       select 1 from public.public_reviews review
       where review.review_id = queued.target_id
     )
-    or not exists (
-      select 1 from public.content_reports report
-      where report.target_type = 'review'
-        and report.target_id = queued.target_id
-        and report.state = 'resolved'
-    )
   then
-    raise exception 'Reported review removal was not atomic across projection and report state';
+    raise exception 'Reported review removal remained in the public projection';
   end if;
 end;
 $reported_review_moderation$;
 
 reset role;
+
+do $reported_review_report_state$
+begin
+  if not exists (
+      select 1 from public.reviews review
+      where review.id = '75100000-0000-4000-8000-000000000007'
+        and review.moderation = 'removed'
+    )
+    or not exists (
+      select 1 from public.content_reports report
+      where report.target_type = 'review'
+        and report.target_id = '75100000-0000-4000-8000-000000000007'
+        and report.state = 'resolved'
+    )
+  then
+    raise exception 'Reported review removal was not atomic across review and report state';
+  end if;
+end;
+$reported_review_report_state$;
 
 insert into public.pricing_versions (
   id, version, region_code, currency, click_floor_minor, click_ceiling_minor,
