@@ -412,7 +412,7 @@ begin
   select * into result
   from public.set_review_reaction(
     'b8000000-0000-4000-8000-000000000008',
-    1
+    1::smallint
   );
 
   select up_count, down_count, viewer_reaction
@@ -473,7 +473,7 @@ begin
   select * into result
   from public.set_review_reaction(
     'b8000000-0000-4000-8000-000000000008',
-    0
+    0::smallint
   );
 
   select up_count, down_count, viewer_reaction
@@ -525,7 +525,7 @@ begin
     begin
       perform public.set_review_reaction(
         target_review_id,
-        case operation when 'insert' then 1 when 'update' then 1 else -1 end
+        (case operation when 'insert' then 1 when 'update' then 1 else -1 end)::smallint
       );
       raise exception 'Insider % RPC unexpectedly succeeded', operation;
     exception
