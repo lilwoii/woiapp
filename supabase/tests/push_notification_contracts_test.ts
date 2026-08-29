@@ -330,7 +330,7 @@ Deno.test("native permission is user-triggered and sign-out revokes before the a
   );
   assert(
     auth.includes(
-      "Sign out of the current account before signing in to another one.",
+      "Sign out of the current account before continuing with another account.",
     ),
   );
   assert(

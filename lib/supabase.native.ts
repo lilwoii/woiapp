@@ -125,8 +125,8 @@ export async function createAccessTokenBoundSupabaseClient(
     return null;
   }
   try {
-    const { data, error } = await supabase.auth.getUser(accessToken);
-    if (error || data.user?.id !== expectedUserId) return null;
+    const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
+    if (userError || userData.user?.id !== expectedUserId) return null;
     return createClient(supabaseUrl, supabaseAnonKey, {
       accessToken: async () => accessToken,
       auth: {
