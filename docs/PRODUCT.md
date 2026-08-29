@@ -100,8 +100,9 @@ or push delivery unless their separate gates are complete.
   acceptance
 - Push notifications after the private encrypted-device/outbox foundation is
   deployed and consent, provider receipts, quiet hours, unsubscribe, signed-
-  device behavior, credentials, and operational evidence are accepted. The
-  current foundation makes no provider call and remains disabled.
+  device behavior, credentials, and operational evidence are accepted. A
+  fail-closed Expo dispatch/receipt adapter exists, but every provider, worker,
+  database, and client gate remains disabled pending live acceptance.
 - Licensed provider inventory with contractual attribution, field-level
   provenance, refresh, correction, caching, and deletion rules
 - Owner-authorized menu OCR into review-before-publish drafts

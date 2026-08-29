@@ -346,14 +346,21 @@ permission/consent UX, quiet hours, per-business preferences, unsubscribe, token
 deletion, delivery telemetry, abuse controls, and incident revocation are
 verified.
 
-Migration `20260917000000_push_notification_foundation.sql` establishes only a
-fail-closed foundation: private encrypted device registrations, explicit
-product-versus-marketing consent, event-reference-only outbox rows, bounded
-leases, delivery deduplication, a narrow followed-business preference RPC, and
-sign-out revocation contracts. Both private runtime switches default false and
-there is no production provider adapter. Do not enable enqueueing merely to test
-provider credentials in production; validate the full chain in isolated staging
-with a fake adapter first, then real receipt polling and invalid-token retirement.
+Migration `20260917000000_push_notification_foundation.sql` establishes private
+encrypted device registrations, explicit product-versus-marketing consent,
+event-reference-only outbox rows, bounded leases, delivery deduplication, a
+narrow followed-business preference RPC, and sign-out revocation contracts.
+Migration `20260918000000_push_notification_dispatch.sql` adds service-role-only
+dispatch wrappers, delayed receipt-check leases, receipt finalization, and
+invalid-token retirement. The Edge adapter uses fixed Expo endpoints, enhanced
+push authentication, generic lock-screen copy, a versioned AES-GCM key ring,
+and `unknown` rather than blind retry after ambiguous sends.
+
+Database enqueue/delivery, device registration, provider access, dispatch, the
+receipt worker, and the client remain independently gated and default false.
+Do not enable enqueueing merely to test credentials in production. Validate the
+full chain in isolated staging with a fake provider, then the real provider and
+receipts, key-rotation/rollback, scheduler, alerts, and signed devices.
 
 The legacy `live_nearby` preference does not prove five-mile proximity: Spottr
 does not retain customer coordinates or request background location. Production

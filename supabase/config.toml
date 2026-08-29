@@ -29,3 +29,9 @@ verify_jwt = false
 
 [functions.notification-device]
 verify_jwt = true
+
+[functions.notification-dispatch]
+verify_jwt = false
+
+[functions.notification-receipt]
+verify_jwt = false

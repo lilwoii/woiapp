@@ -190,8 +190,18 @@ The private transactional outbox stores only an eligible public-event reference,
 never owner-update text. Enqueueing and delivery are separate runtime switches
 and both default to false. Bounded `SKIP LOCKED` leases, device/event dedupe,
 explicit consent, per-business preferences, timezone-aware quiet hours, and an
-`unknown` outcome for ambiguous provider requests are present as database
-contracts. There is deliberately no live provider adapter yet. Keep both
-runtime switches and `EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED` false until Expo
-or direct APNs/FCM credentials, receipt polling, key rotation, scheduler and
-alerts, signed-device tests, legal review, and store declarations are approved.
+`unknown` outcome for ambiguous provider requests are database contracts.
+
+`notification-dispatch` adds a bounded, internal-authenticated Expo adapter.
+It decrypts a token only at send time through a versioned AES-GCM key ring,
+uses fixed allowlisted Expo endpoints, emits generic lock-screen copy and a
+canonical place route only, and never retries an ambiguous send. Accepted
+tickets create receipt checks no earlier than 15 minutes after submission.
+`notification-receipt` resolves those tickets without resending, retires tokens
+that return `DeviceNotRegistered`, and bounds every lease and retry.
+
+The provider, dispatch worker, receipt worker, database enqueue/delivery, and
+client switches are independent and all default false. Keep them false until
+Expo credentials and DPA, enhanced push security, receipt/key-rotation drills,
+scheduler and alerts, signed-device tests, legal review, and store declarations
+are approved. Source code and fake-provider tests are not production acceptance.

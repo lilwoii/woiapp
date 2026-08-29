@@ -1743,4 +1743,171 @@ begin
 end;
 $push_consent_revocation$;
 
+-- The provider remains external and disabled in production. Exercise only the
+-- service-role dispatch/receipt state machine with synthetic tickets.
+select private.set_notification_consent(
+  '90000000-0000-4000-8000-000000000009',
+  'product_updates', true, 'product-updates-v1', 'native_settings'
+);
+update public.notification_preferences set
+  owner_update = true, location_change = true, menu_return = true,
+  quiet_hours_start = null, quiet_hours_end = null, timezone = null,
+  updated_at = now()
+where user_id = '90000000-0000-4000-8000-000000000009'
+  and business_id = '70000000-0000-4000-8000-000000000007';
+update private.notification_devices set
+  revoked_at = now(), revoke_reason = 'user_revoked', updated_at = now()
+where user_id = '90000000-0000-4000-8000-000000000009'
+  and installation_id = '81000000-0000-4000-8000-000000000009'
+  and revoked_at is null;
+
+do $push_dispatch_receipt_runtime$
+declare
+  event_id bigint;
+  ambiguous_event_id bigint;
+  outbox_claim record;
+  ambiguous_outbox_claim record;
+  delivery_claim record;
+  ambiguous_delivery_claim record;
+  receipt_claim record;
+begin
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object(
+      'update_id', '86000000-0000-4000-8000-000000000006',
+      'body', 'must never enter the provider payload'
+    ),
+    now() + interval '2 hours'
+  ) returning id into event_id;
+
+  select * into outbox_claim
+  from public.claim_notification_outbox_server(
+    '87000000-0000-4000-8000-000000000007', 10, 60
+  ) where source_event_id = event_id;
+  if outbox_claim.outbox_id is null then
+    raise exception 'Server dispatch wrapper did not claim the outbox event';
+  end if;
+  if public.expand_notification_outbox_server(
+    outbox_claim.outbox_id, outbox_claim.lease_token, 20
+  ) <> 1 then
+    raise exception 'Server dispatch wrapper did not fan out exactly one delivery';
+  end if;
+
+  select * into delivery_claim
+  from public.claim_notification_deliveries_server(
+    '88000000-0000-4000-8000-000000000008', 20, 60
+  ) where source_event_id = event_id;
+  if delivery_claim.delivery_id is null then
+    raise exception 'Server dispatch wrapper did not claim the delivery';
+  end if;
+  perform public.mark_notification_delivery_batch_sending_server(
+    array[delivery_claim.delivery_id], array[delivery_claim.lease_token], 60
+  );
+  perform public.record_notification_delivery_result_server(
+    delivery_claim.delivery_id,
+    delivery_claim.lease_token,
+    'accepted',
+    'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+    'ExpoAccepted',
+    null
+  );
+  if not exists (
+    select 1 from private.notification_receipt_checks receipt
+    where receipt.delivery_id = delivery_claim.delivery_id
+      and receipt.state = 'pending'
+      and receipt.available_at >= receipt.created_at + interval '14 minutes'
+  ) then raise exception 'Accepted provider ticket did not create a delayed receipt check'; end if;
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '86100000-0000-4000-8000-000000000006'),
+    now() + interval '2 hours'
+  ) returning id into ambiguous_event_id;
+  select * into ambiguous_outbox_claim
+  from public.claim_notification_outbox_server(
+    '87100000-0000-4000-8000-000000000007', 10, 60
+  ) where source_event_id = ambiguous_event_id;
+  if ambiguous_outbox_claim.outbox_id is null then
+    raise exception 'Ambiguous-send fixture outbox was not claimed';
+  end if;
+  if public.expand_notification_outbox_server(
+    ambiguous_outbox_claim.outbox_id, ambiguous_outbox_claim.lease_token, 20
+  ) <> 1 then raise exception 'Ambiguous-send fixture did not fan out'; end if;
+  select * into ambiguous_delivery_claim
+  from public.claim_notification_deliveries_server(
+    '88100000-0000-4000-8000-000000000008', 20, 60
+  ) where source_event_id = ambiguous_event_id;
+  if ambiguous_delivery_claim.delivery_id is null then
+    raise exception 'Ambiguous-send fixture delivery was not claimed';
+  end if;
+  perform public.mark_notification_delivery_batch_sending_server(
+    array[ambiguous_delivery_claim.delivery_id],
+    array[ambiguous_delivery_claim.lease_token],
+    60
+  );
+  update private.notification_deliveries set lease_expires_at = now() - interval '1 second'
+  where id = ambiguous_delivery_claim.delivery_id;
+  perform * from public.claim_notification_deliveries_server(
+    '88200000-0000-4000-8000-000000000008', 20, 60
+  );
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = ambiguous_delivery_claim.delivery_id
+      and delivery.state = 'unknown'
+      and delivery.last_provider_code = 'worker_handoff_ambiguous'
+  ) then raise exception 'Expired sending handoff was blindly retried'; end if;
+
+  update private.notification_receipt_checks set available_at = now()
+  where delivery_id = delivery_claim.delivery_id;
+  select * into receipt_claim
+  from public.claim_notification_receipts_server(
+    '89000000-0000-4000-8000-000000000009', 20, 60
+  ) where delivery_id = delivery_claim.delivery_id;
+  if receipt_claim.receipt_check_id is null then
+    raise exception 'Server receipt wrapper did not claim the provider ticket';
+  end if;
+  perform public.record_notification_receipt_result_server(
+    receipt_claim.receipt_check_id,
+    receipt_claim.lease_token,
+    'dead',
+    'DeviceNotRegistered',
+    null
+  );
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = delivery_claim.device_id
+      and device.revoked_at is not null
+      and device.revoke_reason = 'provider_invalid'
+  ) then raise exception 'Invalid provider receipt did not retire the device'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_claim.delivery_id
+      and delivery.state = 'dead'
+      and delivery.last_provider_code = 'DeviceNotRegistered'
+  ) then raise exception 'Invalid provider receipt did not finalize the delivery'; end if;
+end;
+$push_dispatch_receipt_runtime$;
+
+do $push_dispatch_privilege_guard$
+begin
+  if has_table_privilege('authenticated', 'private.notification_receipt_checks', 'select')
+    or has_function_privilege(
+      'authenticated', 'public.claim_notification_outbox_server(uuid,integer,integer)', 'execute'
+    )
+    or has_function_privilege(
+      'authenticated', 'public.claim_notification_receipts_server(uuid,integer,integer)', 'execute'
+    )
+    or has_function_privilege(
+      'authenticated', 'public.record_notification_receipt_result_server(uuid,uuid,text,text,integer)', 'execute'
+    )
+  then raise exception 'Notification provider worker authority is client-accessible'; end if;
+end;
+$push_dispatch_privilege_guard$;
+
 rollback;

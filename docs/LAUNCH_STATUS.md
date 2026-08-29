@@ -78,9 +78,10 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   claims, navigation, push, ordering, and paid promotion stay behind their
   existing fail-closed feature gates until their runbooks have live evidence.
 - Push now has a private encrypted-device, explicit-consent, outbox, delivery-
-  lease, preference-RPC, and revocation foundation. It still has no live provider
-  adapter or web-push path; enqueueing, delivery, and the client flag remain off.
-  APNs/FCM or Expo credentials and DPA, VAPID, receipt handling, key rotation,
+  lease, preference-RPC, revocation, and fail-closed Expo dispatch/receipt
+  foundation. It has no accepted live-provider or web-push path; registration,
+  enqueueing, delivery, provider, both workers, and the client flag remain off.
+  Expo/APNs/FCM credentials and DPA, VAPID, key-rotation and receipt drills,
   scheduler/alerts, signed-device acceptance, and legal/store review remain
   external blockers.
 - Launch requires a legal entity, counsel-reviewed terms/privacy and

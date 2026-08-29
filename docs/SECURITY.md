@@ -132,6 +132,15 @@ separate server-only HMAC key rather than an offline-testable plain digest. Raw
 tokens and cryptographic material must never enter logs, Realtime, lock-screen
 payloads, analytics, or account exports.
 
+Provider dispatch is internal-authenticated, bounded, and separately gated from
+registration and database enqueueing. Tokens are decrypted only at send time
+with an explicitly versioned AES-GCM key ring. The provider host is fixed in
+source, lock-screen text is generic, and tap data contains only a canonical place
+route and public-event identifier. An ambiguous send is recorded as `unknown`
+and is never blindly retried. Receipt checks begin after the provider's minimum
+recommended delay, do not resend content, and retire devices reported as
+`DeviceNotRegistered`. All provider and worker gates default false.
+
 The production privacy policy must disclose this behavior and the actual
 retention periods. The deletion drill in [RELEASE.md](RELEASE.md) must prove the
 behavior against a production-like environment.
