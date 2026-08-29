@@ -216,6 +216,28 @@ export async function runDatabaseRuntimeGate(projectRoot = PROJECT_ROOT) {
       containerPath: '/tmp/spottr-full-stack-security-runtime.sql',
       singleTransaction: false,
     });
+    await copyAndApplySql({
+      sourcePath: path.join(
+        projectRoot,
+        'supabase',
+        'tests',
+        'business_insider_trust_guard_runtime_test.sql',
+      ),
+      containerName,
+      containerPath: '/tmp/spottr-business-insider-trust-guard-runtime.sql',
+      singleTransaction: false,
+    });
+    await copyAndApplySql({
+      sourcePath: path.join(
+        projectRoot,
+        'supabase',
+        'tests',
+        'provider_location_lifecycle_guard_runtime_test.sql',
+      ),
+      containerName,
+      containerPath: '/tmp/spottr-provider-location-lifecycle-guard-runtime.sql',
+      singleTransaction: false,
+    });
     process.stdout.write(
       `Fresh Supabase runtime verified: baseline, ${migrationNames.length} migrations, and post-chain security contracts.\n`,
     );
