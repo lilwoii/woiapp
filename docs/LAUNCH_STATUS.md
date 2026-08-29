@@ -9,9 +9,9 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 
 ## Verified release-candidate evidence
 
-- Source commit `71cdac88eff67e217e15a7d05dd3d6de358f5ee5` passed the GitHub
-  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33229785194) and
-  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33229785195) workflows.
+- Source commit `07484e25f31d35ee6f314ffa8260ac31ad9c438b` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33230933330) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33230933444) workflows.
   The last web publication source, commit
   `cf76a56b424f19991bb480b162d7f07a9113ec85`, also passed both workflows. A
   second green
@@ -40,11 +40,14 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   queued deliveries are cancelled. The runtime suite also proves that moving
   one physical installation between accounts revokes the prior owner, cancels
   that owner's queued delivery, and preserves a single active device owner
-  through a complete account A-to-B-to-A transition. Native sign-in and account
-  creation now require an anonymous authoritative session, and a direct
-  authenticated identity replacement is rejected with a non-secret,
-  restart-persistent quarantine marker until local cleanup is proven. Dispatch
-  and receipt Edge contracts use
+  through a complete account A-to-B-to-A transition. Removing a follow now
+  cancels its queued or leased deliveries, while both worker claim and provider
+  handoff revalidate the follow before sending. Native sign-in and account
+  creation require an anonymous authoritative session, startup auth callbacks
+  wait for persisted identity restoration, and native deep-link exchange waits
+  for the same successful restore decision. A direct authenticated identity
+  replacement is rejected with a non-secret, restart-persistent quarantine
+  marker until local cleanup is proven. Dispatch and receipt Edge contracts use
   fixed Expo endpoints, generic lock-screen copy, bounded provider batches,
   versioned token keys, and independent fail-closed worker/provider switches.
 - Sites version 46 was built from exact verified web commit
