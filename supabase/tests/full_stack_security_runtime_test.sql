@@ -2406,10 +2406,37 @@ begin
     raise exception 'Deletion lifecycle fixture delivery was not leased';
   end if;
 
+  begin
+    update public.profiles
+    set status = 'deleted'
+    where user_id = '93000000-0000-4000-8000-000000000003';
+    raise exception 'Profile status changed without a deletion freeze';
+  exception
+    when insufficient_privilege then null;
+  end;
+
   perform * from public.begin_account_deletion(
     '93000000-0000-4000-8000-000000000003',
     'spottr:runtime-delete-push-0001'
   );
+
+  if not exists (
+    select 1
+    from public.profiles profile
+    where profile.user_id = '93000000-0000-4000-8000-000000000003'
+      and profile.status = 'deleted'
+  ) then
+    raise exception 'Frozen account deletion did not apply the terminal profile status';
+  end if;
+
+  begin
+    update public.profiles
+    set status = 'active'
+    where user_id = '93000000-0000-4000-8000-000000000003';
+    raise exception 'Deletion freeze remained a reusable profile-status bypass';
+  exception
+    when insufficient_privilege then null;
+  end;
 
   if not exists (
     select 1 from private.notification_deliveries delivery

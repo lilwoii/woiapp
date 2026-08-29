@@ -84,3 +84,49 @@ Deno.test("account deletion cancels and revalidates queued notification work", a
     /mark_notification_delivery_batch_sending[\s\S]+private\.is_active_user\(delivery\.user_id\)/,
   );
 });
+
+Deno.test("account deletion can apply only its frozen terminal profile transition", async () => {
+  const migration = await text(
+    "migrations/20260925000000_account_deletion_profile_transition.sql",
+  );
+
+  assert(migration.includes("server_fields_changed"));
+  assert(migration.includes("new.status = 'deleted'"));
+  assert(migration.includes("new.user_id is not distinct from old.user_id"));
+  assert(migration.includes("private.account_deletion_freezes freeze"));
+  assert(migration.includes("request.user_id = freeze.user_id"));
+  assert(
+    migration.includes(
+      "current_setting('spottr.account_deletion_request_id', true)",
+    ),
+  );
+  assert(migration.includes("freeze.request_id::text"));
+  assert(
+    migration.includes(
+      "request.state in ('started', 'processing', 'storage_deleted', 'failed')",
+    ),
+  );
+  assert(migration.includes("request.expires_at > now()"));
+  assert(migration.includes("if not authorized_deletion_transition then"));
+  assert(
+    migration.includes("Server-owned profile fields cannot be changed"),
+  );
+  assert(
+    migration.includes(
+      "revoke all on function private.protect_profile_server_fields()",
+    ),
+  );
+  assertMatch(
+    migration,
+    /insert into private\.account_deletion_freezes[\s\S]+set_config\([\s\S]+spottr\.account_deletion_request_id[\s\S]+update public\.profiles[\s\S]+set status = 'deleted'/,
+  );
+  assertMatch(
+    migration,
+    /exception[\s\S]+when others then[\s\S]+spottr\.account_deletion_request_id', '', true[\s\S]+raise/,
+  );
+  assert(
+    migration.includes(
+      "revoke all on function public.begin_account_deletion(uuid, text)",
+    ),
+  );
+});
