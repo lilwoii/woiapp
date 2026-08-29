@@ -4405,6 +4405,23 @@ declare
   held_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg';
   unprotected_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg';
 begin
+  begin
+    delete from storage.objects object_row
+    where object_row.bucket_id = 'spottr-media'
+      and object_row.name = held_path;
+    raise exception 'Direct storage-table deletion unexpectedly bypassed the Storage API guard';
+  exception
+    when others then
+      if sqlerrm not like 'Direct deletion from storage tables is not allowed.%' then
+        raise;
+      end if;
+  end;
+
+  -- Supabase Storage sets this transaction-local flag after the HTTP API has
+  -- authorized the request. It preserves the platform's orphan-prevention
+  -- trigger while allowing this rollback-only test to exercise our DELETE RLS.
+  perform pg_catalog.set_config('storage.allow_delete_query', 'true', true);
+
   delete from storage.objects object_row
   where object_row.bucket_id = 'spottr-media'
     and object_row.name = held_path;
@@ -4424,6 +4441,7 @@ end;
 $business_claim_evidence_storage_delete_policy_contract$;
 
 reset role;
+select pg_catalog.set_config('storage.allow_delete_query', 'false', true);
 select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
 
 do $business_claim_evidence_auth_delete_contract$

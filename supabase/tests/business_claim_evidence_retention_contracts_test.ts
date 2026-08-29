@@ -135,7 +135,7 @@ Deno.test("authenticated quarantine deletion cannot remove retained claim eviden
   );
   assertMatch(
     runtimeSql,
-    /business_claim_evidence_storage_delete_policy_contract[\s\S]+deleted_count <> 0[\s\S]+deleted_count <> 1/,
+    /business_claim_evidence_storage_delete_policy_contract[\s\S]+Direct deletion from storage tables is not allowed[\s\S]+storage\.allow_delete_query[\s\S]+deleted_count <> 0[\s\S]+deleted_count <> 1/,
   );
   assertMatch(
     runtimeSql,
