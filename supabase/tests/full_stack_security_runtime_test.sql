@@ -3898,7 +3898,6 @@ do $home_kitchen_global_gate_disable$
 declare
   result jsonb;
   request_state text;
-  disclosure_count integer;
   conversation_count integer;
 begin
   result := public.set_home_kitchen_launch_gate(
@@ -3919,13 +3918,6 @@ begin
     raise exception 'Home-kitchen pickup request was not cancelled on disable';
   end if;
 
-  select count(*) into disclosure_count
-  from private.neighborhood_pickup_disclosures
-  where request_id = 'e8000000-0000-4000-8000-000000000001';
-  if disclosure_count <> 0 then
-    raise exception 'Exact Neighborhood Kitchen disclosure survived disable';
-  end if;
-
   select count(*) into conversation_count
   from public.marketplace_conversations
   where id = 'e6000000-0000-4000-8000-000000000001';
@@ -3936,5 +3928,18 @@ end;
 $home_kitchen_global_gate_disable$;
 
 reset role;
+
+do $home_kitchen_global_gate_private_cleanup$
+declare
+  disclosure_count integer;
+begin
+  select count(*) into disclosure_count
+  from private.neighborhood_pickup_disclosures
+  where request_id = 'e8000000-0000-4000-8000-000000000001';
+  if disclosure_count <> 0 then
+    raise exception 'Exact Neighborhood Kitchen disclosure survived disable';
+  end if;
+end;
+$home_kitchen_global_gate_private_cleanup$;
 
 rollback;
