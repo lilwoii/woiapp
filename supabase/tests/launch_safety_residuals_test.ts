@@ -25,6 +25,19 @@ Deno.test("reported approved reviews have a protected queue and decision contrac
   assertMatch(client, /rpc\('decide_reported_review'/);
 });
 
+Deno.test("content report upserts use an unambiguous conflict target", async () => {
+  const schema = await text("schema.sql");
+  const repair = await text(
+    "migrations/20260924000000_content_report_conflict_disambiguation.sql",
+  );
+  const safeTarget =
+    "on conflict on constraint content_reports_reporter_id_target_type_target_id_key";
+
+  assert(schema.includes(safeTarget));
+  assert(repair.includes(safeTarget));
+  assert(!repair.includes("on conflict (reporter_id, target_type, target_id)"));
+});
+
 Deno.test("map viewport predicates never inspect a redacted raw point", async () => {
   const migration = await text(
     "migrations/20260922000000_map_redacted_viewport_privacy.sql",

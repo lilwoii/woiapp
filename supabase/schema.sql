@@ -7251,7 +7251,7 @@ begin
     nullif(btrim(report_detail), ''),
     'open'
   )
-  on conflict (reporter_id, target_type, target_id)
+  on conflict on constraint content_reports_reporter_id_target_type_target_id_key
   do update set
     reason = excluded.reason,
     detail = excluded.detail,
