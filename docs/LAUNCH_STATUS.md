@@ -9,9 +9,9 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 
 ## Verified release-candidate evidence
 
-- Source commit `09365720fb757eb6a7ec027a2d40e53ff5249157` passed the GitHub
-  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33227031387) and
-  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33227031404) workflows.
+- Source commit `dc196bf7d8cca24aa2b96856df5fa47aaf7ac2ec` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33228876985) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33228876991) workflows.
   The last web publication source, commit
   `cf76a56b424f19991bb480b162d7f07a9113ec85`, also passed both workflows. A
   second green
@@ -37,7 +37,11 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   and invalid-token retirement passed the full PostgreSQL migration and
   runtime replay. Active native registrations are now bound to a verified Auth
   session; missing, expired, and removed sessions are rejected or retired, and
-  queued deliveries are cancelled. Dispatch and receipt Edge contracts use
+  queued deliveries are cancelled. Native sign-in and account creation now
+  require an anonymous authoritative session, and a direct authenticated
+  identity replacement is rejected with a non-secret, restart-persistent
+  quarantine marker until local cleanup is proven. Dispatch and receipt Edge
+  contracts use
   fixed Expo endpoints, generic lock-screen copy, bounded provider batches,
   versioned token keys, and independent fail-closed worker/provider switches.
 - Sites version 46 was built from exact verified web commit
