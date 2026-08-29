@@ -618,7 +618,7 @@ begin
   into revised_id
   from public.submit_review(
     'b7000000-0000-4000-8000-000000000007',
-    5,
+    5::smallint,
     'A revised review with fresh evidence and no inherited reactions.',
     'trust-review-revision-0001',
     '{}'::uuid[]
