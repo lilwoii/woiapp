@@ -197,7 +197,7 @@ begin
     state = 'expired', lease_token = null, lease_expires_at = null, updated_at = now()
   from private.notification_outbox queue
   where queue.id = delivery.outbox_id and queue.expires_at <= now()
-    and delivery.state not in ('sending', 'delivered', 'dead', 'expired');
+    and delivery.state not in ('sending', 'delivered', 'dead', 'expired', 'cancelled');
 
   return query
   with candidates as (

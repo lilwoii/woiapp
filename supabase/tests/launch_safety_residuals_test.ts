@@ -54,6 +54,7 @@ Deno.test("account deletion cancels and revalidates queued notification work", a
   assert(migration.includes("cancel_notification_deliveries_for_account_deletion"));
   assert(migration.includes("last_provider_code = 'account_deletion'"));
   assert(migration.includes("for key share of followed"));
+  assert(migration.includes("'dead', 'expired', 'cancelled'"));
   assertMatch(
     migration,
     /claim_notification_deliveries[\s\S]+private\.is_active_user\(delivery\.user_id\)/,

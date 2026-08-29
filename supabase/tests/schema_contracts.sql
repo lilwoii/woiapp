@@ -466,6 +466,9 @@ begin
     or pg_catalog.pg_get_functiondef(
       'private.expand_notification_outbox(uuid,uuid,integer)'::regprocedure
     ) not like '%for key share of followed%'
+    or pg_catalog.pg_get_functiondef(
+      'private.claim_notification_deliveries(uuid,integer,integer)'::regprocedure
+    ) not like '%''dead'', ''expired'', ''cancelled''%'
   then
     raise exception 'Notification opt-out is not serialized through fanout, claim, and handoff';
   end if;

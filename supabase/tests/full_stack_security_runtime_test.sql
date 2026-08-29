@@ -2408,9 +2408,26 @@ begin
     when sqlstate '40001' then null;
   end;
 
+  update private.notification_outbox queue
+  set created_at = now() - interval '2 hours',
+      expires_at = now() - interval '1 hour',
+      updated_at = now()
+  where queue.id = outbox_claim.outbox_id;
+  perform * from public.claim_notification_deliveries_server(
+    '93600000-0000-4000-8000-000000000003', 20, 60
+  );
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_claim.delivery_id
+      and delivery.state = 'cancelled'
+      and delivery.last_provider_code = 'account_deletion'
+  ) then
+    raise exception 'Expiry cleanup erased terminal account-deletion cancellation';
+  end if;
+
   if exists (
     select 1 from public.claim_notification_deliveries_server(
-      '93600000-0000-4000-8000-000000000003', 20, 60
+      '93700000-0000-4000-8000-000000000003', 20, 60
     ) claimed
     where claimed.source_event_id = event_id
   ) then
