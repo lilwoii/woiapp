@@ -3585,6 +3585,11 @@ begin
 end;
 $home_kitchen_global_gate_fixture$;
 
+select pg_catalog.set_config(
+  'request.jwt.claims', '{"role":"service_role"}', true
+);
+set local role service_role;
+
 do $home_kitchen_global_gate_default_off$
 declare
   gate jsonb;
@@ -3623,6 +3628,7 @@ begin
 end;
 $home_kitchen_global_gate_default_off$;
 
+reset role;
 set local role authenticated;
 select pg_catalog.set_config(
   'request.jwt.claims',
