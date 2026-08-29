@@ -75,6 +75,24 @@ Deno.test("marketplace store hides stale state synchronously and clears every se
   assertMatch(marketplaceStore, /setStoreState\(createMarketplaceStoreState\(scopeKey\)\)/);
 });
 
+Deno.test("public marketplace projection excludes unpublished records while retaining raw store state", () => {
+  const projectionStart = marketplaceStore.indexOf("const publicPlaces = useMemo(");
+  const projectionEnd = marketplaceStore.indexOf(
+    "const [sponsoredExpiryTick",
+    projectionStart,
+  );
+  assert(projectionStart >= 0 && projectionEnd > projectionStart);
+  const projection = marketplaceStore.slice(projectionStart, projectionEnd);
+
+  assertMatch(projection, /places\.filter\(\(place\) =>[\s\S]*place\.publicationState === 'published'/);
+  assertMatch(projection, /!detailOnlyPlaceIdSet\.has\(place\.id\)/);
+  assertMatch(projection, /filterHomeKitchenPlaces/);
+  assertMatch(
+    marketplaceStore,
+    /places:\s*\[loadedPlace, \.\.\.current\.places\.filter\(\(place\) => place\.id !== placeId\)/,
+  );
+});
+
 Deno.test("all private marketplace result lanes are account-bound before committing", () => {
   for (const lane of [
     "'directory'",

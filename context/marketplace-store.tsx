@@ -184,7 +184,10 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   );
   const publicPlaces = useMemo(
     () => filterHomeKitchenPlaces(
-      places.filter((place) => !detailOnlyPlaceIdSet.has(place.id))
+      places.filter((place) =>
+        place.publicationState === 'published' &&
+        !detailOnlyPlaceIdSet.has(place.id)
+      )
     ),
     [detailOnlyPlaceIdSet, places]
   );
