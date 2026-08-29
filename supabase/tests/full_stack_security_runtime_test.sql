@@ -715,6 +715,16 @@ insert into public.business_members (
   'owner', 'active', now()
 );
 
+select public.create_media_stage_grant(
+  '10000000-0000-4000-8000-000000000001',
+  'quarantine/10000000-0000-4000-8000-000000000001/79100000-0000-4000-8000-000000000009.jpg',
+  'business_logo',
+  '79000000-0000-4000-8000-000000000009',
+  null,
+  'image/jpeg',
+  4096
+);
+
 insert into public.media_assets (
   id, owner_id, business_id, storage_path, mime_type, width, height,
   byte_size, sha256, source, quarantine_state, processed_storage_path,
@@ -723,7 +733,8 @@ insert into public.media_assets (
   '79100000-0000-4000-8000-000000000009',
   '10000000-0000-4000-8000-000000000001',
   '79000000-0000-4000-8000-000000000009',
-  'published/runtime/mobile-review-logo.jpg', 'image/jpeg', 512, 512,
+  'quarantine/10000000-0000-4000-8000-000000000001/79100000-0000-4000-8000-000000000009.jpg',
+  'image/jpeg', 512, 512,
   4096, repeat('e', 64), 'owner_upload', 'clean',
   'published/runtime/mobile-review-logo-processed.jpg', now(), 'approved'
 );

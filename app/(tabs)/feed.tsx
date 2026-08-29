@@ -50,14 +50,14 @@ export default function FeedScreen() {
 
   useEffect(() => {
     let active = true;
+    const generation = ++feedRequestGeneration.current;
+    loadMoreGeneration.current += 1;
     if (!accountId) return () => { active = false; };
     const requestedAccountId = accountId;
     const requestedFilter = filter;
-    const generation = ++feedRequestGeneration.current;
-    loadMoreGeneration.current += 1;
-    setLoadingMore(false);
     const timer = setTimeout(() => {
       if (!active || generation !== feedRequestGeneration.current) return;
+      setLoadingMore(false);
       setLoading(true);
       setError(null);
       void fetchFollowedFeed(requestedFilter, requestedAccountId).then((result) => {

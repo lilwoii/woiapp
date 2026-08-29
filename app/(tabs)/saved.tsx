@@ -45,7 +45,6 @@ export default function SavedScreen() {
   const hasFollowedPlaces = followedIds.length > 0;
   const preferenceScope = accountId && hasFollowedPlaces ? `${accountId}:${followedKey}` : null;
   const preferenceContext = useRef({ accountId, followedKey, preferenceScope });
-  preferenceContext.current = { accountId, followedKey, preferenceScope };
   const preferenceIsCurrent =
     Boolean(preferenceScope) &&
     loadedPreferenceScope === preferenceScope &&
@@ -54,19 +53,23 @@ export default function SavedScreen() {
   const visibleOwnerUpdates = preferenceIsCurrent ? ownerUpdates : false;
 
   useEffect(() => {
+    preferenceContext.current = { accountId, followedKey, preferenceScope };
+  }, [accountId, followedKey, preferenceScope]);
+
+  useEffect(() => {
     const generation = ++preferenceGeneration.current;
-    if (!auth.isConfigured || !accountId || !hasFollowedPlaces) {
-      setLoadedPreferenceScope(null);
-      setPreferenceBusy(null);
-      if (!hasFollowedPlaces) setPreferenceMessage('');
-      return () => undefined;
-    }
     let active = true;
-    const requestedAccountId = accountId;
+    const requestedAccountId = accountId ?? '';
     const requestedFollowedIds = [...followedIds];
     const requestedScope = `${requestedAccountId}:${followedKey}`;
     const timer = setTimeout(() => {
       if (!active || generation !== preferenceGeneration.current) return;
+      if (!auth.isConfigured || !accountId || !hasFollowedPlaces) {
+        setLoadedPreferenceScope(null);
+        setPreferenceBusy(null);
+        if (!hasFollowedPlaces) setPreferenceMessage('');
+        return;
+      }
       setLoadedPreferenceScope(null);
       setPreferenceBusy('loading');
       setPreferenceMessage('');
@@ -92,8 +95,11 @@ export default function SavedScreen() {
 
   useEffect(() => {
     deliveryGeneration.current += 1;
-    setDeliveryBusy(false);
-    setDeliveryMessage('');
+    const timer = setTimeout(() => {
+      setDeliveryBusy(false);
+      setDeliveryMessage('');
+    }, 0);
+    return () => clearTimeout(timer);
   }, [accountId, auth.assuranceLevel, auth.securityStatus]);
 
   const savePreference = async (field: AlertPreference, next: boolean) => {

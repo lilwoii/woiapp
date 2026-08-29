@@ -118,12 +118,6 @@ function BusinessMarketplaceWorkspace({
   useEffect(() => {
     if (!secureSession || !businessId || !expectedAccountId) {
       requestGeneration.current += 1;
-      setLoading(false);
-      setBusy(null);
-      setControls(null);
-      setSettings(null);
-      setSuggestions([]);
-      setSelectedRoutes([]);
       return;
     }
     const timer = setTimeout(() => void load(), 0);
