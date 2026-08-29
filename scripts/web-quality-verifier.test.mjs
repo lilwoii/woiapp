@@ -80,7 +80,7 @@ test('route HTML aggregate budget scales only with verified route count', () => 
     allCssBytes: 80_000,
     largestRouteBytes: 60_000,
     largestRouteGzipBytes: 14_000,
-    allRouteBytes: 1_860_001,
+    allRouteBytes: 1_866_001,
     allRouteGzipBytes: 440_000,
   };
   assert.ok(

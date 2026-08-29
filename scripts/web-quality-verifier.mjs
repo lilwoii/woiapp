@@ -11,9 +11,10 @@ const MAX_ROUTE_GZIP_BYTES = 17 * 1024;
 // Static rendering repeats the shared application shell in every route. Cap
 // both the largest route and the average route so adding a required workflow
 // cannot exhaust a fixed global allowance while per-route growth stays bounded.
-// Expo's shared static shell is currently about 60 KB before route copy. Keep a
-// tight per-route average while allowing small, accessible loading surfaces.
-const MAX_AVERAGE_ROUTE_BYTES = 62_000;
+// The 40-route launch artifact averages 62,101.6 raw bytes after adding the
+// accessible, lazy protected-review shell. Keep less than 100 bytes of average
+// headroom; compressed transfer remains governed by the tighter gzip ceiling.
+const MAX_AVERAGE_ROUTE_BYTES = 62_200;
 const MAX_AVERAGE_ROUTE_GZIP_BYTES = 15_000;
 // The uncompressed entry is a development/build diagnostic; transfer cost is
 // enforced separately by the tighter gzip cap. Leave modest headroom for
