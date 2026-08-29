@@ -121,6 +121,15 @@ reviews, follows, notification preferences, reports, blocks, memberships,
 claims, owned media rows, and rate-limit/idempotency rows cascade with the Auth
 user. Business updates/responses and audit records may remain for marketplace
 integrity, with the deleted actor reference set to null. A private deletion
+exception preserves any non-purged business-claim evidence object and records
+the preservation decision without copying its path. Its claim, business, and
+claimant references use `ON DELETE SET NULL`, so Auth deletion can remove the
+account without deleting held evidence or reintroducing an identity foreign
+key. The ordinary storage manifest excludes those paths, and the storage seal
+fails closed if a retained evidence path was included or lacks its exact
+private exception. Retention duration, hold release, staff access, and purge
+authorization remain external legal/security decisions; both evidence intake
+and the dedicated purge boundary default off. A private deletion
 receipt is idempotent and expires; failures return a retryable error rather than
 claiming completion. A per-user advisory lock and live-request unique index reuse
 one deletion receipt across devices. The client keeps its verified session open

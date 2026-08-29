@@ -10,11 +10,11 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 ## Verified release-candidate evidence
 
 - Source and web publication commit
-  `f5ca34d875b443f0f6bed00a5af1275344efca9e` passed the GitHub
-  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33252508105) and
-  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33252508037) workflows.
+  `5e0fed5f2e5de8e21f1bbebb0ce109f37a6c317d` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33260297079) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33260297151) workflows.
   A second, manually dispatched
-  [Quality run](https://github.com/lilwoii/woiapp/actions/runs/33252854791)
+  [Quality run](https://github.com/lilwoii/woiapp/actions/runs/33277881881)
   produced the commit-bound Sites artifact after passing both the full
   PostgreSQL schema/migration/runtime replay and the independent shadow
   migration-order replay.
@@ -51,8 +51,8 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   marker until local cleanup is proven. Dispatch and receipt Edge contracts use
   fixed Expo endpoints, generic lock-screen copy, bounded provider batches,
   versioned token keys, and independent fail-closed worker/provider switches.
-- Sites version 49 was built, saved, and privately deployed from exact verified
-  web commit `f5ca34d875b443f0f6bed00a5af1275344efca9e` on 2026-08-29 UTC at
+- Sites version 50 was built, saved, and privately deployed from exact verified
+  web commit `5e0fed5f2e5de8e21f1bbebb0ce109f37a6c317d` on 2026-08-29 UTC at
   `https://noshatlas-live.lilwoi.chatgpt.site`. The access policy was rechecked
   immediately before deployment: the caller is the owner, custom access allows
   exactly one account user, and no workspace groups, tenant groups, or external
@@ -103,6 +103,13 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 - Public UGC, media, chat, home kitchens, imported provider listings, business
   claims, navigation, push, ordering, and paid promotion stay behind their
   existing fail-closed feature gates until their runbooks have live evidence.
+- Business-claim evidence intake remains disabled. The private retention
+  foundation defaults every migrated evidence object to legal hold, removes
+  raw paths from the public claim row, blocks ordinary cleanup, direct owner
+  deletion, and account-deletion manifests from erasing retained evidence, and
+  keeps purge behind a separate default-off service gate. Counsel must still
+  approve retention duration, hold release, purge, access, appeal, and deletion
+  precedence before document evidence or claims can be enabled.
 - Push now has a private encrypted-device, explicit-consent, outbox, delivery-
   lease, preference-RPC, revocation, and fail-closed Expo dispatch/receipt
   foundation. Its Expo provider and receipt lifecycle is implemented and

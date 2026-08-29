@@ -127,6 +127,14 @@ Deno.serve(async (request) => {
       }
 
       const admin = adminClient();
+      if (selectedPurpose === "claim_evidence") {
+        const { data: intakeEnabled, error: intakeGateError } = await admin.rpc(
+          "business_claim_evidence_intake_enabled",
+        );
+        if (intakeGateError || intakeEnabled !== true) {
+          throw new HttpError(503, "CLAIM_EVIDENCE_INTAKE_DISABLED");
+        }
+      }
       const { error: rateLimitError } = await admin.rpc("consume_media_stage_slot", {
         target_user_id: user.id,
         media_purpose: selectedPurpose,

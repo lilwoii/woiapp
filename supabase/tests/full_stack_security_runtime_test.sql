@@ -4060,4 +4060,330 @@ begin
 end;
 $home_kitchen_global_gate_private_cleanup$;
 
+do $business_claim_evidence_catalog_contract$
+declare
+  intake_enabled boolean;
+  purge_enabled boolean;
+begin
+  if has_table_privilege('anon', 'private.business_claim_evidence', 'select')
+    or has_table_privilege('authenticated', 'private.business_claim_evidence', 'select')
+    or has_table_privilege('service_role', 'private.business_claim_evidence', 'select')
+    or has_table_privilege('anon', 'private.business_claim_evidence_audit', 'select')
+    or has_table_privilege('authenticated', 'private.business_claim_evidence_audit', 'select')
+    or has_table_privilege('service_role', 'private.business_claim_evidence_audit', 'select')
+    or has_table_privilege(
+      'authenticated',
+      'private.business_claim_evidence_account_deletion_exceptions',
+      'select'
+    )
+    or has_table_privilege(
+      'service_role',
+      'private.business_claim_evidence_account_deletion_exceptions',
+      'select'
+    )
+    or has_table_privilege(
+      'authenticated',
+      'private.business_claim_evidence_purge_receipts',
+      'select'
+    )
+    or has_table_privilege(
+      'service_role',
+      'private.business_claim_evidence_purge_receipts',
+      'select'
+    )
+  then
+    raise exception 'Claim evidence or its audit trail is directly readable';
+  end if;
+
+  if has_function_privilege(
+      'anon',
+      'public.business_claim_evidence_intake_enabled()',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.business_claim_evidence_intake_enabled()',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.business_claim_evidence_intake_enabled()',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.prepare_business_claim_evidence_purge_batch()',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.prepare_business_claim_evidence_purge_batch()',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.finalize_business_claim_evidence_purge_batch(uuid,text[])',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.finalize_business_claim_evidence_purge_batch(uuid,text[])',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'private.is_protected_business_claim_evidence_path(text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'private.is_protected_business_claim_evidence_path(text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.media_quarantine_cleanup_manifest()',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.finalize_media_quarantine_cleanup(text[])',
+      'execute'
+    )
+  then
+    raise exception 'Claim-evidence service RPC ACL is unsafe';
+  end if;
+
+  select config.intake_enabled, config.purge_enabled
+  into intake_enabled, purge_enabled
+  from private.business_claim_evidence_runtime_config config
+  where config.singleton;
+  if coalesce(intake_enabled, true) or coalesce(purge_enabled, true) then
+    raise exception 'Claim-evidence runtime gates did not default off';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_constraint constraint_row
+    where constraint_row.conrelid = 'public.business_claims'::regclass
+      and constraint_row.conname = 'business_claims_legacy_evidence_path_retired'
+      and pg_catalog.pg_get_constraintdef(constraint_row.oid)
+        like '%evidence_private_path IS NULL%'
+  ) then
+    raise exception 'Legacy public claim-evidence path is not retired';
+  end if;
+
+  if exists (
+    select 1
+    from information_schema.columns column_row
+    where column_row.table_schema = 'private'
+      and column_row.table_name = 'business_claim_evidence_audit'
+      and column_row.column_name in ('storage_path', 'storage_path_hash', 'file_name', 'document_text')
+  ) then
+    raise exception 'Claim-evidence audit stores prohibited evidence detail';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_policies policy_row
+    where policy_row.schemaname = 'storage'
+      and policy_row.tablename = 'objects'
+      and policy_row.policyname = 'users delete own quarantine media'
+      and policy_row.qual like '%is_protected_business_claim_evidence_path%'
+  ) then
+    raise exception 'Quarantine deletion policy does not protect claim evidence';
+  end if;
+end;
+$business_claim_evidence_catalog_contract$;
+
+do $business_claim_evidence_runtime_contract$
+declare
+  deletion_user_id constant uuid := 'fa000000-0000-4000-8000-000000000001';
+  held_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg';
+  purge_path constant text := 'quarantine/cccccccc-cccc-4ccc-8ccc-cccccccccccc/dddddddd-dddd-4ddd-8ddd-dddddddddddd.png';
+  result jsonb;
+  purge_batch uuid;
+  retained_state text;
+  retained_path text;
+  retained_hash text;
+  deletion_request_id constant uuid := 'fe000000-0000-4000-8000-000000000001';
+begin
+  insert into auth.users (
+    id,
+    aud,
+    role,
+    email,
+    email_confirmed_at,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    created_at,
+    updated_at
+  ) values (
+    deletion_user_id,
+    'authenticated',
+    'authenticated',
+    'runtime-claim-evidence-delete@spottr.invalid',
+    now(),
+    '{}'::jsonb,
+    '{"username":"runtime_claim_evidence_delete","display_name":"Runtime Claim Evidence Delete","terms_accepted":true}'::jsonb,
+    now(),
+    now()
+  );
+
+  insert into private.business_claim_evidence (
+    claimant_id,
+    storage_path,
+    storage_path_hash
+  ) values (
+    deletion_user_id,
+    held_path,
+    encode(extensions.digest(held_path, 'sha256'), 'hex')
+  );
+
+  insert into private.media_cleanup_items (
+    storage_path,
+    owner_id,
+    reason
+  ) values (
+    held_path,
+    null,
+    'unregistered_upload'
+  );
+
+  result := public.prepare_media_cleanup_batch();
+  if (result->'storage_paths') ? held_path then
+    raise exception 'Generic cleanup claimed retained business-claim evidence';
+  end if;
+
+  insert into private.business_claim_evidence (
+    storage_path,
+    storage_path_hash,
+    lifecycle_state,
+    legal_hold,
+    retention_policy_version,
+    purge_after
+  ) values (
+    purge_path,
+    encode(extensions.digest(purge_path, 'sha256'), 'hex'),
+    'purge_eligible',
+    false,
+    'runtime-test-policy',
+    now() - interval '1 minute'
+  );
+
+  result := public.prepare_business_claim_evidence_purge_batch();
+  if coalesce((result->>'enabled')::boolean, true)
+    or result->>'batch_id' is not null
+    or jsonb_array_length(result->'storage_paths') <> 0
+  then
+    raise exception 'Disabled claim-evidence purge produced work';
+  end if;
+
+  update private.business_claim_evidence_runtime_config
+  set purge_enabled = true, updated_at = now()
+  where singleton;
+
+  result := public.prepare_business_claim_evidence_purge_batch();
+  purge_batch := (result->>'batch_id')::uuid;
+  if not coalesce((result->>'enabled')::boolean, false)
+    or purge_batch is null
+    or jsonb_array_length(result->'storage_paths') <> 1
+    or result->'storage_paths'->>0 <> purge_path
+  then
+    raise exception 'Enabled claim-evidence purge did not claim the exact eligible path';
+  end if;
+
+  result := public.finalize_business_claim_evidence_purge_batch(
+    purge_batch,
+    array[purge_path]
+  );
+  if coalesce((result->>'finalized_count')::integer, 0) <> 1 then
+    raise exception 'Claim-evidence purge receipt did not finalize exactly one item';
+  end if;
+
+  result := public.finalize_business_claim_evidence_purge_batch(
+    purge_batch,
+    array[purge_path]
+  );
+  if coalesce((result->>'finalized_count')::integer, 0) <> 1
+    or not coalesce((result->>'already_finalized')::boolean, false)
+    or not exists (
+      select 1
+      from private.business_claim_evidence_purge_receipts receipt
+      where receipt.batch_id = purge_batch
+        and receipt.state = 'finalized'
+        and receipt.finalized_at is not null
+        and receipt.item_count = 1
+    )
+  then
+    raise exception 'Claim-evidence purge receipt replay was not idempotent';
+  end if;
+
+  select evidence.lifecycle_state, evidence.storage_path, evidence.storage_path_hash
+  into retained_state, retained_path, retained_hash
+  from private.business_claim_evidence evidence
+  where evidence.storage_path_hash = encode(
+    extensions.digest(purge_path, 'sha256'),
+    'hex'
+  );
+  if retained_state <> 'purged'
+    or retained_path is not null
+    or retained_hash is null
+  then
+    raise exception 'Claim-evidence purge did not retain a path-free tombstone';
+  end if;
+
+  select evidence.lifecycle_state, evidence.storage_path
+  into retained_state, retained_path
+  from private.business_claim_evidence evidence
+  where evidence.storage_path_hash = encode(
+    extensions.digest(held_path, 'sha256'),
+    'hex'
+  );
+  if retained_state <> 'retained' or retained_path <> held_path then
+    raise exception 'Legal-held claim evidence changed during purge';
+  end if;
+
+  insert into private.account_deletion_requests (
+    id,
+    user_id,
+    request_fingerprint,
+    state,
+    expires_at
+  ) values (
+    deletion_request_id,
+    deletion_user_id,
+    repeat('e', 64),
+    'processing',
+    now() + interval '24 hours'
+  );
+  insert into private.account_deletion_freezes (user_id, request_id)
+  values (deletion_user_id, deletion_request_id);
+
+  result := public.prepare_account_deletion_storage_batch(
+    deletion_request_id,
+    deletion_user_id
+  );
+  if not coalesce((result->>'ready')::boolean, false)
+    or coalesce((result->>'preserved_evidence_count')::integer, 0) <> 1
+    or (result->'storage_paths') ? held_path
+    or not exists (
+      select 1
+      from private.business_claim_evidence_account_deletion_exceptions exception_row
+      join private.business_claim_evidence evidence
+        on evidence.id = exception_row.evidence_id
+      where exception_row.request_id = deletion_request_id
+        and evidence.storage_path = held_path
+        and exception_row.reason = 'retention_boundary'
+    )
+  then
+    raise exception 'Account deletion did not preserve held claim evidence exactly';
+  end if;
+
+  update private.business_claim_evidence_runtime_config
+  set purge_enabled = false, updated_at = now()
+  where singleton;
+end;
+$business_claim_evidence_runtime_contract$;
+
 rollback;

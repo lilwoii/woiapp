@@ -342,6 +342,18 @@ ingestion/lifecycle share a tested lock or signed-epoch protocol. A legally
 approved, claim-specific evidence retention/hold/purge policy and worker must
 also exist before document evidence is accepted.
 
+Migration `20261004000000_business_claim_evidence_retention_foundation.sql`
+moves legacy evidence references into private metadata, defaults them to legal
+hold, retires the public raw-path column, protects retained paths from generic
+media cleanup, direct authenticated quarantine deletion, and account-deletion
+storage manifests, and records an account-deletion preservation exception.
+Evidence intake and purge both default off. The bounded purge RPC is only a
+disabled receipt boundary; it is not authorization to release a hold or a
+retention schedule. Pause media-cleanup and account-deletion workers while this
+migration is applied to an existing environment, investigate any fail-closed
+legacy-path preflight error, and do not enable either gate until counsel and the
+security reviewer approve the exact production policy and worker.
+
 ### Home kitchens
 
 Keep `EXPO_PUBLIC_HOME_KITCHENS_ENABLED=false` until each enabled jurisdiction
