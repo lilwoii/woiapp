@@ -10,7 +10,7 @@ const setupScreen = await Deno.readTextFile(
   new URL("../../app/business-setup.tsx", import.meta.url),
 );
 const onboardingScreen = await Deno.readTextFile(
-  new URL("../../app/business-onboarding.tsx", import.meta.url),
+  new URL("../../components/business-onboarding-screen.tsx", import.meta.url),
 );
 const studioScreen = await Deno.readTextFile(
   new URL("../../app/(tabs)/studio.tsx", import.meta.url),

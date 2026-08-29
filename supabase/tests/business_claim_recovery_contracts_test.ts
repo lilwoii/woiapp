@@ -4,7 +4,13 @@ const api = await Deno.readTextFile(
   new URL("../../lib/marketplace-api.ts", import.meta.url),
 );
 const onboarding = await Deno.readTextFile(
+  new URL("../../components/business-onboarding-screen.tsx", import.meta.url),
+);
+const onboardingRoute = await Deno.readTextFile(
   new URL("../../app/business-onboarding.tsx", import.meta.url),
+);
+const recoveryPanel = await Deno.readTextFile(
+  new URL("../../components/business-claim-recovery-panel.tsx", import.meta.url),
 );
 const types = await Deno.readTextFile(
   new URL("../../types/marketplace.ts", import.meta.url),
@@ -159,23 +165,45 @@ Deno.test("claim receipts preserve server identifiers and valid states", () => {
 
 Deno.test("onboarding claim status stays flag-gated and handles recovery states", () => {
   const statuses = ["pending", "approved", "rejected", "withdrawn"];
-  assertMatch(onboarding, /featureFlags\.businessClaims \? \(/);
-  assertMatch(onboarding, /Your ownership claims/);
-  assertMatch(onboarding, /claimsLoading/);
-  assertMatch(onboarding, /claimsError/);
-  assertMatch(onboarding, /Retry loading ownership claims/);
-  assertMatch(onboarding, /withdrawingClaimId/);
-  assertMatch(onboarding, /claimsRequestGeneration/);
-  assertMatch(onboarding, /claimMutationGeneration/);
-  for (const state of statuses) assertMatch(onboarding, new RegExp(`${state}:`));
-  assertMatch(onboarding, /Verification evidence and reviewer details are never shown here/);
-  assertMatch(onboarding, /confirmAction\(\{[\s\S]+Withdraw this ownership claim/);
-  assertMatch(onboarding, /Refresh ownership claims/);
+  assertMatch(
+    onboarding,
+    /const LazyBusinessClaimRecoveryPanel = lazy\([\s\S]+import\('@\/components\/business-claim-recovery-panel'\)/,
+  );
+  assertMatch(
+    onboardingRoute,
+    /const BusinessOnboardingScreen = lazy\([\s\S]+import\('@\/components\/business-onboarding-screen'\)/,
+  );
+  assertMatch(onboardingRoute, /<Suspense fallback=\{<BusinessOnboardingLoading \/>\}>/);
+  assertMatch(onboarding, /featureFlags\.businessClaims \? \([\s\S]+<Suspense/);
+  assertMatch(onboarding, /class ClaimRecoveryBoundary extends Component/);
+  assertMatch(onboarding, /<ClaimRecoveryBoundary>[\s\S]+<Suspense/);
+  assertMatch(onboarding, /Claim history is temporarily unavailable/);
+  assertMatch(onboarding, /You can continue adding or claiming a business/);
+  assertMatch(onboarding, /<LazyBusinessClaimRecoveryPanel/);
+  assertMatch(onboarding, /expectedUserId=\{expectedUserId\}/);
+  assertMatch(onboarding, /secureSession=\{secureSession\}/);
+  assertMatch(onboarding, /refreshToken=\{claimsRefreshToken\}/);
+  assertMatch(onboarding, /setClaimsRefreshToken\(\(current\) => current \+ 1\)/);
+  assert(!onboarding.includes("fetchMyBusinessClaims"));
+  assert(!onboarding.includes("withdrawBusinessClaim"));
+  assert(!onboarding.includes("claimsRequestGeneration"));
+  assert(!onboarding.includes("claimMutationGeneration"));
+
+  assertMatch(recoveryPanel, /useAuth\(\)/);
+  assertMatch(recoveryPanel, /featureFlags\.businessClaims/);
+  assertMatch(recoveryPanel, /fetchMyBusinessClaims\(accountAtStart\)/);
+  assertMatch(recoveryPanel, /withdrawBusinessClaim\(claim\.id, accountAtStart\)/);
+  assertMatch(recoveryPanel, /claimsRequestGeneration/);
+  assertMatch(recoveryPanel, /claimMutationGeneration/);
+  for (const state of statuses) assertMatch(recoveryPanel, new RegExp(`${state}:`));
+  assertMatch(recoveryPanel, /Verification evidence and reviewer details are never shown here/);
+  assertMatch(recoveryPanel, /confirmAction\(\{[\s\S]+Withdraw this ownership claim/);
+  assertMatch(recoveryPanel, /Refresh ownership claims/);
   assertMatch(onboarding, /const \[selectedClaimId, setSelectedClaimId\] = useState<string \| null>\(null\)/);
   assertMatch(onboarding, /place\.publicationState === 'published'/);
   assertMatch(onboarding, /place\.sourceLabel === 'Licensed provider'/);
   assertMatch(onboarding, /place\.sourceLabel === 'Community added'/);
   assertMatch(onboarding, /const selectedClaim = claimMatches\.find/);
-  assertMatch(onboarding, /claimRefreshButton:[\s\S]+minHeight: 44/);
-  assertMatch(onboarding, /claimWithdrawButton:[\s\S]+minHeight: 44/);
+  assertMatch(recoveryPanel, /claimRefreshButton:[\s\S]+minHeight: 44/);
+  assertMatch(recoveryPanel, /claimWithdrawButton:[\s\S]+minHeight: 44/);
 });

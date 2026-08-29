@@ -20,7 +20,7 @@ const marketplaceApi = await Deno.readTextFile(
   new URL("../../lib/marketplace-api.ts", import.meta.url),
 );
 const onboarding = await Deno.readTextFile(
-  new URL("../../app/business-onboarding.tsx", import.meta.url),
+  new URL("../../components/business-onboarding-screen.tsx", import.meta.url),
 );
 const place = await Deno.readTextFile(
   new URL("../../app/place/[id].tsx", import.meta.url),
