@@ -1089,6 +1089,17 @@ end;
 $mobile_submission_public_projection$;
 reset role;
 
+-- The reviewed logo fixture is complete at this point. Retire only its
+-- serialized upload capability so it cannot leak into the independent
+-- account-deletion seal scenarios later in this rollback-only test.
+update private.media_stage_grants
+set
+  state = 'cancelled',
+  registered_asset_id = null,
+  updated_at = now()
+where storage_path =
+  'quarantine/10000000-0000-4000-8000-000000000001/79100000-0000-4000-8000-000000000009.jpg';
+
 insert into public.pricing_versions (
   id, version, region_code, currency, click_floor_minor, click_ceiling_minor,
   state, effective_at, approval_reference, approved_at

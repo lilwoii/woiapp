@@ -90,6 +90,14 @@ Deno.test("public discovery rejects unknown fields and unbounded requests", () =
 });
 
 Deno.test("gateway is anonymous-JWT optional but fail-closed for identity and source safety", () => {
+  const inventoryLoaderStart = discoveryScreen.indexOf("const loadMapInventory = useCallback");
+  const inventoryLoaderEnd = discoveryScreen.indexOf(
+    "const invalidateMapInventory = useCallback",
+    inventoryLoaderStart,
+  );
+  assert(inventoryLoaderStart >= 0 && inventoryLoaderEnd > inventoryLoaderStart);
+  const inventoryLoader = discoveryScreen.slice(inventoryLoaderStart, inventoryLoaderEnd);
+
   assertEquals(PUBLIC_DISCOVERY_MAX_BYTES, 4_096);
   assertMatch(index, /timingSafeEqual\(token, requiredEnvironment\("SUPABASE_ANON_KEY"\)\)/);
   assertMatch(index, /fetch\(authUrl,[\s\S]+signal: controller\.signal/);
@@ -115,8 +123,9 @@ Deno.test("gateway is anonymous-JWT optional but fail-closed for identity and so
   );
   assertMatch(sharedHttp, /request\.body\.getReader\(\)/);
   assert(!sharedHttp.includes("await request.text()"));
+  assertMatch(inventoryLoader, /setMapInventoryFeatures\(\[\]\);\s+setMapMarkersSuppressed\(true\);/);
   assertMatch(
-    discoveryScreen,
-    /if \(!result\.ok\) \{\s+\/\/ Keep the last verified inventory[\s\S]+?return result;\s+\}/,
+    inventoryLoader,
+    /if \(!result\.ok\) \{\s+setMapInventoryError\('Map places could not refresh\. The verified list is still available\.'\);\s+return result;\s+\}/,
   );
 });
