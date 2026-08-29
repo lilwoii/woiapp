@@ -9,14 +9,13 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 
 ## Verified release-candidate evidence
 
-- Source commit `07484e25f31d35ee6f314ffa8260ac31ad9c438b` passed the GitHub
-  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33230933330) and
-  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33230933444) workflows.
-  The last web publication source, commit
-  `cf76a56b424f19991bb480b162d7f07a9113ec85`, also passed both workflows. A
-  second green
-  [artifact run](https://github.com/lilwoii/woiapp/actions/runs/33224557558)
-  produced the commit-bound Sites release bundle.
+- Source and web publication commit
+  `a5bd8c90fc3ec1177f92101636353d18c6ae3b8a` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33239235434) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33239235413) workflows.
+  The Quality run produced the commit-bound Sites artifact and passed both the
+  full PostgreSQL schema/migration/runtime replay and the independent shadow
+  migration-order replay.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
   Edge contracts, Expo alignment and Doctor, iOS and Android exports,
@@ -50,10 +49,12 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   marker until local cleanup is proven. Dispatch and receipt Edge contracts use
   fixed Expo endpoints, generic lock-screen copy, bounded provider batches,
   versioned token keys, and independent fail-closed worker/provider switches.
-- Sites version 46 was built from exact verified web commit
-  `cf76a56b424f19991bb480b162d7f07a9113ec85` and deployed to
-  `https://noshatlas-live.lilwoi.chatgpt.site` with owner-only access.
-  Anonymous requests return `401`, proving it is not publicly accessible.
+- Sites version 47 was built, saved, and privately deployed from exact verified
+  web commit `a5bd8c90fc3ec1177f92101636353d18c6ae3b8a` on 2026-08-29 UTC at
+  `https://noshatlas-live.lilwoi.chatgpt.site`. The access policy was rechecked
+  immediately before deployment: the caller is the owner, custom access allows
+  exactly one account user, and no workspace groups, tenant groups, or external
+  visitors are allowed.
 
 ## Public-launch blockers
 
