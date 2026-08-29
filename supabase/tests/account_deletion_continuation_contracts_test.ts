@@ -207,7 +207,7 @@ Deno.test("anonymous and replacement session commits are epoch-bound", () => {
     finalGuard,
   );
   const anonymousReservation = authContext.indexOf(
-    "token: sessionHydration.begin(null)",
+    "token: publishSessionHydration(sessionHydration.begin(null))",
     expectedUserGuard,
   );
   assert(

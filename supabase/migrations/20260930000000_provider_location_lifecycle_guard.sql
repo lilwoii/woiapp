@@ -875,8 +875,8 @@ begin
     or position('st_intersects(bl.point' in normalized_map_definition) = 0
     or position('redactedasmaterialized' in normalized_map_definition) = 0
     or position(
-      'st_intersects(redacted.safe_point::public.geography',
-      normalized_map_definition
+      'st_intersects(redacted.safe_point::public.geography'
+      in normalized_map_definition
     ) = 0
     or position('st_y(redacted.safe_point)' in normalized_map_definition) = 0
     or position('st_x(redacted.safe_point)' in normalized_map_definition) = 0
