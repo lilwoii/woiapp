@@ -564,6 +564,11 @@ where id = '70000000-0000-4000-8000-000000000007';
 
 -- Reports against already-approved reviews must be visible to staff and must
 -- have an audited, optimistic-locking keep/remove path.
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal1"}',
+  true
+);
 insert into public.reviews (
   id, business_id, author_id, rating, body, moderation
 ) values (
