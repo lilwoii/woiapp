@@ -92,6 +92,7 @@ Deno.serve(async (request) => {
     if (outboxError) throw new HttpError(503, "NOTIFICATION_OUTBOX_CLAIM_FAILED");
     const outbox = parseOutboxClaims(rawOutbox ?? [], command.outboxBatchSize);
     let expandedDeliveries = 0;
+    let recipientBatchSaturated = false;
     for (const claim of outbox) {
       const { data, error } = await admin.rpc("expand_notification_outbox_server", {
         target_outbox_id: claim.outbox_id,
@@ -101,7 +102,9 @@ Deno.serve(async (request) => {
       if (error || !Number.isSafeInteger(data) || Number(data) < 0) {
         throw new HttpError(503, "NOTIFICATION_OUTBOX_EXPANSION_FAILED");
       }
-      expandedDeliveries += Number(data);
+      const expanded = Number(data);
+      expandedDeliveries += expanded;
+      if (expanded === command.recipientBatchSize) recipientBatchSaturated = true;
     }
 
     const { data: rawDeliveries, error: deliveryError } = await admin.rpc(
@@ -198,6 +201,8 @@ Deno.serve(async (request) => {
       unknown,
       retry,
       dead,
+      more_work: outbox.length === command.outboxBatchSize ||
+        recipientBatchSaturated || deliveries.length === command.deliveryBatchSize,
     });
   } catch (error) {
     return publicError(error);

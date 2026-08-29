@@ -12,7 +12,15 @@ const VALID_ENV = {
   SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY: 'service-role-key-that-is-long-enough-for-testing-only',
   SPOTTR_ACCOUNT_DELETE_WORKER_SECRET: 'delete-worker-secret-that-is-long-enough',
   SPOTTR_MEDIA_CLEANUP_SECRET: 'media-cleanup-secret-that-is-long-enough',
+  SPOTTR_MAINTENANCE_PUSH_ENABLED: 'false',
   SPOTTR_MAINTENANCE_HEARTBEAT_URL: 'https://heartbeat.example.test/spottr',
+};
+
+const PUSH_ENABLED_ENV = {
+  ...VALID_ENV,
+  SPOTTR_MAINTENANCE_PUSH_ENABLED: 'true',
+  SPOTTR_PUSH_DISPATCH_SECRET: 'dispatch-worker-secret-that-is-long-enough',
+  SPOTTR_PUSH_RECEIPT_SECRET: 'receipt-worker-secret-that-is-long-enough',
 };
 
 function response(body, status = 200) {
@@ -42,6 +50,34 @@ function completeQuoteExpiry() {
 
 function completeOrderExpiry() {
   return response({ expired: 0, more_work: false, skipped: false });
+}
+
+function completePushDispatch(overrides = {}) {
+  return response({
+    status: 'complete',
+    outbox_claimed: 1,
+    deliveries_expanded: 2,
+    deliveries_claimed: 2,
+    accepted: 1,
+    unknown: 0,
+    retry: 1,
+    dead: 0,
+    more_work: false,
+    ...overrides,
+  });
+}
+
+function completePushReceipts(overrides = {}) {
+  return response({
+    status: 'complete',
+    receipts_claimed: 2,
+    delivered: 1,
+    retry: 0,
+    failed: 0,
+    invalid: 1,
+    more_work: false,
+    ...overrides,
+  });
 }
 
 test('maintenance configuration rejects non-HTTPS and non-Supabase origins', () => {
@@ -89,6 +125,8 @@ test('maintenance drains bounded deletion work and runs every bounded cleanup', 
   assert.equal(summary.deletionStatus, 'idle');
   assert.equal(summary.quoteExpiry, 'complete');
   assert.equal(summary.orderExpiry, 'complete');
+  assert.equal(summary.pushDispatch, 'disabled');
+  assert.equal(summary.pushReceipts, 'disabled');
   assert.equal(calls.length, 11);
   assert.match(calls[2].url, /\/functions\/v1\/media-cleanup$/);
   assert.match(calls[3].url, /\/rpc\/cleanup_marketplace_chat_ephemera$/);
@@ -104,6 +142,156 @@ test('maintenance drains bounded deletion work and runs every bounded cleanup', 
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${VALID_ENV.SPOTTR_ACCOUNT_DELETE_WORKER_SECRET}`);
   assert.equal(calls[3].init.headers.apikey, VALID_ENV.SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY);
 });
+
+test('maintenance runs bounded push dispatch and receipt polling before its heartbeat', async () => {
+  const calls = [];
+  const queue = [
+    response({ status: 'idle' }),
+    response({ status: 'complete' }),
+    response({ requests_expired: 0 }),
+    response({ requests_cancelled: 0 }),
+    completeQuoteExpiry(),
+    completeOrderExpiry(),
+    response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    completeProviderLifecycle(),
+    completeSponsoredReservations(),
+    completePushDispatch(),
+    completePushReceipts(),
+    response(null),
+  ];
+  const summary = await runProductionMaintenance({
+    config: readMaintenanceConfiguration(PUSH_ENABLED_ENV),
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return queue.shift();
+    },
+    log: () => {},
+  });
+
+  assert.equal(summary.pushDispatch, 'complete');
+  assert.equal(summary.pushReceipts, 'complete');
+  assert.equal(calls.length, 12);
+  assert.match(calls[9].url, /\/functions\/v1\/notification-dispatch$/);
+  assert.deepEqual(JSON.parse(calls[9].init.body), {
+    outboxBatchSize: 20,
+    recipientBatchSize: 200,
+    deliveryBatchSize: 50,
+  });
+  assert.equal(
+    calls[9].init.headers.Authorization,
+    `Bearer ${PUSH_ENABLED_ENV.SPOTTR_PUSH_DISPATCH_SECRET}`,
+  );
+  assert.match(calls[10].url, /\/functions\/v1\/notification-receipt$/);
+  assert.deepEqual(JSON.parse(calls[10].init.body), { batchSize: 100 });
+  assert.equal(
+    calls[10].init.headers.Authorization,
+    `Bearer ${PUSH_ENABLED_ENV.SPOTTR_PUSH_RECEIPT_SECRET}`,
+  );
+  assert.equal(calls[11].url, VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL);
+});
+
+test('maintenance withholds heartbeat when push worker counts are inconsistent', async () => {
+  const calls = [];
+  const queue = [
+    response({ status: 'idle' }),
+    response({ status: 'complete' }),
+    response({ requests_expired: 0 }),
+    response({ requests_cancelled: 0 }),
+    completeQuoteExpiry(),
+    completeOrderExpiry(),
+    response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    completeProviderLifecycle(),
+    completeSponsoredReservations(),
+    completePushDispatch({ accepted: 2, retry: 1 }),
+  ];
+
+  await assert.rejects(
+    runProductionMaintenance({
+      config: readMaintenanceConfiguration(PUSH_ENABLED_ENV),
+      fetchImpl: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return queue.shift();
+      },
+      log: () => {},
+    }),
+    /inconsistent delivery counts/,
+  );
+  assert.equal(calls.length, 10);
+  assert.equal(
+    calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
+    false,
+  );
+});
+
+test('maintenance withholds heartbeat when receipt worker counts are inconsistent', async () => {
+  const calls = [];
+  const queue = [
+    response({ status: 'idle' }),
+    response({ status: 'complete' }),
+    response({ requests_expired: 0 }),
+    response({ requests_cancelled: 0 }),
+    completeQuoteExpiry(),
+    completeOrderExpiry(),
+    response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    completeProviderLifecycle(),
+    completeSponsoredReservations(),
+    completePushDispatch(),
+    completePushReceipts({ delivered: 2, invalid: 1 }),
+  ];
+
+  await assert.rejects(
+    runProductionMaintenance({
+      config: readMaintenanceConfiguration(PUSH_ENABLED_ENV),
+      fetchImpl: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return queue.shift();
+      },
+      log: () => {},
+    }),
+    /inconsistent receipt counts/,
+  );
+  assert.equal(calls.length, 11);
+  assert.equal(
+    calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
+    false,
+  );
+});
+
+for (const phase of ['dispatch', 'receipt']) {
+  test(`maintenance withholds heartbeat while notification ${phase} has a backlog`, async () => {
+    const calls = [];
+    const queue = [
+      response({ status: 'idle' }),
+      response({ status: 'complete' }),
+      response({ requests_expired: 0 }),
+      response({ requests_cancelled: 0 }),
+      completeQuoteExpiry(),
+      completeOrderExpiry(),
+      response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+      completeProviderLifecycle(),
+      completeSponsoredReservations(),
+      completePushDispatch({ more_work: phase === 'dispatch' }),
+      ...(phase === 'receipt' ? [completePushReceipts({ more_work: true })] : []),
+    ];
+
+    await assert.rejects(
+      runProductionMaintenance({
+        config: readMaintenanceConfiguration(PUSH_ENABLED_ENV),
+        fetchImpl: async (url, init) => {
+          calls.push({ url: String(url), init });
+          return queue.shift();
+        },
+        log: () => {},
+      }),
+      new RegExp(`notification-${phase} did not report bounded completion`),
+    );
+    assert.equal(calls.length, phase === 'dispatch' ? 10 : 11);
+    assert.equal(
+      calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
+      false,
+    );
+  });
+}
 
 test('maintenance accepts a retryable receipt-finalization wait', async () => {
   const queue = [
@@ -327,6 +515,36 @@ test('maintenance withholds heartbeat while provider lifecycle work remains', as
   );
 });
 
+test('maintenance requires an exact push scheduler gate and independent worker secrets', () => {
+  assert.throws(
+    () => readMaintenanceConfiguration({
+      ...VALID_ENV,
+      SPOTTR_MAINTENANCE_PUSH_ENABLED: 'yes',
+    }),
+    /exactly true or false/,
+  );
+  assert.throws(
+    () => readMaintenanceConfiguration({
+      ...VALID_ENV,
+      SPOTTR_MAINTENANCE_PUSH_ENABLED: 'true',
+    }),
+    /SPOTTR_PUSH_DISPATCH_SECRET/,
+  );
+  assert.throws(
+    () => readMaintenanceConfiguration({
+      ...VALID_ENV,
+      SPOTTR_MAINTENANCE_PUSH_ENABLED: 'true',
+      SPOTTR_PUSH_DISPATCH_SECRET: PUSH_ENABLED_ENV.SPOTTR_PUSH_DISPATCH_SECRET,
+    }),
+    /SPOTTR_PUSH_RECEIPT_SECRET/,
+  );
+  assert.equal(readMaintenanceConfiguration(VALID_ENV).push, null);
+  assert.deepEqual(readMaintenanceConfiguration(PUSH_ENABLED_ENV).push, {
+    dispatchSecret: PUSH_ENABLED_ENV.SPOTTR_PUSH_DISPATCH_SECRET,
+    receiptSecret: PUSH_ENABLED_ENV.SPOTTR_PUSH_RECEIPT_SECRET,
+  });
+});
+
 test('maintenance withholds heartbeat while sponsored reservations remain', async () => {
   const calls = [];
   const queue = [
@@ -384,13 +602,13 @@ test('privileged maintenance workflow pins actions and scopes production secrets
   assert.ok(stepsOffset > 0);
   assert.doesNotMatch(
     maintenanceWorkflow.slice(0, stepsOffset),
-    /SPOTTR_MAINTENANCE_|SPOTTR_ACCOUNT_DELETE_|SPOTTR_MEDIA_CLEANUP_/u,
+    /SPOTTR_(?:MAINTENANCE|ACCOUNT_DELETE|MEDIA_CLEANUP|PUSH_)/u,
   );
   assert.match(maintenanceWorkflow, /uses: actions\/checkout@[0-9a-f]{40} # v6/u);
   assert.match(maintenanceWorkflow, /uses: actions\/setup-node@[0-9a-f]{40} # v6/u);
   assert.doesNotMatch(maintenanceWorkflow, /uses: [^\s]+@(v\d+|main|master)(?:\s|$)/u);
   const maintenanceStep = maintenanceWorkflow.slice(
-    maintenanceWorkflow.indexOf('      - name: Run bounded deletion'),
+    maintenanceWorkflow.indexOf('      - name: Run bounded production maintenance'),
   );
   for (const name of [
     'SPOTTR_MAINTENANCE_SUPABASE_URL',
@@ -398,10 +616,16 @@ test('privileged maintenance workflow pins actions and scopes production secrets
     'SPOTTR_ACCOUNT_DELETE_WORKER_SECRET',
     'SPOTTR_MEDIA_CLEANUP_SECRET',
     'SPOTTR_MAINTENANCE_HEARTBEAT_URL',
+    'SPOTTR_PUSH_DISPATCH_SECRET',
+    'SPOTTR_PUSH_RECEIPT_SECRET',
   ]) {
     assert.match(
       maintenanceStep,
       new RegExp(`\\n          ${name}: \\$\\{\\{ secrets\\.${name} \\}\\}`),
     );
   }
+  assert.match(
+    maintenanceStep,
+    /\n          SPOTTR_MAINTENANCE_PUSH_ENABLED: \$\{\{ vars\.SPOTTR_MAINTENANCE_PUSH_ENABLED \|\| 'false' \}\}/u,
+  );
 });

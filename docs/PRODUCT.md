@@ -102,7 +102,9 @@ or push delivery unless their separate gates are complete.
   deployed and consent, provider receipts, quiet hours, unsubscribe, signed-
   device behavior, credentials, and operational evidence are accepted. A
   fail-closed Expo dispatch/receipt adapter exists, but every provider, worker,
-  database, and client gate remains disabled pending live acceptance.
+  database, scheduler, and client gate remains disabled pending live
+  acceptance. The checked-in maintenance control plane can invoke both workers
+  in bounded phases once its separate protected gate is explicitly enabled.
 - Licensed provider inventory with contractual attribution, field-level
   provenance, refresh, correction, caching, and deletion rules
 - Owner-authorized menu OCR into review-before-publish drafts

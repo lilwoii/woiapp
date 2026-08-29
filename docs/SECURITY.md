@@ -140,6 +140,13 @@ route and public-event identifier. An ambiguous send is recorded as `unknown`
 and is never blindly retried. Receipt checks begin after the provider's minimum
 recommended delay, do not resend content, and retire devices reported as
 `DeviceNotRegistered`. All provider and worker gates default false.
+The production-maintenance scheduler path adds another default-false gate and
+separate dispatch/receipt worker secrets. It sends only fixed bounded commands,
+rejects malformed or inconsistent counters, treats a saturated batch as a
+backlog, and withholds its success heartbeat if either push phase fails. It does
+not log response bodies, tickets, tokens, or provider errors. Production
+activation and missed-heartbeat evidence remain external acceptance
+requirements.
 
 The production privacy policy must disclose this behavior and the actual
 retention periods. The deletion drill in [RELEASE.md](RELEASE.md) must prove the

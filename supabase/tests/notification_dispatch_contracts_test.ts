@@ -233,6 +233,11 @@ Deno.test("dispatch storage, RPCs, functions, and runtime switches stay private 
   );
   assert(dispatch.includes("AbortSignal.timeout(10_000)"));
   assert(receipt.includes("AbortSignal.timeout(10_000)"));
+  assertMatch(
+    dispatch,
+    /more_work: outbox\.length === command\.outboxBatchSize[\s\S]+recipientBatchSaturated[\s\S]+deliveries\.length === command\.deliveryBatchSize/,
+  );
+  assertMatch(receipt, /more_work: claims\.length === command\.batchSize/);
   assert(!dispatch.includes("console.log"));
   assert(!receipt.includes("console.log"));
   assertMatch(

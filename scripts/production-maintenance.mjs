@@ -2,6 +2,12 @@ import { pathToFileURL } from 'node:url';
 
 const MAX_DELETE_WORKER_CALLS = 10;
 const REQUEST_TIMEOUT_MS = 25_000;
+const PUSH_DISPATCH_COMMAND = Object.freeze({
+  outboxBatchSize: 20,
+  recipientBatchSize: 200,
+  deliveryBatchSize: 50,
+});
+const PUSH_RECEIPT_COMMAND = Object.freeze({ batchSize: 100 });
 
 function requiredSecret(env, name, minimumLength = 32) {
   const value = env[name]?.trim();
@@ -23,6 +29,104 @@ function requiredHttpsUrl(env, name) {
     throw new Error(`${name} must be a credential-free HTTPS URL without a fragment.`);
   }
   return parsed;
+}
+
+function optionalBoolean(env, name) {
+  const value = env[name]?.trim() ?? '';
+  if (!value || value === 'false') return false;
+  if (value === 'true') return true;
+  throw new Error(`${name} must be exactly true or false.`);
+}
+
+function nonNegativeInteger(value, name, maximum = Number.MAX_SAFE_INTEGER) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+    throw new Error(`${name} returned an invalid bounded count.`);
+  }
+  return value;
+}
+
+function validatePushDispatchResult(result) {
+  if (!result || typeof result !== 'object' || result.status !== 'complete') {
+    throw new Error('notification-dispatch did not report completion.');
+  }
+  if (result.more_work !== false) {
+    throw new Error('notification-dispatch did not report bounded completion.');
+  }
+  const outboxClaimed = nonNegativeInteger(
+    result.outbox_claimed,
+    'notification-dispatch outbox_claimed',
+    PUSH_DISPATCH_COMMAND.outboxBatchSize,
+  );
+  nonNegativeInteger(
+    result.deliveries_expanded,
+    'notification-dispatch deliveries_expanded',
+    outboxClaimed * PUSH_DISPATCH_COMMAND.recipientBatchSize,
+  );
+  const deliveriesClaimed = nonNegativeInteger(
+    result.deliveries_claimed,
+    'notification-dispatch deliveries_claimed',
+    PUSH_DISPATCH_COMMAND.deliveryBatchSize,
+  );
+  const accepted = nonNegativeInteger(
+    result.accepted,
+    'notification-dispatch accepted',
+    deliveriesClaimed,
+  );
+  const unknown = nonNegativeInteger(
+    result.unknown,
+    'notification-dispatch unknown',
+    deliveriesClaimed,
+  );
+  const retry = nonNegativeInteger(
+    result.retry,
+    'notification-dispatch retry',
+    deliveriesClaimed,
+  );
+  const dead = nonNegativeInteger(
+    result.dead,
+    'notification-dispatch dead',
+    deliveriesClaimed,
+  );
+  if (accepted + unknown + retry + dead !== deliveriesClaimed) {
+    throw new Error('notification-dispatch returned inconsistent delivery counts.');
+  }
+}
+
+function validatePushReceiptResult(result) {
+  if (!result || typeof result !== 'object' || result.status !== 'complete') {
+    throw new Error('notification-receipt did not report completion.');
+  }
+  if (result.more_work !== false) {
+    throw new Error('notification-receipt did not report bounded completion.');
+  }
+  const receiptsClaimed = nonNegativeInteger(
+    result.receipts_claimed,
+    'notification-receipt receipts_claimed',
+    PUSH_RECEIPT_COMMAND.batchSize,
+  );
+  const delivered = nonNegativeInteger(
+    result.delivered,
+    'notification-receipt delivered',
+    receiptsClaimed,
+  );
+  const retry = nonNegativeInteger(
+    result.retry,
+    'notification-receipt retry',
+    receiptsClaimed,
+  );
+  const failed = nonNegativeInteger(
+    result.failed,
+    'notification-receipt failed',
+    receiptsClaimed,
+  );
+  const invalid = nonNegativeInteger(
+    result.invalid,
+    'notification-receipt invalid',
+    receiptsClaimed,
+  );
+  if (delivered + retry + failed + invalid !== receiptsClaimed) {
+    throw new Error('notification-receipt returned inconsistent receipt counts.');
+  }
 }
 
 async function requestJson(fetchImpl, label, url, init) {
@@ -61,11 +165,18 @@ export function readMaintenanceConfiguration(env = process.env) {
   if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(supabaseUrl.href)) {
     throw new Error('SPOTTR_MAINTENANCE_SUPABASE_URL must be a Supabase project origin.');
   }
+  const pushEnabled = optionalBoolean(env, 'SPOTTR_MAINTENANCE_PUSH_ENABLED');
   return {
     supabaseOrigin: supabaseUrl.href.replace(/\/$/, ''),
     serviceRoleKey: requiredSecret(env, 'SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY', 40),
     accountDeleteSecret: requiredSecret(env, 'SPOTTR_ACCOUNT_DELETE_WORKER_SECRET'),
     mediaCleanupSecret: requiredSecret(env, 'SPOTTR_MEDIA_CLEANUP_SECRET'),
+    push: pushEnabled
+      ? {
+        dispatchSecret: requiredSecret(env, 'SPOTTR_PUSH_DISPATCH_SECRET'),
+        receiptSecret: requiredSecret(env, 'SPOTTR_PUSH_RECEIPT_SECRET'),
+      }
+      : null,
     heartbeatUrl: requiredHttpsUrl(env, 'SPOTTR_MAINTENANCE_HEARTBEAT_URL').href,
   };
 }
@@ -198,6 +309,36 @@ export async function runProductionMaintenance({
     throw new Error('reconcile_sponsored_reservations did not report bounded completion.');
   }
 
+  let pushDispatch = 'disabled';
+  let pushReceipts = 'disabled';
+  if (config.push) {
+    const dispatchResult = await requestJson(
+      fetchImpl,
+      'notification-dispatch',
+      `${functionRoot}/notification-dispatch`,
+      {
+        method: 'POST',
+        headers: edgeHeaders(config.push.dispatchSecret),
+        body: JSON.stringify(PUSH_DISPATCH_COMMAND),
+      },
+    );
+    validatePushDispatchResult(dispatchResult);
+    pushDispatch = 'complete';
+
+    const receiptResult = await requestJson(
+      fetchImpl,
+      'notification-receipt',
+      `${functionRoot}/notification-receipt`,
+      {
+        method: 'POST',
+        headers: edgeHeaders(config.push.receiptSecret),
+        body: JSON.stringify(PUSH_RECEIPT_COMMAND),
+      },
+    );
+    validatePushReceiptResult(receiptResult);
+    pushReceipts = 'complete';
+  }
+
   // A success heartbeat must mean the bounded deletion pass reached a known
   // resting state. Ten consecutive work responses leave the queue state
   // uncertain, so fail closed after completing the other privacy cleanups.
@@ -221,6 +362,8 @@ export async function runProductionMaintenance({
     orderExpiry: 'complete',
     providerLifecycle: 'complete',
     sponsoredReservations: 'complete',
+    pushDispatch,
+    pushReceipts,
     heartbeat: 'complete',
   };
   log(JSON.stringify(summary));

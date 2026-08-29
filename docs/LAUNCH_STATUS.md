@@ -88,12 +88,14 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 - Push now has a private encrypted-device, explicit-consent, outbox, delivery-
   lease, preference-RPC, revocation, and fail-closed Expo dispatch/receipt
   foundation. Its Expo provider and receipt lifecycle is implemented and
-  contract-tested but has no accepted production credentials, scheduler,
-  signed-device evidence, or web-push path; registration, enqueueing, delivery,
-  provider, both workers, and the client flag remain off. Expo/APNs/FCM
-  credentials and DPA, VAPID, key-rotation and receipt drills,
-  scheduler/alerts, signed-device acceptance, and legal/store review remain
-  external blockers.
+  contract-tested, and the production-maintenance client now has an independently
+  gated, bounded dispatch/receipt scheduler path with strict response validation
+  and heartbeat failure semantics. It has no accepted production credentials,
+  scheduler activation/alert evidence, signed-device evidence, or web-push path;
+  registration, enqueueing, delivery, provider, both workers, the scheduler
+  gate, and the client flag remain off. Expo/APNs/FCM credentials and DPA, VAPID,
+  key-rotation and receipt drills, production scheduler/alerts, signed-device
+  acceptance, and legal/store review remain external blockers.
 - Launch requires a legal entity, counsel-reviewed terms/privacy and
   marketplace/food-liability decisions, jurisdiction-by-jurisdiction home
   kitchen approval, licensed data/provider agreements, insurance/tax review,

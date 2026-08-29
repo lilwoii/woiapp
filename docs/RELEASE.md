@@ -358,6 +358,12 @@ and `unknown` rather than blind retry after ambiguous sends.
 
 Database enqueue/delivery, device registration, provider access, dispatch, the
 receipt worker, and the client remain independently gated and default false.
+The production-maintenance client also has a separate default-false
+`SPOTTR_MAINTENANCE_PUSH_ENABLED` repository-variable gate. When enabled, it
+uses different dispatch and receipt secrets, submits fixed bounded commands,
+validates all outcome counters, and withholds its heartbeat on either worker
+failure, a saturated batch, or an inconsistent response. This is executable
+scheduler wiring, not evidence that production scheduling or alerting is active.
 Do not enable enqueueing merely to test credentials in production. Validate the
 full chain in isolated staging with a fake provider, then the real provider and
 receipts, key-rotation/rollback, scheduler, alerts, and signed devices.

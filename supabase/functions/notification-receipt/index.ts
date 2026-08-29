@@ -111,6 +111,7 @@ Deno.serve(async (request) => {
       retry,
       failed,
       invalid,
+      more_work: claims.length === command.batchSize,
     });
   } catch (error) {
     return publicError(error);

@@ -1,8 +1,9 @@
 # Production maintenance control plane
 
-Spottr has nine privacy-, ordering-, finance-, and lifecycle-critical maintenance operations. They
-must run without relying on a customer to retry a request or an operator to
-remember a dashboard action:
+Spottr has nine always-on privacy-, ordering-, finance-, and lifecycle-critical
+maintenance operations plus two independently gated push operations. They must
+run without relying on a customer to retry a request or an operator to remember
+a dashboard action:
 
 - `delete-account-worker` continues frozen asynchronous account deletions;
 - `media-cleanup` removes claimed quarantine and chat objects before database
@@ -24,17 +25,26 @@ remember a dashboard action:
 - `reconcile_sponsored_reservations` releases expired ad-budget reservations
   and removes old request-rate buckets so abandoned placements cannot strand
   campaign budget.
+- `notification-dispatch`, only when the separate maintenance push gate is
+  enabled, performs bounded outbox expansion and provider handoff;
+- `notification-receipt`, under the same maintenance gate but its own worker
+  secret and Edge gate, performs bounded delayed receipt finalization without
+  resending content.
 
 The checked-in
 [`production-maintenance.yml`](../.github/workflows/production-maintenance.yml)
 runs the bounded maintenance client every five minutes and on manual dispatch.
 The client performs at most ten account-deletion worker calls, one media cleanup,
-and all seven database cleanup RPCs. It sends a success heartbeat only after the
-deletion worker reaches `idle` or an accepted retryable `waiting` state and every
-other cleanup reports bounded completion. Exhausting ten deletion calls with
-`deleted` or `more_work` still reported fails the run and withholds the heartbeat.
-It never prints response bodies, request IDs, object paths, credentials, or
-personal data.
+and all seven database cleanup RPCs. When the repository-level push scheduler
+gate is true, it additionally calls dispatch with at most 20 outbox rows, 200
+recipients per outbox row, and 50 delivery rows, then polls at most 100 receipt
+rows. It validates every returned count and sends a success heartbeat only after
+the deletion worker reaches `idle` or an accepted retryable `waiting` state and
+every enabled operation reports bounded, internally consistent completion.
+Exhausting ten deletion calls with `deleted` or `more_work`, a saturated push
+batch, malformed push counts, or either push worker failing withholds the
+heartbeat. It never prints response bodies, request IDs, object paths,
+credentials, provider tickets, or personal data.
 
 ## Required production secrets
 
@@ -48,11 +58,28 @@ SPOTTR_MEDIA_CLEANUP_SECRET=<different dedicated random secret>
 SPOTTR_MAINTENANCE_HEARTBEAT_URL=https://<monitor>/<opaque-check-id>
 ```
 
-The two worker secrets must exactly match the corresponding Supabase Edge
-Function secrets. Never reuse the service-role key as a worker secret. Restrict
-secret administration, workflow changes, and default-branch merges to the
-smallest practical operator group. The workflow has no pull-request trigger and
-declares no GitHub token permissions.
+Push scheduling remains off unless this protected repository variable is
+exactly `true`:
+
+```text
+SPOTTR_MAINTENANCE_PUSH_ENABLED=false
+```
+
+Only after isolated staging acceptance, configure two additional protected
+secrets and set that variable to `true`:
+
+```text
+SPOTTR_PUSH_DISPATCH_SECRET=<dedicated dispatch worker secret>
+SPOTTR_PUSH_RECEIPT_SECRET=<different receipt worker secret>
+```
+
+Every worker secret must exactly match its corresponding Supabase Edge Function
+secret. Never reuse the service-role key or another worker's secret. Restrict
+secret/variable administration, workflow changes, and default-branch merges to
+the smallest practical operator group. The workflow has no pull-request trigger
+and declares no GitHub token permissions. Enabling the repository variable while
+either Edge worker/provider gate is false deliberately fails the run and
+withholds the heartbeat.
 
 The heartbeat monitor must alert the named infrastructure and privacy on-call
 when no success arrives for 12 minutes. A failed maintenance request deliberately
@@ -66,8 +93,10 @@ unnecessary duplicate work.
 
 1. Apply the exact reviewed database migrations and deploy the matching Edge
    Functions before enabling the schedule.
-2. Configure and rotate the five secrets above. Confirm malformed or missing
-   values fail before any request is sent.
+2. Configure and rotate the five base secrets above. Confirm malformed or
+   missing values fail before any request is sent. Leave
+   `SPOTTR_MAINTENANCE_PUSH_ENABLED=false` until the push acceptance program is
+   complete.
 3. Manually dispatch the workflow. Its only success output is a small status
    summary with call counts; inspect GitHub secret masking and confirm no response
    bodies are present.
@@ -96,7 +125,13 @@ unnecessary duplicate work.
    withholds the heartbeat.
 5. Confirm the external heartbeat and missed-heartbeat alert, then inject one
    invalid worker secret and verify the workflow fails without pinging success.
-6. Record commit SHA, workflow run URL, Supabase project, UTC timestamps,
+6. In isolated push staging, configure the two dedicated push worker secrets,
+   enable the Edge database/provider/dispatch/receipt gates, and only then set
+   `SPOTTR_MAINTENANCE_PUSH_ENABLED=true`. Seed bounded dispatch and receipt
+   work; verify accepted, unknown, retry, dead, delivered, failed, and invalid-
+   token outcomes, provider timeouts, inconsistent response rejection, missed-
+   heartbeat alerting, and that receipt polling never resends a notification.
+7. Record commit SHA, workflow run URL, Supabase project, UTC timestamps,
    redacted before/after queries, storage checks, alert receipt, operators, and
    sign-off. Do not put secrets or personal data in the evidence bundle.
 
