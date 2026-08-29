@@ -528,13 +528,28 @@ insert into public.business_private_details (
 insert into public.business_locations (
   id, business_id, label, address_line, city, region, postal_code,
   point, is_primary, is_approximate, public_address, publication_state
-) values (
-  '73000000-0000-4000-8000-000000000007',
-  '70000000-0000-4000-8000-000000000007',
-  'Runtime location', '100 Runtime Way', 'Los Angeles', 'CA', '90001',
-  public.st_setsrid(public.st_makepoint(-118.24, 34.05), 4326)::public.geography,
-  true, false, true, 'published'
-);
+) values
+  (
+    '73000000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    'Runtime location', '100 Runtime Way', 'Los Angeles', 'CA', '90001',
+    public.st_setsrid(public.st_makepoint(-118.24, 34.05), 4326)::public.geography,
+    true, false, true, 'published'
+  ),
+  (
+    '73100000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    'Private runtime pickup', null, 'Los Angeles', 'CA', '90001',
+    public.st_setsrid(public.st_makepoint(-118.237, 34.043), 4326)::public.geography,
+    false, false, false, 'published'
+  ),
+  (
+    '73200000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    'Private dateline pickup', null, 'Dateline', 'AA', '00000',
+    public.st_setsrid(public.st_makepoint(-179.987, 10.013), 4326)::public.geography,
+    false, false, false, 'published'
+  );
 
 insert into public.weekly_hours (business_id, weekday, opens_at, closes_at, is_closed)
 select
@@ -1372,25 +1387,6 @@ begin
   end if;
 end;
 $public_discovery_privileges$;
-
-insert into public.business_locations (
-  id, business_id, label, city, region, postal_code, point,
-  is_primary, is_approximate, public_address, publication_state
-) values
-  (
-    '73100000-0000-4000-8000-000000000007',
-    '70000000-0000-4000-8000-000000000007',
-    'Private runtime pickup', 'Los Angeles', 'CA', '90001',
-    public.st_setsrid(public.st_makepoint(-118.237, 34.043), 4326)::public.geography,
-    false, false, false, 'published'
-  ),
-  (
-    '73200000-0000-4000-8000-000000000007',
-    '70000000-0000-4000-8000-000000000007',
-    'Private dateline pickup', 'Dateline', 'AA', '00000',
-    public.st_setsrid(public.st_makepoint(-179.987, 10.013), 4326)::public.geography,
-    false, false, false, 'published'
-  );
 
 set local role service_role;
 
