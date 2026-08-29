@@ -3343,6 +3343,9 @@ begin
 end;
 $push_dispatch_service_wrapper_runtime$;
 
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}', true);
+
 -- Home kitchens remain invisible and their existing chat is inaccessible while
 -- the service-owned launch gate is at its migration default. The fixture is
 -- fully eligible on jurisdiction, permit, publication, location, and chat
