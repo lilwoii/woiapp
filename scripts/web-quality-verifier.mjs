@@ -19,7 +19,10 @@ const MAX_AVERAGE_ROUTE_GZIP_BYTES = 15_000;
 // The uncompressed entry is a development/build diagnostic; transfer cost is
 // enforced separately by the tighter gzip cap. Leave modest headroom for
 // required account workflows without weakening the production wire budget.
-const MAX_ENTRY_BYTES = 3_250_000;
+// The sponsored/public-cache boundary brings the verified raw baseline to
+// 3,250,351 bytes; keep a narrow diagnostic allowance while the gzip and
+// aggregate transfer ceilings remain unchanged.
+const MAX_ENTRY_BYTES = 3_260_000;
 const MAX_ENTRY_GZIP_BYTES = 800_000;
 const MAX_MAP_BYTES = 1_100_000;
 const MAX_MAP_GZIP_BYTES = 320_000;
