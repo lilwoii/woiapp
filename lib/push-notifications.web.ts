@@ -14,6 +14,13 @@ export async function revokePushNotificationDevice(
   return { ok: true };
 }
 
+export async function revokePushNotificationDeviceWithAccessToken(
+  _expectedUserId: string,
+  _accessToken: string,
+): Promise<ActionResult> {
+  return { ok: true };
+}
+
 export async function revokeAllPushNotificationDevices(_expectedUserId: string): Promise<ActionResult> {
   return { ok: true };
 }

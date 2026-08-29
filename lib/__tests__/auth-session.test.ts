@@ -1,6 +1,7 @@
 import {
   createAuthMutationGate,
   createSessionHydrationGuard,
+  isUnexpectedAuthenticatedIdentityReplacement,
   reconcilePasswordRecoveryIntent,
 } from '../auth-session';
 
@@ -154,5 +155,14 @@ describe('password recovery intent', () => {
 
     expect(reconcilePasswordRecoveryIntent(intendedUsers, 'user-a')).toBe(false);
     expect(intendedUsers.size).toBe(0);
+  });
+});
+
+describe('authenticated identity replacement', () => {
+  it('flags only a direct change between two authenticated users', () => {
+    expect(isUnexpectedAuthenticatedIdentityReplacement('user-a', 'user-b')).toBe(true);
+    expect(isUnexpectedAuthenticatedIdentityReplacement('user-a', 'user-a')).toBe(false);
+    expect(isUnexpectedAuthenticatedIdentityReplacement(null, 'user-b')).toBe(false);
+    expect(isUnexpectedAuthenticatedIdentityReplacement('user-a', null)).toBe(false);
   });
 });

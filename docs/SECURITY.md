@@ -139,7 +139,14 @@ delivery claim and provider handoff require the same user/session row to remain
 present and before `not_after`. Ended sessions revoke the device and cancel
 queued work. The app does not allow a native verification or recovery link to
 replace an already active account; it requires the existing account's guarded
-sign-out flow first.
+sign-out flow first. An abnormal direct native A-to-B Auth transition is never
+accepted: the prior verified token is retained only in memory long enough to
+detach the device and attempt to revoke that server session, the replacement is
+rejected, and the user must explicitly sign in again. A non-secret SecureStore
+quarantine marker blocks restore across restarts until local replacement
+removal is proven; captured tokens are never written to storage or logs. Push
+device calls use aborting request timeouts instead of leaving late client
+requests running after the caller continues.
 
 Revocation cannot recall a request that already crossed the provider boundary.
 A `sending` delivery remains ambiguous and may produce at most the one

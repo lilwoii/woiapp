@@ -12,12 +12,25 @@ import {
   isPkceVerifierKey,
   type LocalAuthSessionClearResult,
 } from '@/lib/auth-storage';
+import type { AuthIdentityQuarantineRead } from '@/lib/auth-identity-quarantine';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 const authStorageKey = deriveSupabaseAuthStorageKey(supabaseUrl);
 
 export const isSupabaseConfigured = Boolean(authStorageKey && supabaseAnonKey?.trim());
+
+export async function readAuthIdentityQuarantine(): Promise<AuthIdentityQuarantineRead> {
+  return { status: 'clear' };
+}
+
+export async function persistAuthIdentityQuarantine(_userId: string): Promise<boolean> {
+  return true;
+}
+
+export async function clearAuthIdentityQuarantine(): Promise<boolean> {
+  return true;
+}
 
 // A static web client cannot issue HttpOnly session cookies without a BFF.
 // Sessions stay tab-scoped, while the short-lived PKCE verifier uses local
@@ -104,6 +117,29 @@ type AccountBoundClientCache = {
 
 let accountBoundClientCache: AccountBoundClientCache | null = null;
 
+export async function createAccessTokenBoundSupabaseClient(
+  expectedUserId: string,
+  accessToken: string,
+): Promise<SupabaseClient | null> {
+  if (!supabase || !supabaseUrl || !supabaseAnonKey || !expectedUserId.trim() || !accessToken) {
+    return null;
+  }
+  try {
+    const { data, error } = await supabase.auth.getUser(accessToken);
+    if (error || data.user?.id !== expectedUserId) return null;
+    return createClient(supabaseUrl, supabaseAnonKey, {
+      accessToken: async () => accessToken,
+      auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        persistSession: false,
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Create a short-lived client whose requests are permanently tied to the
  * session that was verified for the expected account.
@@ -137,23 +173,7 @@ export async function createAccountBoundSupabaseClient(
       return await accountBoundClientCache.promise;
     }
 
-    const promise = (async () => {
-      try {
-        const { data: userData, error: userError } =
-          await supabase.auth.getUser(accessToken);
-        if (userError || userData.user?.id !== expectedUserId) return null;
-        return createClient(supabaseUrl, supabaseAnonKey, {
-          accessToken: async () => accessToken,
-          auth: {
-            autoRefreshToken: false,
-            detectSessionInUrl: false,
-            persistSession: false,
-          },
-        });
-      } catch {
-        return null;
-      }
-    })();
+    const promise = createAccessTokenBoundSupabaseClient(expectedUserId, accessToken);
     const cacheEntry = { accessToken, expectedUserId, promise };
     accountBoundClientCache = cacheEntry;
     const verifiedClient = await promise;

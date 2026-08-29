@@ -15,6 +15,7 @@ import { Platform } from 'react-native';
 import {
   authMutationGate,
   createSessionHydrationGuard,
+  isUnexpectedAuthenticatedIdentityReplacement,
   reconcilePasswordRecoveryIntent,
   type SessionHydrationToken,
 } from '@/lib/auth-session';
@@ -24,11 +25,15 @@ import { usernameKey, validateUsername } from '@/lib/moderation';
 import {
   revokeAllPushNotificationDevices,
   revokePushNotificationDevice,
+  revokePushNotificationDeviceWithAccessToken,
 } from '@/lib/push-notifications';
 import {
+  clearAuthIdentityQuarantine,
   clearLocalAuthSessionForUser,
   getLocalAuthSessionSnapshot,
   isSupabaseConfigured,
+  persistAuthIdentityQuarantine,
+  readAuthIdentityQuarantine,
   resetRealtimeAuthToAnonymous,
   supabase,
 } from '@/lib/supabase';
@@ -39,6 +44,10 @@ type SecurityStatus = 'loading' | 'ready' | 'error';
 type SessionHydrationReservation = Readonly<{
   token: SessionHydrationToken;
   identityChanged: boolean;
+}>;
+type CommittedAuthSession = Readonly<{
+  userId: string;
+  accessToken: string;
 }>;
 
 type SignUpInput = {
@@ -82,28 +91,31 @@ async function confirmNotificationRevocation(
   userId: string,
   allDevices: boolean,
 ): Promise<ActionResult> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
-      allDevices
-        ? revokeAllPushNotificationDevices(userId)
-        : revokePushNotificationDevice(userId),
-      new Promise<ActionResult>((resolve) => {
-        timeout = setTimeout(() => resolve({
-          ok: false,
-          code: 'NETWORK',
-          reason: 'Spottr could not confirm that device alerts were detached. Check your connection and try again.',
-        }), 5_000);
-      }),
-    ]);
+    return await (allDevices
+      ? revokeAllPushNotificationDevices(userId)
+      : revokePushNotificationDevice(userId));
   } catch {
     return {
       ok: false,
       code: 'NETWORK',
       reason: 'Spottr could not confirm that device alerts were detached. Check your connection and try again.',
     };
-  } finally {
-    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function confirmCapturedNotificationRevocation(
+  userId: string,
+  accessToken: string,
+): Promise<ActionResult> {
+  try {
+    return await revokePushNotificationDeviceWithAccessToken(userId, accessToken);
+  } catch {
+    return {
+      ok: false,
+      code: 'NETWORK',
+      reason: 'Spottr could not confirm that prior device alerts were detached.',
+    };
   }
 }
 
@@ -155,6 +167,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const mounted = useRef(true);
   const deletionIdempotencyKey = useRef<string | null>(null);
   const recoveryIntentUsers = useRef(new Set<string>());
+  const committedSession = useRef<CommittedAuthSession | null>(null);
+  const rejectedNativeIdentity = useRef<string | null>(null);
   const sessionHydration = useMemo(() => createSessionHydrationGuard(), []);
 
   const failClosedSessionReconciliation = useCallback(async (
@@ -167,6 +181,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       return false;
     }
     const failureToken = sessionHydration.begin(null);
+    committedSession.current = null;
     deletionIdempotencyKey.current = null;
     recoveryIntentUsers.current.clear();
     setAccount(null);
@@ -204,6 +219,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
     ) {
       return;
     }
+    committedSession.current = session
+      ? { userId: session.user.id, accessToken: session.access_token }
+      : null;
     if (identityChanged) {
       const recoveryMatchesTarget = reconcilePasswordRecoveryIntent(
         recoveryIntentUsers.current,
@@ -505,25 +523,64 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
 
     const restoreRequest = sessionHydration.advance();
-    client.auth
-      .getSession()
-      .then(({ data, error }) => {
-        if (error) throw error;
+    void (async () => {
+      try {
+        const [sessionResult, quarantine] = await Promise.all([
+          client.auth.getSession(),
+          Platform.OS === 'web'
+            ? Promise.resolve({ status: 'clear' as const })
+            : readAuthIdentityQuarantine(),
+        ]);
+        if (quarantine.status === 'unavailable') {
+          throw new Error('Identity quarantine storage is unavailable.');
+        }
         if (!mounted.current || !sessionHydration.isCurrent(restoreRequest)) return;
-        return hydrateSession(data.session);
-      })
-      .catch(() => {
+        if (Platform.OS !== 'web' && quarantine.status === 'quarantined') {
+          rejectedNativeIdentity.current = quarantine.userId;
+          const storedSession = sessionResult.data.session;
+          if (storedSession) {
+            try {
+              await client.auth.admin.signOut(storedSession.access_token, 'local');
+            } catch {
+              // Local removal below remains mandatory and identity checked.
+            }
+            const clearResult = await clearLocalAuthSessionForUser(storedSession.user.id);
+            if (clearResult !== 'cleared' && clearResult !== 'missing') {
+              throw new Error('The rejected local session could not be cleared.');
+            }
+          } else {
+            const clearResult = await clearLocalAuthSessionForUser(quarantine.userId);
+            if (clearResult !== 'cleared' && clearResult !== 'missing') {
+              throw new Error('The quarantined local session could not be cleared.');
+            }
+          }
+          if (!await clearAuthIdentityQuarantine()) {
+            throw new Error('The identity quarantine marker could not be cleared.');
+          }
+          rejectedNativeIdentity.current = null;
+          if (!mounted.current || !sessionHydration.isCurrent(restoreRequest)) return;
+          await hydrateSession(null);
+          if (mounted.current) {
+            setMessage('Spottr cleared a rejected account change. Sign in again to continue.');
+          }
+          return;
+        }
+        if (sessionResult.error) throw sessionResult.error;
+        await hydrateSession(sessionResult.data.session);
+      } catch {
         if (!mounted.current || !sessionHydration.isCurrent(restoreRequest)) return;
-        return failClosedSessionReconciliation(
+        await failClosedSessionReconciliation(
           'Spottr could not restore your session. You can retry by signing in.',
           restoreRequest
         );
-      });
+      }
+    })();
 
     const {
       data: { subscription },
     } = client.auth.onAuthStateChange((event, session) => {
       const priorUserId = sessionHydration.current().userId;
+      const priorSession = committedSession.current;
       const recoveryHintUserId = session?.user?.id ?? null;
       if (event === 'PASSWORD_RECOVERY' && recoveryHintUserId) {
         recoveryIntentUsers.current.add(recoveryHintUserId);
@@ -573,6 +630,99 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
             const authoritativeSession = data.session;
             const targetUserId = authoritativeSession?.user?.id ?? null;
+            if (Platform.OS !== 'web' && !rejectedNativeIdentity.current) {
+              const quarantine = await readAuthIdentityQuarantine();
+              if (quarantine.status === 'unavailable') {
+                throw new Error('Identity quarantine storage is unavailable.');
+              }
+              if (quarantine.status === 'quarantined') {
+                rejectedNativeIdentity.current = quarantine.userId;
+              }
+            }
+            if (
+              Platform.OS !== 'web' &&
+              authoritativeSession &&
+              rejectedNativeIdentity.current
+            ) {
+              try {
+                await client.auth.admin.signOut(authoritativeSession.access_token, 'local');
+              } catch {
+                // Local removal below remains mandatory and identity checked.
+              }
+              const clearResult = await clearLocalAuthSessionForUser(
+                authoritativeSession.user.id
+              );
+              const cleared = clearResult === 'cleared' || clearResult === 'missing';
+              const quarantineCleared = cleared && await clearAuthIdentityQuarantine();
+              if (quarantineCleared) {
+                rejectedNativeIdentity.current = null;
+              }
+              if (!mounted.current || !sessionHydration.isCurrent(authEventRequest)) return;
+              await failClosedSessionReconciliation(
+                quarantineCleared
+                  ? 'Spottr cleared a rejected account change. Sign in again to continue.'
+                  : 'Spottr is still protecting this device from a rejected account change. Reopen Spottr with a connection before signing in.',
+                authEventRequest
+              );
+              return;
+            }
+            if (
+              Platform.OS !== 'web' &&
+              priorSession &&
+              authoritativeSession &&
+              isUnexpectedAuthenticatedIdentityReplacement(
+                priorSession.userId,
+                authoritativeSession.user.id
+              )
+            ) {
+              rejectedNativeIdentity.current = authoritativeSession.user.id;
+              const quarantinePersisted = await persistAuthIdentityQuarantine(
+                authoritativeSession.user.id
+              );
+              const priorNotificationRevocation =
+                await confirmCapturedNotificationRevocation(
+                  priorSession.userId,
+                  priorSession.accessToken
+                );
+              let priorSessionRevoked = false;
+              try {
+                const revokePrior = await client.auth.admin.signOut(
+                  priorSession.accessToken,
+                  'local'
+                );
+                priorSessionRevoked =
+                  !revokePrior.error || isAlreadyRevokedSignOutError(revokePrior.error);
+              } catch {
+                priorSessionRevoked = false;
+              }
+              try {
+                await client.auth.admin.signOut(authoritativeSession.access_token, 'local');
+              } catch {
+                // The replacement session is still removed from local storage below.
+              }
+              let replacementClearResult: Awaited<
+                ReturnType<typeof clearLocalAuthSessionForUser>
+              > = 'unknown';
+              try {
+                replacementClearResult = await clearLocalAuthSessionForUser(
+                  authoritativeSession.user.id
+                );
+              } catch {
+                replacementClearResult = 'unknown';
+              }
+              if (!mounted.current || !sessionHydration.isCurrent(authEventRequest)) return;
+              committedSession.current = null;
+              const replacementCleared =
+                replacementClearResult === 'cleared' || replacementClearResult === 'missing';
+              await failClosedSessionReconciliation(
+                quarantinePersisted && replacementCleared &&
+                    (priorNotificationRevocation.ok || priorSessionRevoked)
+                  ? 'Spottr blocked an unexpected account change and signed out. Sign in again to continue.'
+                  : 'Spottr blocked an unexpected account change, but could not confirm every cleanup step. Reopen Spottr with a connection, then sign in again and review signed-in devices.',
+                authEventRequest
+              );
+              return;
+            }
             const recoveryMatchesTarget = reconcilePasswordRecoveryIntent(
               recoveryIntentUsers.current,
               targetUserId
@@ -718,6 +868,47 @@ export function AuthProvider({ children }: PropsWithChildren) {
     []
   );
 
+  const prepareExplicitAuthentication = useCallback(async (): Promise<ActionResult> => {
+    const client = supabase;
+    if (!client) {
+      return {
+        ok: false,
+        code: 'CONFIG_REQUIRED',
+        reason: 'Live account services are not configured.',
+      };
+    }
+    const existingSession = await client.auth.getSession();
+    if (existingSession.error) throw existingSession.error;
+    if (existingSession.data.session) {
+      return {
+        ok: false,
+        code: 'CONFLICT',
+        reason: 'Sign out of the current account before continuing with another account.',
+      };
+    }
+    if (Platform.OS === 'web') return { ok: true };
+
+    const quarantine = await readAuthIdentityQuarantine();
+    if (quarantine.status === 'unavailable') {
+      return {
+        ok: false,
+        code: 'AUTH_REQUIRED',
+        reason: 'Spottr could not verify secure account storage. Reopen the app and try again.',
+      };
+    }
+    if (rejectedNativeIdentity.current || quarantine.status === 'quarantined') {
+      if (!(await clearAuthIdentityQuarantine())) {
+        return {
+          ok: false,
+          code: 'AUTH_REQUIRED',
+          reason: 'Spottr could not clear a rejected account change. Reopen the app and try again.',
+        };
+      }
+      rejectedNativeIdentity.current = null;
+    }
+    return { ok: true };
+  }, []);
+
   const signUp = useCallback(
     async (input: SignUpInput): Promise<ActionResult<{ requiresEmailVerification: boolean }>> => {
       const client = supabase;
@@ -743,6 +934,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setIsBusy(true);
       setMessage(null);
       try {
+        const authenticationReady = await prepareExplicitAuthentication();
+        if (!authenticationReady.ok) return authenticationReady;
         const availability = await checkUsername(input.username);
         if (!availability.ok) return availability;
         if (!availability.data?.available) {
@@ -782,7 +975,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setIsBusy(false);
       }
     },
-    [checkUsername]
+    [checkUsername, prepareExplicitAuthentication]
   );
 
   const signIn = useCallback(async (
@@ -806,15 +999,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setIsBusy(true);
     setMessage(null);
     try {
-      const existingSession = await client.auth.getSession();
-      if (existingSession.error) throw existingSession.error;
-      if (existingSession.data.session) {
-        return {
-          ok: false,
-          code: 'CONFLICT',
-          reason: 'Sign out of the current account before signing in to another one.',
-        };
-      }
+      const authenticationReady = await prepareExplicitAuthentication();
+      if (!authenticationReady.ok) return authenticationReady;
       const { data: signInData, error } = await client.auth.signInWithPassword({
         email: email.trim().toLocaleLowerCase('en-US'),
         password,
@@ -858,7 +1044,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       authMutationGate.finish(authOperation);
       setIsBusy(false);
     }
-  }, []);
+  }, [prepareExplicitAuthentication]);
 
   const requestPasswordReset = useCallback(async (email: string): Promise<ActionResult> => {
     const client = supabase;

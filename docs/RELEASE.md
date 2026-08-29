@@ -361,7 +361,12 @@ and requires that session to remain present and unexpired both when a delivery
 is claimed and immediately before provider handoff. An ended session revokes
 the device and cancels queued work. Native auth links also refuse to replace an
 account that is already signed in; the user must complete the existing
-fail-closed sign-out flow first.
+fail-closed sign-out flow first. If the native Auth SDK nevertheless reports a
+direct authenticated A-to-B replacement, Spottr uses the prior token only from
+memory to detach that device and attempt prior-session revocation, rejects the
+replacement, and requires a new explicit sign-in. A non-secret quarantine
+marker prevents a rejected identity from being restored after restart until
+Spottr proves the local replacement was cleared.
 
 Database enqueue/delivery, device registration, provider access, dispatch, the
 receipt worker, and the client remain independently gated and default false.

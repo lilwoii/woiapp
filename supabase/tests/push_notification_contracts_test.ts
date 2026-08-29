@@ -279,17 +279,42 @@ Deno.test("registration is fail-closed and revocation remains available during s
 
 Deno.test("native permission is user-triggered and sign-out revokes before the auth session", async () => {
   const native = await text("../lib/push-notifications.native.ts");
+  const base = await text("../lib/push-notifications.ts");
   const web = await text("../lib/push-notifications.web.ts");
+  const nativeSupabase = await text("../lib/supabase.native.ts");
+  const webSupabase = await text("../lib/supabase.ts");
   const auth = await text("../context/auth-context.tsx");
   const deepLinkHandler = auth.slice(
     auth.indexOf("const handleDeepLink"),
     auth.indexOf("const linkSubscription"),
+  );
+  const authStateHandler = auth.slice(
+    auth.indexOf("client.auth.onAuthStateChange"),
+    auth.indexOf("const handleDeepLink"),
+  );
+  const signUpHandler = auth.slice(
+    auth.indexOf("const signUp = useCallback"),
+    auth.indexOf("const signIn = useCallback"),
+  );
+  const signInHandler = auth.slice(
+    auth.indexOf("const signIn = useCallback"),
+    auth.indexOf("const requestPasswordReset"),
   );
   const app = JSON.parse(await text("../app.base.json"));
   assert(native.includes("requestPermissionsAsync"));
   assert(native.includes("getExpoPushTokenAsync({ projectId: easProjectId })"));
   assert(native.includes("SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY"));
   assert(web.includes("Web push is not enabled"));
+  assert(native.includes("createAccessTokenBoundSupabaseClient"));
+  assert(native.includes("revokePushNotificationDeviceWithAccessToken"));
+  assert(native.includes("timeout: DEVICE_REQUEST_TIMEOUT_MS"));
+  assert(base.includes("revokePushNotificationDeviceWithAccessToken"));
+  assert(web.includes("revokePushNotificationDeviceWithAccessToken"));
+  assert(nativeSupabase.includes("createAccessTokenBoundSupabaseClient"));
+  assert(nativeSupabase.includes("persistAuthIdentityQuarantine"));
+  assert(nativeSupabase.includes("readAuthIdentityQuarantine"));
+  assert(nativeSupabase.includes("clearAuthIdentityQuarantine"));
+  assert(webSupabase.includes("createAccessTokenBoundSupabaseClient"));
   assert(
     auth.includes(
       "if (!notificationRevocation.ok) return notificationRevocation",
@@ -317,6 +342,29 @@ Deno.test("native permission is user-triggered and sign-out revokes before the a
     deepLinkHandler.includes(
       "Sign out before opening a password-recovery link.",
     ),
+  );
+  assert(
+    authStateHandler.indexOf(
+      "isUnexpectedAuthenticatedIdentityReplacement(",
+    ) < authStateHandler.indexOf("hydrateSession(authoritativeSession"),
+  );
+  assert(authStateHandler.includes("priorSession.accessToken"));
+  assert(authStateHandler.includes("confirmCapturedNotificationRevocation"));
+  assert(authStateHandler.includes("clearLocalAuthSessionForUser"));
+  assert(authStateHandler.includes("persistAuthIdentityQuarantine"));
+  assert(authStateHandler.includes("rejectedNativeIdentity.current"));
+  assert(authStateHandler.includes("blocked an unexpected account change"));
+  assert(signUpHandler.includes("prepareExplicitAuthentication()"));
+  assert(signUpHandler.includes("client.auth.signUp("));
+  assert(
+    signUpHandler.indexOf("prepareExplicitAuthentication()") <
+      signUpHandler.indexOf("client.auth.signUp("),
+  );
+  assert(signInHandler.includes("prepareExplicitAuthentication()"));
+  assert(signInHandler.includes("client.auth.signInWithPassword("));
+  assert(
+    signInHandler.indexOf("prepareExplicitAuthentication()") <
+      signInHandler.indexOf("client.auth.signInWithPassword("),
   );
   assert(app.expo.plugins.includes("expo-notifications"));
 });

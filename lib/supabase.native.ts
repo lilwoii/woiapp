@@ -12,10 +12,18 @@ import {
   inspectStoredAuthSession,
   type LocalAuthSessionClearResult,
 } from '@/lib/auth-storage';
+import {
+  parseAuthIdentityQuarantine,
+  serializeAuthIdentityQuarantine,
+  type AuthIdentityQuarantineRead,
+} from '@/lib/auth-identity-quarantine';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 const authStorageKey = deriveSupabaseAuthStorageKey(supabaseUrl);
+const authIdentityQuarantineKey = authStorageKey
+  ? `${authStorageKey}-identity-quarantine-v1`
+  : null;
 
 export const isSupabaseConfigured = Boolean(authStorageKey && supabaseAnonKey?.trim());
 
@@ -27,6 +35,38 @@ const secureStoreAdapter = {
     }),
   removeItem: (key: string) => SecureStore.deleteItemAsync(key),
 };
+
+export async function readAuthIdentityQuarantine(): Promise<AuthIdentityQuarantineRead> {
+  if (!authIdentityQuarantineKey) return { status: 'unavailable' };
+  try {
+    return parseAuthIdentityQuarantine(
+      await secureStoreAdapter.getItem(authIdentityQuarantineKey)
+    );
+  } catch {
+    return { status: 'unavailable' };
+  }
+}
+
+export async function persistAuthIdentityQuarantine(userId: string): Promise<boolean> {
+  const serialized = serializeAuthIdentityQuarantine(userId);
+  if (!authIdentityQuarantineKey || !serialized) return false;
+  try {
+    await secureStoreAdapter.setItem(authIdentityQuarantineKey, serialized);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function clearAuthIdentityQuarantine(): Promise<boolean> {
+  if (!authIdentityQuarantineKey) return false;
+  try {
+    await secureStoreAdapter.removeItem(authIdentityQuarantineKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export async function clearLocalAuthSessionForUser(
   expectedUserId: string
@@ -77,6 +117,29 @@ type AccountBoundClientCache = {
 
 let accountBoundClientCache: AccountBoundClientCache | null = null;
 
+export async function createAccessTokenBoundSupabaseClient(
+  expectedUserId: string,
+  accessToken: string,
+): Promise<SupabaseClient | null> {
+  if (!supabase || !supabaseUrl || !supabaseAnonKey || !expectedUserId.trim() || !accessToken) {
+    return null;
+  }
+  try {
+    const { data, error } = await supabase.auth.getUser(accessToken);
+    if (error || data.user?.id !== expectedUserId) return null;
+    return createClient(supabaseUrl, supabaseAnonKey, {
+      accessToken: async () => accessToken,
+      auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        persistSession: false,
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Return a memory-only client pinned to the currently verified account.
  * Native marketplace mutations use this instead of the shared client so an
@@ -105,23 +168,7 @@ export async function createAccountBoundSupabaseClient(
       return await accountBoundClientCache.promise;
     }
 
-    const promise = (async () => {
-      try {
-        const { data: userData, error: userError } =
-          await supabase.auth.getUser(accessToken);
-        if (userError || userData.user?.id !== expectedUserId) return null;
-        return createClient(supabaseUrl, supabaseAnonKey, {
-          accessToken: async () => accessToken,
-          auth: {
-            autoRefreshToken: false,
-            detectSessionInUrl: false,
-            persistSession: false,
-          },
-        });
-      } catch {
-        return null;
-      }
-    })();
+    const promise = createAccessTokenBoundSupabaseClient(expectedUserId, accessToken);
     const cacheEntry = { accessToken, expectedUserId, promise };
     accountBoundClientCache = cacheEntry;
     const verifiedClient = await promise;

@@ -102,3 +102,10 @@ export function reconcilePasswordRecoveryIntent(
   if (matchesCurrentUser && currentUserId) intendedUserIds.add(currentUserId);
   return matchesCurrentUser;
 }
+
+export function isUnexpectedAuthenticatedIdentityReplacement(
+  previousUserId: string | null,
+  nextUserId: string | null
+): boolean {
+  return Boolean(previousUserId && nextUserId && previousUserId !== nextUserId);
+}
