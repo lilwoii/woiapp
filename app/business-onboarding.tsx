@@ -1,11 +1,7 @@
-import { lazy, Suspense } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState, type ComponentType } from 'react';
+import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { palette, spacing } from '@/constants/theme';
-
-const BusinessOnboardingScreen = lazy(
-  () => import('@/components/business-onboarding-screen'),
-);
 
 function BusinessOnboardingLoading() {
   return (
@@ -24,12 +20,51 @@ function BusinessOnboardingLoading() {
   );
 }
 
-export default function BusinessOnboardingRoute() {
+function BusinessOnboardingLoadError() {
   return (
-    <Suspense fallback={<BusinessOnboardingLoading />}>
-      <BusinessOnboardingScreen />
-    </Suspense>
+    <View role="main" style={styles.screen}>
+      <View accessibilityRole="alert" style={styles.loading}>
+        <Text accessibilityRole="header" style={styles.title}>
+          Business verification is temporarily unavailable
+        </Text>
+        <Text style={styles.body}>
+          Your information has not been submitted. Refresh this screen or reopen Spottr to try
+          again.
+        </Text>
+      </View>
+    </View>
   );
+}
+
+export default function BusinessOnboardingRoute() {
+  const [Screen, setScreen] = useState<ComponentType | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void import('@/components/business-onboarding-screen')
+      .then((module) => {
+        if (!active) return;
+        setScreen(() => module.default);
+      })
+      .catch(() => {
+        if (!active) return;
+        setLoadFailed(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!Screen || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    window.dispatchEvent(new Event('spottr:route-content-ready'));
+  }, [Screen]);
+
+  if (loadFailed) return <BusinessOnboardingLoadError />;
+  if (!Screen) return <BusinessOnboardingLoading />;
+  return <Screen />;
 }
 
 const styles = StyleSheet.create({

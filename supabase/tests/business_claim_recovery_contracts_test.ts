@@ -171,9 +171,13 @@ Deno.test("onboarding claim status stays flag-gated and handles recovery states"
   );
   assertMatch(
     onboardingRoute,
-    /const BusinessOnboardingScreen = lazy\([\s\S]+import\('@\/components\/business-onboarding-screen'\)/,
+    /useEffect\(\(\) => \{[\s\S]+import\('@\/components\/business-onboarding-screen'\)/,
   );
-  assertMatch(onboardingRoute, /<Suspense fallback=\{<BusinessOnboardingLoading \/>\}>/);
+  assertMatch(onboardingRoute, /if \(!Screen\) return <BusinessOnboardingLoading \/>/);
+  assertMatch(onboardingRoute, /if \(loadFailed\) return <BusinessOnboardingLoadError \/>/);
+  assertMatch(onboardingRoute, /spottr:route-content-ready/);
+  assert(!onboardingRoute.includes("lazy("));
+  assert(!onboardingRoute.includes("<Suspense"));
   assertMatch(onboarding, /featureFlags\.businessClaims \? \([\s\S]+<Suspense/);
   assertMatch(onboarding, /class ClaimRecoveryBoundary extends Component/);
   assertMatch(onboarding, /<ClaimRecoveryBoundary>[\s\S]+<Suspense/);
