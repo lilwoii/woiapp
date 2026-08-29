@@ -18,6 +18,12 @@ const marketplaceScreen = await Deno.readTextFile(
 const businessScreen = await Deno.readTextFile(
   new URL("../../app/business-submission-moderation.tsx", import.meta.url),
 );
+const businessScreenImplementation = await Deno.readTextFile(
+  new URL(
+    "../../components/business-submission-moderation-screen.tsx",
+    import.meta.url,
+  ),
+);
 const layout = await Deno.readTextFile(
   new URL("../../app/_layout.tsx", import.meta.url),
 );
@@ -46,7 +52,11 @@ Deno.test("all privileged moderation clients bind calls to the initiating accoun
 });
 
 Deno.test("moderation workspaces remount and invalidate requests on identity changes", () => {
-  for (const source of [contentScreen, marketplaceScreen, businessScreen]) {
+  for (const source of [
+    contentScreen,
+    marketplaceScreen,
+    businessScreenImplementation,
+  ]) {
     assertMatch(source, /workspaceKey/);
     assertMatch(source, /auth\.account\?\.id/);
     assertMatch(source, /auth\.securityStatus/);
@@ -74,17 +84,20 @@ Deno.test("moderation workspaces remount and invalidate requests on identity cha
 });
 
 Deno.test("business approval UI exposes exact selection without persisting protected detail", () => {
-  assertMatch(businessScreen, /loadPendingMobileSubmission\(accountId, submission\.businessId\)/);
   assertMatch(
-    businessScreen,
+    businessScreenImplementation,
+    /loadPendingMobileSubmission\(accountId, submission\.businessId\)/,
+  );
+  assertMatch(
+    businessScreenImplementation,
     /locations\.filter\(\(location\) => location\.isPrimary\)/,
   );
-  assertMatch(businessScreen, /validateMobileReviewSelection/);
-  assertMatch(businessScreen, /Approve &amp; publish/);
-  assertMatch(businessScreen, /Return for changes/);
-  assert(!businessScreen.includes("localStorage"));
-  assert(!businessScreen.includes("AsyncStorage"));
-  assert(!businessScreen.includes("analytics"));
+  assertMatch(businessScreenImplementation, /validateMobileReviewSelection/);
+  assertMatch(businessScreenImplementation, /Approve &amp; publish/);
+  assertMatch(businessScreenImplementation, /Return for changes/);
+  assert(!businessScreenImplementation.includes("localStorage"));
+  assert(!businessScreenImplementation.includes("AsyncStorage"));
+  assert(!businessScreenImplementation.includes("analytics"));
   assertMatch(
     layout,
     /Stack\.Screen name="business-submission-moderation"/,
@@ -94,3 +107,21 @@ Deno.test("business approval UI exposes exact selection without persisting prote
     /router\.push\('\/business-submission-moderation' as Href\)/,
   );
 });
+
+Deno.test(
+  "business approval route lazy-loads the protected workspace with an accessible fallback",
+  () => {
+    assertMatch(
+      businessScreen,
+      /lazy\(\s*\(\) => import\('@\/components\/business-submission-moderation-screen'\)/,
+    );
+    assertMatch(businessScreen, /Suspense/);
+    assertMatch(businessScreen, /<PageShell narrow>/);
+    assertMatch(businessScreen, /accessibilityRole="header"/);
+    assertMatch(businessScreen, /Loading the secure approval workspace…/);
+    assert(
+      !businessScreen.includes("loadPendingMobileSubmission"),
+      "The route shell must not eagerly include the protected moderation implementation",
+    );
+  },
+);
