@@ -23,6 +23,10 @@ export type ModerationQueuePage = {
   nextOffset: number;
 };
 
+export function isReportedReview(item: ModerationQueueItem) {
+  return item.targetType === 'review' && item.context.reported === true;
+}
+
 export type ModerationResult<T> =
   | { ok: true; data: T }
   | { ok: false; code: 'AUTH' | 'CONFLICT' | 'FORBIDDEN' | 'INVALID' | 'NETWORK' | 'UNKNOWN'; reason: string };
@@ -168,7 +172,15 @@ export async function decideModerationItem(
       return { ok: false, code: 'INVALID', reason: 'Record a moderation reason from 3 to 1,000 characters.' };
     }
     const client = await secureClient();
-    const { data, error } = item.targetType === 'review_comment'
+    const reportedReview = isReportedReview(item);
+    const { data, error } = reportedReview
+      ? await client.rpc('decide_reported_review', {
+          target_review_id: item.targetId,
+          decision,
+          moderation_reason: cleanReason,
+          expected_updated_at: item.updatedAt,
+        })
+      : item.targetType === 'review_comment'
       ? await client.rpc('decide_reported_review_comment', {
           target_comment_id: item.targetId,
           decision,
@@ -190,9 +202,9 @@ export async function decideModerationItem(
           expected_updated_at: item.updatedAt,
         });
     if (error) throw error;
-    if (item.targetType === 'review_comment' || item.targetType === 'business_post') {
+    if (reportedReview || item.targetType === 'review_comment' || item.targetType === 'business_post') {
       if (typeof data !== 'string' || !Number.isFinite(new Date(data).getTime())) {
-        throw new Error('Invalid reported comment decision receipt');
+        throw new Error('Invalid reported content decision receipt');
       }
       return { ok: true, data: { updatedAt: data } };
     }

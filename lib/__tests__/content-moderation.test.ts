@@ -1,4 +1,4 @@
-import { mapModerationQueuePage } from '../content-moderation';
+import { isReportedReview, mapModerationQueuePage } from '../content-moderation';
 
 const targetId = 'a418d851-2f2a-4ed8-8df8-52a1293c6211';
 const businessId = 'cf844b56-696c-48cf-9f72-715d823776f3';
@@ -64,5 +64,25 @@ describe('content moderation queue contracts', () => {
       has_more: false,
     }]);
     expect(page.items[0]?.targetType).toBe('business_post');
+  });
+
+  it('distinguishes an approved reported review from a pending review', () => {
+    const page = mapModerationQueuePage([{
+      target_type: 'review',
+      target_id: targetId,
+      business_id: businessId,
+      business_name: 'Copper Coyote',
+      author_public_id: null,
+      author_display_name: 'Member',
+      body: 'A previously approved review.',
+      rating: 4,
+      context: { reported: true, report_count: 2, report_reasons: ['spam'] },
+      submitted_at: '2026-08-01T10:00:00.000Z',
+      updated_at: '2026-08-01T10:00:00.000Z',
+      has_more: false,
+    }]);
+
+    expect(isReportedReview(page.items[0]!)).toBe(true);
+    expect(isReportedReview({ ...page.items[0]!, context: {} })).toBe(false);
   });
 });

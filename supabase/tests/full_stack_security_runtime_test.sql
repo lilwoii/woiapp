@@ -562,6 +562,86 @@ update public.businesses
 set state = 'published', verification = 'verified'
 where id = '70000000-0000-4000-8000-000000000007';
 
+-- Reports against already-approved reviews must be visible to staff and must
+-- have an audited, optimistic-locking keep/remove path.
+insert into public.reviews (
+  id, business_id, author_id, rating, body, moderation
+) values (
+  '75100000-0000-4000-8000-000000000007',
+  '70000000-0000-4000-8000-000000000007',
+  '20000000-0000-4000-8000-000000000002',
+  4,
+  'Approved runtime review that can be reported.',
+  'approved'
+);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"60000000-0000-4000-8000-000000000006","role":"authenticated","aal":"aal1"}',
+  true
+);
+select public.submit_content_report(
+  'review',
+  '75100000-0000-4000-8000-000000000007',
+  'spam',
+  'Runtime report for the protected review queue.'
+);
+reset role;
+
+insert into private.platform_roles (user_id, role, active)
+values ('10000000-0000-4000-8000-000000000001', 'moderator', true);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $reported_review_moderation$
+declare
+  queued record;
+  decision_updated_at timestamptz;
+begin
+  select * into queued
+  from public.list_pending_content_moderation(100, 0)
+  where target_type = 'review'
+    and target_id = '75100000-0000-4000-8000-000000000007';
+
+  if queued.target_id is null
+    or queued.context->>'reported' <> 'true'
+    or (queued.context->>'report_count')::integer <> 1
+  then
+    raise exception 'Reported approved review was absent from the moderation queue';
+  end if;
+
+  decision_updated_at := public.decide_reported_review(
+    queued.target_id,
+    'rejected',
+    'Runtime removal after reviewing the report.',
+    queued.updated_at
+  );
+
+  if decision_updated_at is null
+    or exists (
+      select 1 from public.public_reviews review
+      where review.review_id = queued.target_id
+    )
+    or not exists (
+      select 1 from public.content_reports report
+      where report.target_type = 'review'
+        and report.target_id = queued.target_id
+        and report.state = 'resolved'
+    )
+  then
+    raise exception 'Reported review removal was not atomic across projection and report state';
+  end if;
+end;
+$reported_review_moderation$;
+
+reset role;
+
 insert into public.pricing_versions (
   id, version, region_code, currency, click_floor_minor, click_ceiling_minor,
   state, effective_at, approval_reference, approved_at
@@ -1275,6 +1355,25 @@ begin
 end;
 $public_discovery_privileges$;
 
+insert into public.business_locations (
+  id, business_id, label, city, region, postal_code, point,
+  is_primary, is_approximate, public_address, publication_state
+) values
+  (
+    '73100000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    'Private runtime pickup', 'Los Angeles', 'CA', '90001',
+    public.st_setsrid(public.st_makepoint(-118.237, 34.043), 4326)::public.geography,
+    false, false, false, 'published'
+  ),
+  (
+    '73200000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    'Private dateline pickup', 'Dateline', 'AA', '00000',
+    public.st_setsrid(public.st_makepoint(-179.987, 10.013), 4326)::public.geography,
+    false, false, false, 'published'
+  );
+
 set local role service_role;
 
 do $public_discovery_service_execution$
@@ -1316,6 +1415,43 @@ begin
   perform 1 from public.map_food_places(
     -118.5, 33.9, -118.4, 34.0, 11, array['food_truck']::text[], 1
   ) limit 1;
+
+  if exists (
+    select 1 from public.map_food_places(
+      -118.238, 34.042, -118.236, 34.044, 18, null, 100
+    ) place
+    where place.location_id = '73100000-0000-4000-8000-000000000007'
+  ) then
+    raise exception 'Tiny viewport revealed a private raw location';
+  end if;
+  if not exists (
+    select 1 from public.map_food_places(
+      -118.251, 34.049, -118.249, 34.051, 18, null, 100
+    ) place
+    where place.location_id = '73100000-0000-4000-8000-000000000007'
+      and abs(place.longitude - (-118.25)) < 0.0000001
+      and abs(place.latitude - 34.05) < 0.0000001
+  ) then
+    raise exception 'Private location was not filtered and returned at its redacted point';
+  end if;
+  if exists (
+    select 1 from public.map_food_places(
+      -179.988, 10.012, -179.986, 10.014, 18, null, 100
+    ) place
+    where place.location_id = '73200000-0000-4000-8000-000000000007'
+  ) then
+    raise exception 'Tiny dateline viewport revealed a private raw location';
+  end if;
+  if not exists (
+    select 1 from public.map_food_places(
+      179.999, 9.999, -179.999, 10.001, 18, null, 100
+    ) place
+    where place.location_id = '73200000-0000-4000-8000-000000000007'
+      and abs(abs(place.longitude) - 180) < 0.0000001
+      and abs(place.latitude - 10) < 0.0000001
+  ) then
+    raise exception 'Antimeridian viewport did not use the redacted coordinate';
+  end if;
   perform public.release_public_discovery_lease(map_lease);
 
   search_lease := public.acquire_public_discovery_lease(
@@ -2160,6 +2296,128 @@ begin
   ) then raise exception 'Invalid provider receipt did not finalize the delivery'; end if;
 end;
 $push_dispatch_receipt_runtime$;
+
+-- A deletion freeze is an immediate account-wide push boundary. It must cancel
+-- a lease and make both later claims and provider handoff impossible.
+insert into auth.users (
+  id, aud, role, email, email_confirmed_at, raw_app_meta_data,
+  raw_user_meta_data, created_at, updated_at
+) values (
+  '93000000-0000-4000-8000-000000000003',
+  'authenticated', 'authenticated', 'runtime-push-delete@spottr.invalid', now(),
+  '{}'::jsonb,
+  '{"username":"runtime_push_delete","display_name":"Runtime Push Delete","terms_accepted":true}'::jsonb,
+  now(), now()
+);
+insert into auth.sessions (id, user_id, created_at, updated_at)
+values (
+  '93100000-0000-4000-8000-000000000003',
+  '93000000-0000-4000-8000-000000000003',
+  now(), now()
+);
+insert into public.follows (user_id, business_id)
+values (
+  '93000000-0000-4000-8000-000000000003',
+  '70000000-0000-4000-8000-000000000007'
+);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"93000000-0000-4000-8000-000000000003","role":"authenticated","aal":"aal2","session_id":"93100000-0000-4000-8000-000000000003"}',
+  true
+);
+select public.update_follow_notification_preferences(
+  array['70000000-0000-4000-8000-000000000007'::uuid],
+  'owner_bundle', true, null, null, null,
+  'spottr:notification-preference:runtime-delete-0001'
+);
+reset role;
+
+select public.register_notification_device_server(
+  '93000000-0000-4000-8000-000000000003',
+  '93100000-0000-4000-8000-000000000003',
+  '93200000-0000-4000-8000-000000000003',
+  'ios',
+  '82000000-0000-4000-8000-000000000002',
+  repeat('9', 64), repeat('L', 48), repeat('M', 16), 1,
+  'America/Los_Angeles', '0.2.0', 'granted',
+  'product-updates-v1', 'native_settings'
+);
+
+do $push_account_deletion_runtime$
+declare
+  event_id bigint;
+  outbox_claim record;
+  delivery_claim record;
+begin
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '93300000-0000-4000-8000-000000000003'),
+    now() + interval '2 hours'
+  ) returning id into event_id;
+
+  select * into outbox_claim
+  from public.claim_notification_outbox_server(
+    '93400000-0000-4000-8000-000000000003', 20, 60
+  ) where source_event_id = event_id;
+  if outbox_claim.outbox_id is null
+    or public.expand_notification_outbox_server(
+      outbox_claim.outbox_id, outbox_claim.lease_token, 20
+    ) < 1
+  then
+    raise exception 'Deletion lifecycle fixture did not create a delivery';
+  end if;
+
+  select * into delivery_claim
+  from public.claim_notification_deliveries_server(
+    '93500000-0000-4000-8000-000000000003', 20, 60
+  ) claimed where claimed.source_event_id = event_id
+      and claimed.user_id = '93000000-0000-4000-8000-000000000003';
+  if delivery_claim.delivery_id is null then
+    raise exception 'Deletion lifecycle fixture delivery was not leased';
+  end if;
+
+  perform * from public.begin_account_deletion(
+    '93000000-0000-4000-8000-000000000003',
+    'spottr:runtime-delete-push-0001'
+  );
+
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_claim.delivery_id
+      and delivery.state = 'cancelled'
+      and delivery.last_provider_code = 'account_deletion'
+      and delivery.lease_token is null
+      and delivery.lease_expires_at is null
+  ) then
+    raise exception 'Account deletion freeze left a notification delivery leased';
+  end if;
+
+  begin
+    perform public.mark_notification_delivery_batch_sending_server(
+      array[delivery_claim.delivery_id],
+      array[delivery_claim.lease_token],
+      60
+    );
+    raise exception 'Deleted account delivery crossed provider handoff';
+  exception
+    when sqlstate '40001' then null;
+  end;
+
+  if exists (
+    select 1 from public.claim_notification_deliveries_server(
+      '93600000-0000-4000-8000-000000000003', 20, 60
+    ) claimed
+    where claimed.source_event_id = event_id
+  ) then
+    raise exception 'Deleted account delivery was claimable after freeze';
+  end if;
+end;
+$push_account_deletion_runtime$;
 
 do $push_dispatch_privilege_guard$
 begin
