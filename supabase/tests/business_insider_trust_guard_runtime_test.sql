@@ -408,6 +408,8 @@ declare
   result record;
   reaction_summary record;
   review_projection record;
+  comment_id uuid;
+  comment_deleted boolean;
 begin
   select * into result
   from public.set_review_reaction(
@@ -434,6 +436,15 @@ begin
     or review_projection.helpful_count is distinct from 1
   then
     raise exception 'Non-member reaction did not persist with its helpful count';
+  end if;
+
+  comment_id := public.add_review_profile_comment(
+    'b8000000-0000-4000-8000-000000000008',
+    'A professional profile question for the reviewer.'
+  );
+  comment_deleted := public.delete_own_review_profile_comment(comment_id);
+  if comment_id is null or comment_deleted is distinct from true then
+    raise exception 'Non-member comment create/delete audit path did not complete';
   end if;
 end;
 $external_reaction$;

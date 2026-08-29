@@ -95,6 +95,18 @@ Deno.test("rating and body revisions atomically clear reactions and helpful stat
 Deno.test("canonical reaction/comment RPCs retain account-only execution", () => {
   assertMatch(
     migration,
+    /'review\.reaction_set', 'review', target_review_id::text/,
+  );
+  assertMatch(
+    migration,
+    /'review\.profile_comment_created', 'review_comment', comment_id::text/,
+  );
+  assertMatch(
+    migration,
+    /'review\.profile_comment_deleted',[\s\S]*?target_comment_id::text/,
+  );
+  assertMatch(
+    migration,
     /revoke all on function public\.set_review_reaction\(uuid, smallint\)\s+from public, anon, authenticated, service_role/,
   );
   assertMatch(migration, /grant execute on function public\.set_review_reaction\(uuid, smallint\) to authenticated/);

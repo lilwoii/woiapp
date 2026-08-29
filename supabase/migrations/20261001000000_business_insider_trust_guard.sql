@@ -318,7 +318,7 @@ begin
   end if;
 
   perform private.write_audit_event(
-    actor, null, 'review.reaction_set', 'review', target_review_id,
+    actor, null, 'review.reaction_set', 'review', target_review_id::text,
     jsonb_build_object('reaction', next_reaction)
   );
 
@@ -386,10 +386,49 @@ begin
   returning id into comment_id;
 
   perform private.write_audit_event(
-    actor, null, 'review.profile_comment_created', 'review_comment', comment_id,
+    actor, null, 'review.profile_comment_created', 'review_comment', comment_id::text,
     jsonb_build_object('review_id', target_review_id)
   );
   return comment_id;
+end;
+$$;
+
+-- Preserve the authenticated cleanup lane while repairing the audit helper's
+-- text target contract for the UUID-backed comment identifier.
+create or replace function public.delete_own_review_profile_comment(target_comment_id uuid)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  actor uuid := auth.uid();
+  changed boolean;
+begin
+  perform private.require_aal2();
+  if not private.is_active_user(actor) then
+    raise exception using errcode = '42501', message = 'Active verified account required';
+  end if;
+
+  update public.review_profile_comments comment_row
+  set deleted_at = now(), body = '[deleted]', updated_at = now()
+  where comment_row.id = target_comment_id
+    and comment_row.author_id = actor
+    and comment_row.deleted_at is null;
+  changed := found;
+
+  if changed then
+    perform private.write_audit_event(
+      actor,
+      null,
+      'review.profile_comment_deleted',
+      'review_comment',
+      target_comment_id::text,
+      '{}'::jsonb
+    );
+  end if;
+  return changed;
 end;
 $$;
 
