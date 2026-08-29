@@ -4200,6 +4200,7 @@ do $business_claim_evidence_runtime_contract$
 declare
   deletion_user_id constant uuid := 'fa000000-0000-4000-8000-000000000001';
   held_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg';
+  unprotected_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg';
   purge_path constant text := 'quarantine/cccccccc-cccc-4ccc-8ccc-cccccccccccc/dddddddd-dddd-4ddd-8ddd-dddddddddddd.png';
   result jsonb;
   purge_batch uuid;
@@ -4239,6 +4240,11 @@ begin
     held_path,
     encode(extensions.digest(held_path, 'sha256'), 'hex')
   );
+
+  insert into storage.objects (bucket_id, name, owner_id)
+  values
+    ('spottr-media', held_path, deletion_user_id::text),
+    ('spottr-media', unprotected_path, deletion_user_id::text);
 
   insert into private.media_cleanup_items (
     storage_path,
@@ -4385,5 +4391,94 @@ begin
   where singleton;
 end;
 $business_claim_evidence_runtime_contract$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"fa000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $business_claim_evidence_storage_delete_policy_contract$
+declare
+  deleted_count integer;
+  held_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg';
+  unprotected_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg';
+begin
+  delete from storage.objects object_row
+  where object_row.bucket_id = 'spottr-media'
+    and object_row.name = held_path;
+  get diagnostics deleted_count = row_count;
+  if deleted_count <> 0 then
+    raise exception 'Authenticated storage policy deleted retained business-claim evidence';
+  end if;
+
+  delete from storage.objects object_row
+  where object_row.bucket_id = 'spottr-media'
+    and object_row.name = unprotected_path;
+  get diagnostics deleted_count = row_count;
+  if deleted_count <> 1 then
+    raise exception 'Authenticated storage policy did not delete an ordinary owned quarantine object';
+  end if;
+end;
+$business_claim_evidence_storage_delete_policy_contract$;
+
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+do $business_claim_evidence_auth_delete_contract$
+declare
+  deletion_user_id constant uuid := 'fa000000-0000-4000-8000-000000000001';
+  held_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg';
+  deletion_request_id constant uuid := 'fe000000-0000-4000-8000-000000000001';
+begin
+  delete from auth.users auth_user
+  where auth_user.id = deletion_user_id;
+  if not found then
+    raise exception 'Auth-delete fixture was not removed';
+  end if;
+
+  if not exists (
+    select 1
+    from private.business_claim_evidence evidence
+    where evidence.storage_path = held_path
+      and evidence.claimant_id is null
+      and evidence.lifecycle_state = 'retained'
+      and evidence.legal_hold
+  ) then
+    raise exception 'Auth deletion did not preserve held claim evidence with a cleared claimant reference';
+  end if;
+
+  if not exists (
+    select 1
+    from private.account_deletion_requests deletion_request
+    where deletion_request.id = deletion_request_id
+      and deletion_request.user_id is null
+  ) then
+    raise exception 'Auth deletion did not retain the path-free account-deletion receipt';
+  end if;
+
+  if not exists (
+    select 1
+    from private.business_claim_evidence_account_deletion_exceptions exception_row
+    join private.business_claim_evidence evidence
+      on evidence.id = exception_row.evidence_id
+    where exception_row.request_id = deletion_request_id
+      and exception_row.reason = 'retention_boundary'
+      and evidence.storage_path = held_path
+  ) then
+    raise exception 'Auth deletion removed the held-evidence preservation exception';
+  end if;
+
+  if not exists (
+    select 1
+    from storage.objects object_row
+    where object_row.bucket_id = 'spottr-media'
+      and object_row.name = held_path
+  ) then
+    raise exception 'Auth deletion removed the retained claim-evidence object';
+  end if;
+end;
+$business_claim_evidence_auth_delete_contract$;
 
 rollback;

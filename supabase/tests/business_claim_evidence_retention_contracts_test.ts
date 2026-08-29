@@ -9,6 +9,9 @@ const migration = await Deno.readTextFile(
 const mediaStage = await Deno.readTextFile(
   new URL("../functions/media-stage/index.ts", import.meta.url),
 );
+const runtimeSql = await Deno.readTextFile(
+  new URL("./full_stack_security_runtime_test.sql", import.meta.url),
+);
 
 function section(start: string, end: string): string {
   const startIndex = migration.indexOf(start);
@@ -129,6 +132,14 @@ Deno.test("authenticated quarantine deletion cannot remove retained claim eviden
   assertMatch(
     migration,
     /drop policy if exists "users delete own quarantine media" on storage\.objects;[\s\S]+create policy "users delete own quarantine media"[\s\S]+not private\.is_protected_business_claim_evidence_path\(name\)/,
+  );
+  assertMatch(
+    runtimeSql,
+    /business_claim_evidence_storage_delete_policy_contract[\s\S]+deleted_count <> 0[\s\S]+deleted_count <> 1/,
+  );
+  assertMatch(
+    runtimeSql,
+    /business_claim_evidence_auth_delete_contract[\s\S]+delete from auth\.users[\s\S]+evidence\.claimant_id is null[\s\S]+deletion_request\.user_id is null[\s\S]+retention_boundary/,
   );
 });
 
