@@ -1711,6 +1711,12 @@ declare
   rebound_device_id uuid;
   reclaimed_device_id uuid;
   unmatched_device_id uuid;
+  unfollow_event_id bigint;
+  unfollow_outbox_claim record;
+  unfollow_delivery_id uuid;
+  unfollow_handoff_event_id bigint;
+  unfollow_handoff_outbox_claim record;
+  unfollow_handoff_delivery_claim record;
   affected integer;
 begin
   insert into public.business_public_events (
@@ -1846,6 +1852,111 @@ begin
       and device.revoked_at is not null
       and device.revoke_reason = 'auth_session_ended'
   ) then raise exception 'Ended auth session left an active notification device'; end if;
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '83000000-0000-4000-8000-000000000010'),
+    now() + interval '2 hours'
+  ) returning id into unfollow_event_id;
+  select * into unfollow_outbox_claim
+  from private.claim_notification_outbox(
+    '85000000-0000-4000-8000-000000000010', 10, 60
+  ) where source_event_id = unfollow_event_id;
+  if unfollow_outbox_claim.outbox_id is null then
+    raise exception 'Unfollow fixture outbox was not claimed';
+  end if;
+  if private.expand_notification_outbox(
+    unfollow_outbox_claim.outbox_id, unfollow_outbox_claim.lease_token, 20
+  ) <> 1 then
+    raise exception 'Unfollow fixture did not fan out exactly one delivery';
+  end if;
+  select delivery.id into unfollow_delivery_id
+  from private.notification_deliveries delivery
+  where delivery.source_event_id = unfollow_event_id
+    and delivery.user_id = '90000000-0000-4000-8000-000000000009';
+  if unfollow_delivery_id is null then
+    raise exception 'Unfollow fixture delivery was not created';
+  end if;
+
+  delete from public.follows
+  where user_id = '90000000-0000-4000-8000-000000000009'
+    and business_id = '70000000-0000-4000-8000-000000000007';
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = unfollow_delivery_id
+      and delivery.state = 'cancelled'
+      and delivery.last_provider_code = 'follow_removed'
+      and delivery.lease_token is null
+      and delivery.lease_expires_at is null
+  ) then raise exception 'Unfollow left the queued delivery claimable'; end if;
+  if exists (
+    select 1 from private.claim_notification_deliveries(
+      '85000000-0000-4000-8000-000000000011', 20, 60
+    ) where source_event_id = unfollow_event_id
+  ) then raise exception 'Unfollowed delivery was still claimable'; end if;
+
+  -- Recreate the follow for a leased delivery so the handoff guard is also
+  -- exercised after the follow-delete trigger has run.
+  insert into public.follows (user_id, business_id)
+  values (
+    '90000000-0000-4000-8000-000000000009',
+    '70000000-0000-4000-8000-000000000007'
+  );
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '83000000-0000-4000-8000-000000000011'),
+    now() + interval '2 hours'
+  ) returning id into unfollow_handoff_event_id;
+  select * into unfollow_handoff_outbox_claim
+  from private.claim_notification_outbox(
+    '85000000-0000-4000-8000-000000000012', 10, 60
+  ) where source_event_id = unfollow_handoff_event_id;
+  if unfollow_handoff_outbox_claim.outbox_id is null then
+    raise exception 'Unfollow handoff fixture outbox was not claimed';
+  end if;
+  if private.expand_notification_outbox(
+    unfollow_handoff_outbox_claim.outbox_id,
+    unfollow_handoff_outbox_claim.lease_token,
+    20
+  ) <> 1 then
+    raise exception 'Unfollow handoff fixture did not fan out exactly one delivery';
+  end if;
+  select * into unfollow_handoff_delivery_claim
+  from private.claim_notification_deliveries(
+    '85000000-0000-4000-8000-000000000013', 20, 60
+  ) where source_event_id = unfollow_handoff_event_id;
+  if unfollow_handoff_delivery_claim.delivery_id is null then
+    raise exception 'Unfollow handoff fixture delivery was not leased';
+  end if;
+  delete from public.follows
+  where user_id = '90000000-0000-4000-8000-000000000009'
+    and business_id = '70000000-0000-4000-8000-000000000007';
+  begin
+    perform private.mark_notification_delivery_batch_sending(
+      array[unfollow_handoff_delivery_claim.delivery_id],
+      array[unfollow_handoff_delivery_claim.lease_token], 60
+    );
+    raise exception 'Unfollowed delivery crossed provider handoff';
+  exception when sqlstate '40001' then null;
+  end;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = unfollow_handoff_delivery_claim.delivery_id
+      and delivery.state = 'cancelled'
+      and delivery.last_provider_code = 'follow_removed'
+  ) then raise exception 'Unfollow handoff guard did not preserve cancellation'; end if;
+
+  insert into public.follows (user_id, business_id)
+  values (
+    '90000000-0000-4000-8000-000000000009',
+    '70000000-0000-4000-8000-000000000007'
+  ) on conflict do nothing;
 end;
 $push_runtime$;
 

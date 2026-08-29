@@ -133,6 +133,9 @@ Deno.test("notification storage is private, cascading, deduplicated, and disable
   const sessionBinding = await text(
     "migrations/20260919000000_notification_session_binding.sql",
   );
+  const followLifecycle = await text(
+    "migrations/20260920000000_notification_follow_lifecycle.sql",
+  );
   for (
     const table of [
       "notification_consents",
@@ -190,6 +193,19 @@ Deno.test("notification storage is private, cascading, deduplicated, and disable
   );
   assert(migration.includes("'notification_consents'"));
   assert(migration.includes("'notification_devices'"));
+  assertMatch(
+    followLifecycle,
+    /last_provider_code = 'follow_removed'/,
+  );
+  assertMatch(followLifecycle, /after delete on public\.follows/);
+  assertMatch(
+    followLifecycle,
+    /join public\.follows followed on followed\.user_id = delivery\.user_id/,
+  );
+  assertMatch(
+    followLifecycle,
+    /public\.notification_preferences preference,[\s\S]*public\.follows followed/,
+  );
   const exportWrapper = migration.slice(
     migration.indexOf(
       "create or replace function public.account_export_payload(target_user_id uuid)",
@@ -289,7 +305,7 @@ Deno.test("native permission is user-triggered and sign-out revokes before the a
     auth.indexOf("const linkSubscription"),
   );
   const authStateHandler = auth.slice(
-    auth.indexOf("client.auth.onAuthStateChange"),
+    auth.indexOf("const handleAuthStateChange"),
     auth.indexOf("const handleDeepLink"),
   );
   const signUpHandler = auth.slice(
@@ -334,6 +350,12 @@ Deno.test("native permission is user-triggered and sign-out revokes before the a
     ),
   );
   assert(
+    deepLinkHandler.indexOf("initialRestoreBarrier.ready") <
+      deepLinkHandler.indexOf(
+        "const currentSession = await client.auth.getSession();",
+      ),
+  );
+  assert(
     deepLinkHandler.indexOf(
       "const currentSession = await client.auth.getSession();",
     ) < deepLinkHandler.indexOf("client.auth.exchangeCodeForSession(code)"),
@@ -354,6 +376,8 @@ Deno.test("native permission is user-triggered and sign-out revokes before the a
   assert(authStateHandler.includes("persistAuthIdentityQuarantine"));
   assert(authStateHandler.includes("rejectedNativeIdentity.current"));
   assert(authStateHandler.includes("blocked an unexpected account change"));
+  assert(auth.includes("createInitialAuthRestoreBarrier()"));
+  assert(auth.includes("activeRestoreRequest = restoredReservation.token"));
   assert(signUpHandler.includes("prepareExplicitAuthentication()"));
   assert(signUpHandler.includes("client.auth.signUp("));
   assert(
