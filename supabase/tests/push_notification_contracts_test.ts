@@ -270,7 +270,7 @@ Deno.test("event enqueue stores only references and bounded workers use leases",
 
 Deno.test("notification UX stays capability-aware and notification taps are route constrained", async () => {
   const saved = await text("../app/(tabs)/saved.tsx");
-  const nativeHandler = await text("../components/notification-response-handler.native.tsx");
+  const nativeHandler = await text("../components/route-focus-manager.native.tsx");
   const routeParser = await text("../lib/notification-routing.ts");
   assert(saved.includes("nativePushDeliveryAvailable"));
   assert(saved.includes("Web push is not available in this release."));
@@ -279,6 +279,8 @@ Deno.test("notification UX stays capability-aware and notification taps are rout
   assert(!saved.includes("onValueChange={(next) => void savePreference('live_nearby', next)}"));
   assert(nativeHandler.includes("getLastNotificationResponseAsync"));
   assert(nativeHandler.includes("addNotificationResponseReceivedListener"));
+  assert(nativeHandler.includes("Notifications.setNotificationHandler"));
+  assert(nativeHandler.includes("shouldShowBanner: true"));
   assert(nativeHandler.includes("parseNotificationRoute"));
   assertMatch(routeParser, /\^\\\/place\\\/\(\[0-9a-f\]/);
   assert(!routeParser.includes("new URL("));

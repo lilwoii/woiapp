@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router, useIsFocused } from 'expo-router';
 import * as Location from 'expo-location';
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
   AppState,
@@ -34,7 +34,7 @@ import {
   type DiscoverySort,
 } from '@/lib/discovery-filters';
 import { featureFlags } from '@/lib/features';
-import { normalizeLongitude, zoomFromLongitudeDelta } from '@/lib/map-clustering';
+import { normalizeLongitude, viewportIsLiveInventoryEligible, zoomFromLongitudeDelta } from '@/lib/map-clustering';
 import { filterMapInventoryCategories, filterPlacesForEnabledCategories } from '@/lib/map-inventory';
 import { mapCategoryOrder, mapCategoryPresentation } from '@/lib/map-presentation';
 import { createLatestRequestGate } from '@/lib/latest-request';
@@ -80,6 +80,7 @@ const priceOptions = [1, 2, 3, 4] as const;
 const webSectionHeading = Platform.OS === 'web'
   ? ({ 'aria-level': 2 } as const)
   : {};
+const subscribeHydration = () => () => undefined;
 function viewportAroundPoint(
   latitude: number,
   longitude: number,
@@ -113,6 +114,7 @@ export default function DiscoverScreen() {
 }
 
 function ScopedDiscoverScreen() {
+  const clientHydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
   const {
     ensurePlace,
     followedIds,
@@ -203,6 +205,11 @@ function ScopedDiscoverScreen() {
     if (!mounted.current) return { ok: false, reason: 'Screen is no longer active.' } as const;
     latestMapViewport.current = viewport;
     setMapInventoryError(null);
+    if (!viewportIsLiveInventoryEligible(viewport.bounds)) {
+      setMapInventoryFeatures([]);
+      setMapMarkersSuppressed(true);
+      return { ok: false, reason: 'Zoom in before loading live map places.' } as const;
+    }
     if (!requestedMapCategories.length) {
       setMapInventoryFeatures([]);
       setMapMarkersSuppressed(false);
@@ -226,8 +233,10 @@ function ScopedDiscoverScreen() {
   }, [requestedMapCategories]);
 
   const invalidateMapInventory = useCallback((viewport: MapViewport) => {
+    locationRequestGeneration.current += 1;
     latestMapViewport.current = viewport;
     mapInventoryRequest.current.invalidate();
+    setLocating(false);
     setMapInventoryFeatures([]);
     setMapMarkersSuppressed(true);
     setMapInventoryError(null);
@@ -369,6 +378,10 @@ function ScopedDiscoverScreen() {
   };
 
   const searchVisibleMap = useCallback(async (viewport: MapViewport) => {
+    if (!viewportIsLiveInventoryEligible(viewport.bounds)) {
+      setLocationError('Zoom in before searching this map area.');
+      return;
+    }
     const generation = ++locationRequestGeneration.current;
     const isCurrent = () => mounted.current && locationRequestGeneration.current === generation;
     if (!isCurrent()) return;
@@ -560,7 +573,7 @@ function ScopedDiscoverScreen() {
     // any response for an older viewport.
     const timer = setTimeout(() => {
       const latestViewport = latestMapViewport.current;
-      if (latestViewport) {
+      if (latestViewport && viewportIsLiveInventoryEligible(latestViewport.bounds)) {
         void loadMapInventory(latestViewport, { preserveCurrent: true });
       }
     }, 750);
@@ -946,7 +959,8 @@ function ScopedDiscoverScreen() {
           />
         ) : null}
 
-        <View style={[styles.workspace, wide && styles.workspaceWide]}>
+        {clientHydrated ? (
+          <View style={[styles.workspace, wide && styles.workspaceWide]}>
             <View style={[styles.mapColumn, wide && styles.mapColumnWide]}>
               <LiveMap
                 inventoryError={authoritativeMapInventory ? mapInventoryError : null}
@@ -1124,6 +1138,12 @@ function ScopedDiscoverScreen() {
               </View>
             </View>
           </View>
+        ) : (
+          <View accessibilityLiveRegion="polite" style={styles.mapBootstrap}>
+            <FontAwesome6 color={palette.accentDeep} name="map-location-dot" size={20} />
+            <Text style={styles.mapBootstrapTitle}>Preparing the live map…</Text>
+          </View>
+        )}
 
         <View style={styles.trustLine}>
           <FontAwesome6 color={palette.success} name="shield-halved" size={15} />
@@ -1556,6 +1576,21 @@ const styles = StyleSheet.create({
   },
   workspace: {
     gap: spacing.lg,
+  },
+  mapBootstrap: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.line,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    gap: spacing.sm,
+    height: 470,
+    justifyContent: 'center',
+  },
+  mapBootstrapTitle: {
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
   },
   workspaceWide: {
     alignItems: 'flex-start',

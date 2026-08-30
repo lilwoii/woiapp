@@ -7,7 +7,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { palette, radii } from '@/constants/theme';
 import {
   clusterInventoryFeatures,
-  clusterPlaces,
+  clusterPlacesWithSelection,
   normalizeLongitude,
   shouldRenderMapInventory,
   viewportIsLiveInventoryEligible,
@@ -367,7 +367,7 @@ export default function MapLibreMapView({
         if (userMovedMap.current) {
           const viewport = viewportFromMap(map);
           const eligible = viewportIsLiveInventoryEligible(viewport.bounds);
-          if (onSearchAreaRef.current) setPendingViewport(viewport);
+          setPendingViewport(eligible && onSearchAreaRef.current ? viewport : null);
           setInventoryViewportEligible(eligible);
           onViewportInvalidatedRef.current?.(viewport);
           if (!eligible) {
@@ -410,7 +410,9 @@ export default function MapLibreMapView({
       inventorySuppressed: markersSuppressed,
     });
     const visibleInventoryFeatures = markersVisible ? renderedInventoryFeatures : [];
-    const features = markersVisible && !authoritativeInventory ? clusterPlaces(places, mapZoom) : [];
+    const features = markersVisible && !authoritativeInventory
+      ? clusterPlacesWithSelection(places, mapZoom, selectedId, 300)
+      : [];
     const renderedIds = visibleInventoryFeatures.length
       ? visibleInventoryFeatures.map((feature) => feature.id)
       : features.map((feature) => feature.id);

@@ -2,6 +2,7 @@ import { seedPlaces } from '@/data/places';
 import {
   clusterInventoryFeatures,
   clusterPlaces,
+  clusterPlacesWithSelection,
   normalizeLongitude,
   shouldRenderMapInventory,
   viewportIsLiveInventoryEligible,
@@ -85,5 +86,21 @@ describe('map clustering', () => {
     const nativeRendered = clusterInventoryFeatures(features, 14, 120);
     expect(nativeRendered.length).toBeLessThanOrEqual(120);
     expect(nativeRendered.reduce((count, feature) => count + feature.count, 0)).toBe(1_200);
+  });
+
+  it('bounds dense client results without dropping represented places or the selection', () => {
+    const places = Array.from({ length: 10_000 }, (_, index) => ({
+      ...seedPlaces[index % seedPlaces.length],
+      id: `dense-${index}`,
+      latitude: -60 + (index % 400) * 0.3,
+      longitude: -170 + Math.floor(index / 400) * 13.5,
+    }));
+    const rendered = clusterPlacesWithSelection(places, 18, 'dense-9', 300);
+    expect(rendered.length).toBeLessThanOrEqual(300);
+    expect(rendered.reduce(
+      (count, feature) => count + (feature.kind === 'cluster' ? feature.count : 1),
+      0,
+    )).toBe(10_000);
+    expect(rendered.some((feature) => feature.kind === 'place' && feature.place.id === 'dense-9')).toBe(true);
   });
 });

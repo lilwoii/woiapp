@@ -6,7 +6,7 @@ import MapView, { Marker, Polyline, type Region } from 'react-native-maps';
 import { palette, radii } from '@/constants/theme';
 import {
   clusterInventoryFeatures,
-  clusterPlaces,
+  clusterPlacesWithSelection,
   normalizeLongitude,
   shouldRenderMapInventory,
   viewportIsLiveInventoryEligible,
@@ -192,8 +192,8 @@ export function LiveMap({
   const inventoryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authoritativeInventory = inventoryFeatures !== undefined;
   const clientFeatures = useMemo(
-    () => clusterPlaces(places, zoomFromLongitudeDelta(region.longitudeDelta)),
-    [places, region.longitudeDelta]
+    () => clusterPlacesWithSelection(places, zoomFromLongitudeDelta(region.longitudeDelta), selectedId, 120),
+    [places, region.longitudeDelta, selectedId]
   );
   const renderedInventoryFeatures = useMemo(
     () => clusterInventoryFeatures(inventoryFeatures ?? [], zoomFromLongitudeDelta(region.longitudeDelta), 120),
@@ -287,7 +287,7 @@ export function LiveMap({
         if (userMovedMap.current) {
           const viewport = viewportFromRegion(nextRegion);
           const eligible = viewportIsLiveInventoryEligible(viewport.bounds);
-          if (onSearchArea) setPendingViewport(viewport);
+          setPendingViewport(eligible && onSearchArea ? viewport : null);
           setInventoryViewportEligible(eligible);
           onViewportInvalidated?.(viewport);
           if (!eligible) {
@@ -304,6 +304,7 @@ export function LiveMap({
       pitchEnabled
       rotateEnabled
       showsBuildings
+      showsTraffic={navigationMode === 'drive'}
       showsUserLocation={Boolean(userCoordinates) && !navigationMode}
       style={styles.map}>
       {routeCoordinates.length >= 2 ? (

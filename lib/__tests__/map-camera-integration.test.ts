@@ -21,6 +21,7 @@ describe('global map camera integration', () => {
     expect(nativeMap).toMatch(/userCoordinates \? \[userCoordinates\] : places/);
     expect(nativeMap).toMatch(/searchAreaKey === fittedSearchAreaKey\.current/);
     expect(nativeMap).toMatch(/regionForMapCoordinates\(routeCoordinates/);
+    expect(nativeMap).toMatch(/showsTraffic=\{navigationMode === 'drive'\}/);
     expect(discover).toMatch(/setMapFocusKey\(`area:/);
   });
 
@@ -33,12 +34,19 @@ describe('global map camera integration', () => {
   });
 
   it('keeps the map available in empty and disconnected areas without inventing a nearby city', () => {
-    expect(discover).toMatch(/<View style=\{\[styles\.workspace, wide && styles\.workspaceWide\]\}>/);
+    expect(discover).toMatch(/clientHydrated \? \([\s\S]*<View style=\{\[styles\.workspace, wide && styles\.workspaceWide\]\}>/);
     expect(discover).not.toMatch(/ranked\.length \|\| visibleMapInventory\.length \|\| mapMarkersSuppressed \? \(/);
     expect(discover).toMatch(/The map is ready when listings reconnect/);
     expect(webMap).toMatch(/const fallbackCenter: \[number, number\] = \[0, 20\]/);
     expect(webMap).toMatch(/zoom: first \? 11\.5 : 2\.35/);
     expect(nativeMap).toMatch(/latitude: 20,[\s\S]*longitude: 0,[\s\S]*latitudeDelta: 100,[\s\S]*longitudeDelta: 160/);
+  });
+
+  it('invalidates stale searches and refuses oversized live-inventory viewports', () => {
+    expect(discover).toMatch(/locationRequestGeneration\.current \+= 1;[\s\S]*mapInventoryRequest\.current\.invalidate\(\)/);
+    expect(discover).toMatch(/if \(!viewportIsLiveInventoryEligible\(viewport\.bounds\)\)/);
+    expect(webMap).toMatch(/setPendingViewport\(eligible && onSearchAreaRef\.current \? viewport : null\)/);
+    expect(nativeMap).toMatch(/setPendingViewport\(eligible && onSearchArea \? viewport : null\)/);
   });
 
   it('makes web markers keyboard reachable and offers 3D only when the loaded style supports it', () => {

@@ -11,7 +11,6 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '@/context/auth-context';
 import { MarketplaceStoreProvider } from '@/context/marketplace-store';
-import { NotificationResponseHandler } from '@/components/notification-response-handler';
 import { RouteFocusManager } from '@/components/route-focus-manager';
 export { RootErrorBoundary as ErrorBoundary } from '@/components/root-error-boundary';
 
@@ -64,7 +63,6 @@ export default function RootLayout() {
                 <title>Spottr · Live local food, mapped</title>
               </Head>
               <StatusBar style="dark" />
-              <NotificationResponseHandler />
               <RouteFocusManager />
               <Stack
                 screenOptions={{

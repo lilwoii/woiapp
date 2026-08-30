@@ -5,7 +5,18 @@ import { useEffect, useRef } from 'react';
 import { featureFlags } from '@/lib/features';
 import { parseNotificationRoute } from '@/lib/notification-routing';
 
-export function NotificationResponseHandler() {
+if (featureFlags.pushNotifications) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldPlaySound: false,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
+
+export function RouteFocusManager() {
   const handledIdentifier = useRef<string | null>(null);
 
   useEffect(() => {
@@ -14,11 +25,10 @@ export function NotificationResponseHandler() {
     const openResponse = (response: Notifications.NotificationResponse) => {
       const identifier = response.notification.request.identifier;
       if (handledIdentifier.current === identifier) return;
-      const route = parseNotificationRoute(response.notification.request.content.data?.route);
-      if (!route) return;
       handledIdentifier.current = identifier;
-      router.push(route);
       void Notifications.clearLastNotificationResponseAsync();
+      const route = parseNotificationRoute(response.notification.request.content.data?.route);
+      if (route) router.push(route);
     };
 
     let active = true;
