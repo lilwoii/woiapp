@@ -1,16 +1,42 @@
-function allowedMapOrigins(env) {
-  return (env.SPOTTR_MAP_CSP_ORIGINS ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .flatMap((value) => {
-      try {
-        const url = new URL(value);
-        return url.protocol === 'https:' ? [url.origin] : [];
-      } catch {
-        return [];
-      }
-    });
+const mapOriginPlaceholderPattern =
+  /(?:your-|example|\.test(?:[/:]|$)|\.invalid(?:[/:]|$)|00000000-0000-0000-0000-000000000000)/i;
+
+export function allowedMapOrigins(env) {
+  const configured = env.EXPO_PUBLIC_MAP_CSP_ORIGINS;
+  if (typeof configured !== 'string') return [];
+  const raw = configured.trim();
+  if (!raw || raw.length > 2048) return [];
+  const entries = raw.split(',').map((entry) => entry.trim());
+  if (!entries.length || entries.length > 16 || entries.some((entry) => !entry)) return [];
+  const origins = [];
+  for (const entry of entries) {
+    try {
+      const url = new URL(entry);
+      const hostname = url.hostname;
+      if (
+        url.protocol !== 'https:' ||
+        url.username ||
+        url.password ||
+        url.pathname !== '/' ||
+        url.search ||
+        url.hash ||
+        url.port ||
+        hostname === 'localhost' ||
+        hostname.endsWith('.localhost') ||
+        hostname.endsWith('.local') ||
+        hostname.endsWith('.internal') ||
+        hostname.endsWith('.') ||
+        /^[0-9.]+$/.test(hostname) ||
+        hostname.includes(':') ||
+        hostname.includes('*') ||
+        mapOriginPlaceholderPattern.test(entry)
+      ) return [];
+      if (!origins.includes(url.origin)) origins.push(url.origin);
+    } catch {
+      return [];
+    }
+  }
+  return origins;
 }
 
 function configuredSupabaseOrigins(env) {

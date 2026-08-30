@@ -24,6 +24,9 @@ Required client-visible production values:
 - `EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY`, restricted to the release package and
   signing certificate
 - `EXPO_PUBLIC_MAP_STYLE_URL`
+- `EXPO_PUBLIC_MAP_CSP_ORIGINS`, containing every exact public HTTPS style,
+  tile, glyph, and sprite origin referenced by the licensed map style; it must
+  include the style document's origin
 - `EXPO_PUBLIC_MAP_ATTRIBUTION`
 - `EXPO_PUBLIC_MAP_ATTRIBUTION_URL`
 
@@ -31,9 +34,11 @@ Required client-visible production values:
 All client feature gates in [.env.example](../.env.example) remain false until
 their separate acceptance evidence exists.
 
-Configure Sites Worker values through Sites:
+Configure Sites Worker values through Sites. Set
+`EXPO_PUBLIC_MAP_CSP_ORIGINS` to the exact same value used by the verified web
+build so the HTML meta policy and HTTP header policy intersect without blocking
+licensed map resources. Also configure:
 
-- `SPOTTR_MAP_CSP_ORIGINS`
 - `SPOTTR_APPLE_TEAM_ID`
 - `SPOTTR_IOS_BUNDLE_ID`
 - `SPOTTR_ANDROID_PACKAGE`
@@ -45,8 +50,10 @@ Supabase. Service-role, scanner, moderation, provider, SMTP, and push
 credentials must never enter an `EXPO_PUBLIC_*` value or a committed `.env`.
 
 The production configuration gate in [app.config.ts](../app.config.ts) rejects
-missing/placeholder Supabase, app URL, EAS, Android map, web-map style, and
-attribution values.
+missing/placeholder Supabase, app URL, EAS, Android map, web-map style, map CSP,
+and attribution values. Map CSP entries must be exact public HTTPS origins with
+no credentials, path, query, fragment, custom port, wildcard, or private host;
+one malformed entry invalidates the full list.
 
 ## 2. Source-quality evidence
 

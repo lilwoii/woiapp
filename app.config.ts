@@ -34,8 +34,10 @@ export default () => {
     hostname.endsWith('.localhost') ||
     hostname.endsWith('.local') ||
     hostname.endsWith('.internal') ||
+    hostname.endsWith('.') ||
     /^[0-9.]+$/.test(hostname) ||
-    hostname.includes(':');
+    hostname.includes(':') ||
+    hostname.includes('*');
   const parsePublicHttpsUrl = (value?: string) => {
     if (!value) return null;
     try {
@@ -74,6 +76,40 @@ export default () => {
       /^[a-z0-9-]+\.supabase\.co$/i.test(parsed.hostname)
     );
   };
+  const parseMapCspOrigins = (value?: string): string[] | null => {
+    const raw = value?.trim();
+    if (!raw || raw.length > 2048) return null;
+    const entries = raw.split(',').map((entry) => entry.trim());
+    if (
+      entries.length === 0 ||
+      entries.length > 16 ||
+      entries.some((entry) => !entry)
+    ) return null;
+    const origins: string[] = [];
+    for (const entry of entries) {
+      const parsed = parsePublicHttpsUrl(entry);
+      if (
+        !parsed ||
+        isPlaceholder(entry) ||
+        parsed.pathname !== '/' ||
+        parsed.search ||
+        parsed.port
+      ) return null;
+      if (!origins.includes(parsed.origin)) origins.push(parsed.origin);
+    }
+    return origins;
+  };
+  const mapCspOrigins = parseMapCspOrigins(
+    process.env.EXPO_PUBLIC_MAP_CSP_ORIGINS,
+  );
+  const mapStyleOriginAllowed = (() => {
+    if (!mapStyleUrl || !mapCspOrigins) return false;
+    try {
+      return mapCspOrigins.includes(new URL(mapStyleUrl).origin);
+    } catch {
+      return false;
+    }
+  })();
   const publicAppUrl = process.env.EXPO_PUBLIC_APP_URL?.trim().replace(/\/+$/, '');
   let universalLinkHost: string | null = null;
   if (publicAppUrl && isHttpsOrigin(publicAppUrl)) {
@@ -100,6 +136,10 @@ export default () => {
         'EXPO_PUBLIC_EAS_PROJECT_ID',
       isPlaceholder(androidMapsKey) && 'EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY',
       !isHttpsUrl(mapStyleUrl) && 'EXPO_PUBLIC_MAP_STYLE_URL (public HTTPS URL)',
+      !mapCspOrigins &&
+        'EXPO_PUBLIC_MAP_CSP_ORIGINS (exact public HTTPS style/tile/glyph/sprite origins)',
+      mapCspOrigins && !mapStyleOriginAllowed &&
+        'EXPO_PUBLIC_MAP_CSP_ORIGINS (must include EXPO_PUBLIC_MAP_STYLE_URL origin)',
       isPlaceholder(mapAttribution) && 'EXPO_PUBLIC_MAP_ATTRIBUTION',
       !isHttpsUrl(mapAttributionUrl) && 'EXPO_PUBLIC_MAP_ATTRIBUTION_URL (public HTTPS URL)',
       !universalLinkHost && 'EXPO_PUBLIC_APP_URL (canonical public HTTPS origin)',
@@ -182,6 +222,7 @@ export default () => {
       termsUrl: termsUrl ?? null,
       communityRulesUrl: communityRulesUrl ?? null,
       supportUrl: supportUrl ?? null,
+      mapCspOrigins: mapCspOrigins ?? [],
     },
   };
 };

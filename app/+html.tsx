@@ -1,12 +1,17 @@
 import { ScrollViewStyleReset } from 'expo-router/html';
+import { parseMapCspOrigins } from '@/lib/map-csp';
+
+const browserMapOrigins =
+  parseMapCspOrigins(process.env.EXPO_PUBLIC_MAP_CSP_ORIGINS) ?? [];
+const browserMapSources = browserMapOrigins.join(' ');
 
 const browserContentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'self'",
-  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://tile.openstreetmap.org",
+  `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://tile.openstreetmap.org ${browserMapSources}`.trim(),
   "font-src 'self' data:",
   "form-action 'self'",
-  "img-src 'self' data: blob: https://images.unsplash.com https://tile.openstreetmap.org https://*.supabase.co",
+  `img-src 'self' data: blob: https://images.unsplash.com https://tile.openstreetmap.org https://*.supabase.co ${browserMapSources}`.trim(),
   "manifest-src 'self'",
   "object-src 'none'",
   "script-src 'self' 'sha256-67fhrP0+BkBqmgGGXTtgiVO/9EQs3QruYNU/7fnRkI8='",

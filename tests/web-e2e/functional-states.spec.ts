@@ -41,6 +41,19 @@ async function expectNoSeriousAxeViolations(page: Page) {
   expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
 }
 
+test('exported fixture binds the map origin into both browser CSP resource directives', async ({ page }) => {
+  await page.goto(`${fixtureAppOrigin}/`, { waitUntil: 'networkidle' });
+  const policy = await page
+    .locator('meta[http-equiv="Content-Security-Policy"]')
+    .getAttribute('content');
+  expect(policy).toBeTruthy();
+  const connectSources = policy?.match(/(?:^|; )connect-src ([^;]+)/u)?.[1].split(' ') ?? [];
+  const imageSources = policy?.match(/(?:^|; )img-src ([^;]+)/u)?.[1].split(' ') ?? [];
+  for (const sources of [connectSources, imageSources]) {
+    expect(sources).toContain('https://spottr-fixture.supabase.co');
+  }
+});
+
 test('populated discovery renders real results and bounds a 1,200-feature map response', async ({ page }) => {
   const fixture = fixtureObservations.get(page);
   expect(fixture).toBeDefined();
