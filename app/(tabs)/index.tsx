@@ -81,6 +81,7 @@ const webSectionHeading = Platform.OS === 'web'
   ? ({ 'aria-level': 2 } as const)
   : {};
 const subscribeHydration = () => () => undefined;
+const defaultLocationLabel = 'Choose city, ZIP, or location';
 function viewportAroundPoint(
   latitude: number,
   longitude: number,
@@ -151,7 +152,7 @@ function ScopedDiscoverScreen() {
   const [openSponsorReasonId, setOpenSponsorReasonId] = useState<string | null>(null);
   const sponsoredImpressionAttempt = useRef<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>(publicPlaces[0]?.id);
-  const [locationLabel, setLocationLabel] = useState('Choose city, ZIP, or location');
+  const [locationLabel, setLocationLabel] = useState(defaultLocationLabel);
   const [userCoordinates, setUserCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locating, setLocating] = useState(isSupabaseConfigured);
   const [locationPanelOpen, setLocationPanelOpen] = useState(isSupabaseConfigured);
@@ -1080,7 +1081,9 @@ function ScopedDiscoverScreen() {
                             ? 'The map is ready when listings reconnect'
                             : enabledPlaces.length
                               ? 'No places match these filters'
-                              : 'Choose an area to find what is serving'}
+                              : locationLabel !== defaultLocationLabel
+                                ? 'No verified listings here yet'
+                                : 'Choose an area to find what is serving'}
                     </Text>
                     <Text style={styles.mapOnlyBody}>
                       {syncStatus === 'syncing'
@@ -1091,7 +1094,9 @@ function ScopedDiscoverScreen() {
                             ? 'Base-map exploration remains available. Retry to restore live, verified listings.'
                             : enabledPlaces.length
                               ? 'Clear a filter or search another visible area.'
-                              : locating
+                              : locationLabel !== defaultLocationLabel
+                                ? 'Try another city, ZIP code, or visible map area.'
+                                : locating
                                 ? 'Checking foreground location access…'
                                 : 'Use foreground location or enter a city or ZIP. Spottr never invents nearby results.'}
                     </Text>

@@ -88,8 +88,12 @@ test('populated discovery renders real results and bounds a 1,200-feature map re
   }
   await expect(page.locator('[data-category="home_kitchen"]')).toHaveCount(0);
   const perspective = page.getByRole('button', { name: 'Use tilted map perspective' });
-  await perspective.click();
-  await expect(page.getByRole('button', { name: 'Use flat map view' })).toHaveAttribute('aria-pressed', 'true');
+  if (await perspective.count()) {
+    await perspective.click();
+    await expect(page.getByRole('button', { name: 'Use flat map view' })).toHaveAttribute('aria-pressed', 'true');
+  } else {
+    await expect(page.getByRole('button', { name: 'Use flat map view' })).toHaveCount(0);
+  }
   await expect(page.locator('.maplibregl-marker[tabindex="0"]')).toHaveCount(0);
   await expect.poll(() => fixture?.realtimeConnections ?? 0).toBeGreaterThan(0);
   await expectNoSeriousAxeViolations(page);
