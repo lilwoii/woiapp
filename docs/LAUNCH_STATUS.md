@@ -46,6 +46,18 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   overriding manual exploration. Native and web place and route fitting share
   latitude-safe shortest-arc geometry for high-latitude and international-date-
   line cases, and stale selections cannot override a new city or ZIP fit.
+- Feed and authority hardening commits `e26c7d48fd6a626981753feb0333563e8e0ecbc4`,
+  `1f3e725012a4f195e1793df7f4c39f566804793b`, and
+  `8deec1ddfb62537da97e919dd65394a37d67b94e` are covered by the cumulative
+  green GitHub [Quality](https://github.com/lilwoii/woiapp/actions/runs/33292856619)
+  and [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33292856635)
+  workflows. Followed-feed reads now use account-bound deterministic keyset
+  pagination rather than offset paging or a directly readable aggregate view.
+  Business revisions, business and creator invitation responses, creator
+  review-independence acknowledgments, profile follows, and safety blocks all
+  require explicit non-null intent after authorization. The rollback-only
+  PostgreSQL runtime proves malformed inputs preserve the existing authority,
+  follow, and block state.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
   Edge contracts, Expo alignment and Doctor, iOS and Android exports,
@@ -85,8 +97,8 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   marker until local cleanup is proven. Dispatch and receipt Edge contracts use
   fixed Expo endpoints, generic lock-screen copy, bounded provider batches,
   versioned token keys, and independent fail-closed worker/provider switches.
-- Sites version 52 was built, saved, and privately deployed from exact verified
-  web commit `e11bd21f46c2920548924a01a7a6812f735a5d13` on 2026-08-30 UTC at
+- Sites version 53 was built, saved, and privately deployed from exact verified
+  web commit `8deec1ddfb62537da97e919dd65394a37d67b94e` on 2026-08-30 UTC at
   `https://noshatlas-live.lilwoi.chatgpt.site`. The access policy was rechecked
   immediately before deployment: the caller is the owner, custom access allows
   exactly one account user, and no workspace groups, tenant groups, or external
