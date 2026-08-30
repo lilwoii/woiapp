@@ -595,6 +595,216 @@ insert into public.reviews (
   'approved'
 );
 
+-- Account portability must cover every enabled social workflow without
+-- exposing media paths, idempotency hashes, or another account's Auth ID.
+insert into auth.users (
+  id, aud, role, email, email_confirmed_at, raw_app_meta_data,
+  raw_user_meta_data, created_at, updated_at
+) values (
+  '61000000-0000-4000-8000-000000000006',
+  'authenticated', 'authenticated', 'runtime-social-delete@spottr.invalid', now(),
+  '{}'::jsonb,
+  '{"username":"runtime_social_delete","display_name":"Runtime Social Delete","terms_accepted":true}'::jsonb,
+  now(), now()
+);
+
+update public.profiles profile
+set bio = 'Runtime social profile biography.',
+    links = '[{"label":"Website","url":"https://spottr.com"}]'::jsonb,
+    show_favorites = false,
+    show_following = false,
+    allow_business_invitations = true
+where profile.user_id = '10000000-0000-4000-8000-000000000001';
+
+insert into public.profile_follows (follower_id, followed_id) values
+  ('10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002'),
+  ('61000000-0000-4000-8000-000000000006', '10000000-0000-4000-8000-000000000001');
+
+insert into public.review_reactions (review_id, user_id, reaction) values
+  ('75100000-0000-4000-8000-000000000007', '10000000-0000-4000-8000-000000000001', 1),
+  ('75100000-0000-4000-8000-000000000007', '61000000-0000-4000-8000-000000000006', -1);
+
+insert into public.review_profile_comments (
+  id, review_id, author_id, body, moderation
+) values
+  (
+    '75200000-0000-4000-8000-000000000007',
+    '75100000-0000-4000-8000-000000000007',
+    '10000000-0000-4000-8000-000000000001',
+    'Runtime authored profile comment.',
+    'approved'
+  ),
+  (
+    '75300000-0000-4000-8000-000000000007',
+    '75100000-0000-4000-8000-000000000007',
+    '61000000-0000-4000-8000-000000000006',
+    'Runtime deletion cascade comment.',
+    'approved'
+  );
+
+insert into public.business_posts (
+  id, business_id, author_id, body, moderation
+) values
+  (
+    '75400000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    '10000000-0000-4000-8000-000000000001',
+    'Runtime authored business post.',
+    'approved'
+  ),
+  (
+    '75500000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    '61000000-0000-4000-8000-000000000006',
+    'Runtime deletion anonymization post.',
+    'approved'
+  );
+
+insert into public.business_post_media (post_id, asset_id, sort_order) values (
+  '75400000-0000-4000-8000-000000000007',
+  '72000000-0000-4000-8000-000000000007',
+  0
+);
+
+insert into public.creator_invitations (
+  id, public_id, business_id, sender_id, recipient_id, title, message,
+  event_starts_at, event_ends_at, idempotency_key_hash, request_hash
+) values
+  (
+    '75600000-0000-4000-8000-000000000007',
+    '75700000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    'Runtime creator invitation',
+    'Runtime invitation content remains independent from reviews.',
+    now() + interval '1 day', now() + interval '2 days', repeat('e', 64), repeat('f', 64)
+  ),
+  (
+    '75800000-0000-4000-8000-000000000007',
+    '75900000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    '61000000-0000-4000-8000-000000000006',
+    '10000000-0000-4000-8000-000000000001',
+    'Runtime received invitation',
+    'Runtime received invitation tests subject-scoped export.',
+    now() + interval '1 day', now() + interval '2 days', repeat('a', 64), repeat('b', 64)
+  );
+
+do $social_account_export_contract$
+declare
+  social_user_id constant uuid := '10000000-0000-4000-8000-000000000001';
+  other_user_id constant uuid := '20000000-0000-4000-8000-000000000002';
+  payload jsonb := public.account_export_payload(social_user_id);
+  other_payload jsonb := public.account_export_payload(other_user_id);
+begin
+  if payload ->> 'schema_version' is distinct from '2026-10-08'
+    or pg_catalog.jsonb_typeof(payload -> 'profile') is distinct from 'object'
+    or payload #>> '{profile,bio}' is distinct from 'Runtime social profile biography.'
+    or pg_catalog.jsonb_typeof(payload #> '{profile,links}') is distinct from 'array'
+    or pg_catalog.jsonb_array_length(payload #> '{profile,links}') is distinct from 1
+    or payload #>> '{profile,show_favorites}' is distinct from 'false'
+    or payload #>> '{profile,show_following}' is distinct from 'false'
+    or payload #>> '{profile,allow_business_invitations}' is distinct from 'true'
+    or not (payload -> 'profile' ? 'banner_asset_id')
+  then
+    raise exception 'Social profile fields were absent from the account export';
+  end if;
+
+  if pg_catalog.jsonb_typeof(payload -> 'marketplace_chat') is distinct from 'object'
+    or pg_catalog.jsonb_typeof(payload -> 'marketplace_meetup_consents') is distinct from 'array'
+    or pg_catalog.jsonb_typeof(payload -> 'notification_consents') is distinct from 'array'
+    or pg_catalog.jsonb_typeof(payload -> 'notification_devices') is distinct from 'array'
+  then
+    raise exception 'Final account export dropped chat, meetup, or notification sections';
+  end if;
+
+  if pg_catalog.jsonb_typeof(payload -> 'profile_follows') is distinct from 'array'
+    or pg_catalog.jsonb_array_length(payload -> 'profile_follows') is distinct from 1
+    or payload #>> '{profile_follows,0,followed_public_id}' is null
+    or pg_catalog.jsonb_typeof(payload -> 'profile_followers') is distinct from 'array'
+    or pg_catalog.jsonb_array_length(payload -> 'profile_followers') is distinct from 1
+    or payload #>> '{profile_followers,0,follower_public_id}' is null
+    or pg_catalog.jsonb_array_length(payload -> 'review_reactions') is distinct from 1
+    or payload #>> '{review_reactions,0,reaction}' is distinct from '1'
+    or pg_catalog.jsonb_array_length(payload -> 'review_profile_comments') is distinct from 1
+    or payload #>> '{review_profile_comments,0,body}' is distinct from 'Runtime authored profile comment.'
+    or pg_catalog.jsonb_array_length(payload -> 'authored_business_posts') is distinct from 1
+    or payload #>> '{authored_business_posts,0,body}' is distinct from 'Runtime authored business post.'
+    or pg_catalog.jsonb_array_length(payload #> '{authored_business_posts,0,media}') is distinct from 1
+    or pg_catalog.jsonb_array_length(payload -> 'creator_invitations') is distinct from 2
+  then
+    raise exception 'Enabled social records were absent or not subject-scoped in the account export';
+  end if;
+
+  if payload::text ~ '"(avatar_path|banner_path|storage_path|processed_storage_path)"[[:space:]]*:'
+    or exists (
+      select 1
+      from pg_catalog.jsonb_array_elements(payload -> 'authored_business_posts') post,
+        lateral pg_catalog.jsonb_array_elements(post -> 'media') media
+      where media ? 'storage_path'
+    )
+    or exists (
+      select 1
+      from pg_catalog.jsonb_array_elements(payload -> 'creator_invitations') invitation
+      where invitation ?| array[
+        'idempotency_key_hash', 'request_hash', 'sender_id', 'recipient_id'
+      ]
+    )
+  then
+    raise exception 'Social export leaked a private path, request hash, or Auth identifier';
+  end if;
+
+  if pg_catalog.jsonb_array_length(other_payload -> 'profile_follows') is distinct from 0
+    or pg_catalog.jsonb_array_length(other_payload -> 'profile_followers') is distinct from 1
+    or pg_catalog.jsonb_array_length(other_payload -> 'review_reactions') is distinct from 0
+    or pg_catalog.jsonb_array_length(other_payload -> 'review_profile_comments') is distinct from 0
+    or pg_catalog.jsonb_array_length(other_payload -> 'authored_business_posts') is distinct from 0
+    or pg_catalog.jsonb_array_length(other_payload -> 'creator_invitations') is distinct from 1
+    or other_payload #>> '{creator_invitations,0,direction}' is distinct from 'received'
+  then
+    raise exception 'Social account export included another user''s authored records';
+  end if;
+end;
+$social_account_export_contract$;
+
+delete from auth.users auth_user
+where auth_user.id = '61000000-0000-4000-8000-000000000006';
+
+do $social_account_deletion_contract$
+begin
+  if exists (
+      select 1 from public.profile_follows follow
+      where follow.follower_id = '61000000-0000-4000-8000-000000000006'
+    )
+    or exists (
+      select 1 from public.review_reactions reaction
+      where reaction.user_id = '61000000-0000-4000-8000-000000000006'
+    )
+    or exists (
+      select 1 from public.review_profile_comments comment
+      where comment.author_id = '61000000-0000-4000-8000-000000000006'
+    )
+  then
+    raise exception 'Social rows survived Auth-account deletion';
+  end if;
+
+  if not exists (
+      select 1 from public.business_posts post
+      where post.id = '75500000-0000-4000-8000-000000000007'
+        and post.author_id is null
+    )
+    or not exists (
+      select 1 from public.creator_invitations invitation
+      where invitation.id = '75800000-0000-4000-8000-000000000007'
+        and invitation.sender_id is null
+    )
+  then
+    raise exception 'Business-owned social history was not anonymized after account deletion';
+  end if;
+end;
+$social_account_deletion_contract$;
+
 set local role authenticated;
 select pg_catalog.set_config(
   'request.jwt.claims',
