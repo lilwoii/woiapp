@@ -1,9 +1,10 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { router } from 'expo-router';
+import { router, useIsFocused } from 'expo-router';
 import * as Location from 'expo-location';
 import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Platform,
   Pressable,
   ScrollView,
@@ -118,6 +119,7 @@ function ScopedDiscoverScreen() {
     hasMoreResults,
     loadingMoreResults,
     loadMoreResults,
+    mobileMapRevision,
     publicPlaces,
     refresh,
     searchArea,
@@ -126,6 +128,7 @@ function ScopedDiscoverScreen() {
     syncStatus,
     toggleFollow,
   } = useMarketplaceStore();
+  const focused = useIsFocused();
   const { width } = useWindowDimensions();
   const wide = width >= 960;
   const [query, setQuery] = useState('');
@@ -157,6 +160,8 @@ function ScopedDiscoverScreen() {
   const [mapInventoryFeatures, setMapInventoryFeatures] = useState<MapInventoryFeature[]>([]);
   const [mapMarkersSuppressed, setMapMarkersSuppressed] = useState(false);
   const [mapInventoryError, setMapInventoryError] = useState<string | null>(null);
+  const [appForeground, setAppForeground] = useState(AppState.currentState === 'active');
+  const [mobileMapExpiryRevision, setMobileMapExpiryRevision] = useState(0);
   const mounted = useRef(true);
   const locationRequestGeneration = useRef(0);
   const mapInventoryRequest = useRef(createLatestRequestGate());
@@ -190,7 +195,10 @@ function ScopedDiscoverScreen() {
   );
   const cuisines = useMemo(() => cuisineFacets(enabledPlaces).slice(0, 14), [enabledPlaces]);
 
-  const loadMapInventory = useCallback(async (viewport: MapViewport) => {
+  const loadMapInventory = useCallback(async (
+    viewport: MapViewport,
+    options: { preserveCurrent?: boolean } = {},
+  ) => {
     const requestToken = mapInventoryRequest.current.begin();
     if (!mounted.current) return { ok: false, reason: 'Screen is no longer active.' } as const;
     latestMapViewport.current = viewport;
@@ -200,8 +208,10 @@ function ScopedDiscoverScreen() {
       setMapMarkersSuppressed(false);
       return { ok: true, data: [] } as const;
     }
-    setMapInventoryFeatures([]);
-    setMapMarkersSuppressed(true);
+    if (!options.preserveCurrent) {
+      setMapInventoryFeatures([]);
+      setMapMarkersSuppressed(true);
+    }
     const result = await fetchMapFoodFeatures(viewport, requestedMapCategories);
     if (!mounted.current || !mapInventoryRequest.current.isCurrent(requestToken)) return result;
     if (!result.ok) {
@@ -521,11 +531,45 @@ function ScopedDiscoverScreen() {
   }, [category, detailedMapFiltersActive, permittedMapInventory]);
   const authoritativeMapInventory = isSupabaseConfigured && !detailedMapFiltersActive;
   useEffect(() => {
-    if (!authoritativeMapInventory || !latestMapViewport.current) return;
+    const subscription = AppState.addEventListener('change', (state) => {
+      setAppForeground(state === 'active');
+    });
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!focused || !appForeground || !authoritativeMapInventory) return;
+    // Mobile stops become stale when their service window ends even if no
+    // owner mutation emits another realtime event. Bound that stale window to
+    // one minute while the Discover map is actually visible and foregrounded.
+    const timer = setInterval(
+      () => setMobileMapExpiryRevision((current) => current + 1),
+      60_000,
+    );
+    return () => clearInterval(timer);
+  }, [appForeground, authoritativeMapInventory, focused]);
+
+  useEffect(() => {
+    if (!focused || !appForeground || !authoritativeMapInventory || !latestMapViewport.current) {
+      return;
+    }
     const viewport = latestMapViewport.current;
-    const timer = setTimeout(() => void loadMapInventory(viewport), 0);
+    // Realtime can burst while an owner edits a stop. Debounce those events,
+    // keep the current markers visible, and let the latest-request gate reject
+    // any response for an older viewport.
+    const timer = setTimeout(
+      () => void loadMapInventory(viewport, { preserveCurrent: true }),
+      750,
+    );
     return () => clearTimeout(timer);
-  }, [authoritativeMapInventory, loadMapInventory]);
+  }, [
+    appForeground,
+    authoritativeMapInventory,
+    focused,
+    loadMapInventory,
+    mobileMapExpiryRevision,
+    mobileMapRevision,
+  ]);
   const mapInventoryMayBeCapped = useMemo(
     () => visibleMapInventory.reduce((total, feature) => total + feature.count, 0) >= 1_200,
     [visibleMapInventory],

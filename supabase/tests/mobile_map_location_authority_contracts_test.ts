@@ -15,6 +15,12 @@ const nearbyMigration = await Deno.readTextFile(
 const runtime = await Deno.readTextFile(
   new URL("./full_stack_security_runtime_test.sql", import.meta.url),
 );
+const store = await Deno.readTextFile(
+  new URL("../../context/marketplace-store.tsx", import.meta.url),
+);
+const discover = await Deno.readTextFile(
+  new URL("../../app/(tabs)/index.tsx", import.meta.url),
+);
 
 function mobileLocationRule(source: string, functionName: string): string {
   const functionStart = source.indexOf(
@@ -67,4 +73,33 @@ Deno.test("map authority remains service-only and has hosted runtime coverage", 
   assertMatch(runtime, /Mobile map did not use the primary fallback/);
   assertMatch(runtime, /Mobile map ignored the current active stop/);
   assertMatch(runtime, /Mobile map did not restore the primary fallback/);
+});
+
+Deno.test("mobile-stop events and expiry refresh the visible authoritative map", () => {
+  assertMatch(store, /mobileMapRevision: number/);
+  assertMatch(
+    store,
+    /publicEvent\.event_type === 'mobile_stop'[\s\S]+setMobileMapRevision\(\(current\) => current \+ 1\)/,
+  );
+  assertMatch(discover, /const focused = useIsFocused\(\)/);
+  assertMatch(
+    discover,
+    /AppState\.currentState === 'active'[\s\S]+state === 'active'/,
+  );
+  assertMatch(
+    discover,
+    /setInterval\([\s\S]+setMobileMapExpiryRevision[\s\S]+60_000/,
+  );
+  assertMatch(
+    discover,
+    /!focused \|\| !appForeground \|\| !authoritativeMapInventory/,
+  );
+  assertMatch(
+    discover,
+    /loadMapInventory\(viewport, \{ preserveCurrent: true \}\)[\s\S]+750/,
+  );
+  assertMatch(
+    discover,
+    /mobileMapExpiryRevision,[\s\S]+mobileMapRevision/,
+  );
 });

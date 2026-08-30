@@ -50,6 +50,7 @@ type MarketplaceStoreValue = {
   places: Place[];
   publicPlaces: Place[];
   sponsoredPlace?: SponsoredPlace;
+  mobileMapRevision: number;
   followedIds: string[];
   account: AccountSummary;
   scopeKey: string;
@@ -161,6 +162,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   const expectedUserId = marketplaceScope.authenticatedUserId;
   const [requestGuard] = useState(() => createMarketplaceScopeGuard(scopeKey));
   const [storeState, setStoreState] = useState(() => createMarketplaceStoreState(scopeKey));
+  const [mobileMapRevision, setMobileMapRevision] = useState(0);
   const fallbackState = useMemo(() => createMarketplaceStoreState(scopeKey), [scopeKey]);
   const visibleState = storeState.scopeKey === scopeKey ? storeState : fallbackState;
   const {
@@ -662,7 +664,11 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'business_public_events' },
-        () => {
+        (event) => {
+          const publicEvent = event.new as { event_type?: unknown };
+          if (publicEvent.event_type === 'mobile_stop') {
+            setMobileMapRevision((current) => current + 1);
+          }
           if (timer) clearTimeout(timer);
           timer = setTimeout(() => void refresh(), 750);
         }
@@ -819,6 +825,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       places,
       publicPlaces,
       sponsoredPlace,
+      mobileMapRevision,
       followedIds,
       account:
         expectedUserId && auth.account?.id === expectedUserId
@@ -860,6 +867,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       loadMoreResults,
       loadMoreReviews,
       loadingMoreResults,
+      mobileMapRevision,
       scopeKey,
       searchArea,
       setVenueStatus,
