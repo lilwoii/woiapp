@@ -36,7 +36,7 @@ describe('global map camera integration', () => {
   });
 
   it('keeps the map available in empty and disconnected areas without inventing a nearby city', () => {
-    expect(discover).toMatch(/clientHydrated \? \([\s\S]*<View style=\{\[styles\.workspace, wide && styles\.workspaceWide\]\}>/);
+    expect(discover).toMatch(/clientHydrated && focused \? \([\s\S]*<View style=\{\[styles\.workspace, wide && styles\.workspaceWide\]\}>/);
     expect(discover).not.toMatch(/ranked\.length \|\| visibleMapInventory\.length \|\| mapMarkersSuppressed \? \(/);
     expect(discover).toMatch(/The map is ready when listings reconnect/);
     expect(webMap).toMatch(/const fallbackCenter: \[number, number\] = \[0, 20\]/);

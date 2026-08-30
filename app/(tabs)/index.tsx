@@ -959,7 +959,7 @@ function ScopedDiscoverScreen() {
           />
         ) : null}
 
-        {clientHydrated ? (
+        {clientHydrated && focused ? (
           <View style={[styles.workspace, wide && styles.workspaceWide]}>
             <View style={[styles.mapColumn, wide && styles.mapColumnWide]}>
               <LiveMap
