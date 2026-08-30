@@ -2,7 +2,9 @@ import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as ExpoLocation from 'expo-location';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
+  lazy,
   ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -26,7 +28,6 @@ import {
 } from 'react-native';
 
 import { BrandMark } from '@/components/brand-mark';
-import { BusinessPickupOrderingSettings } from '@/components/business-pickup-ordering-settings';
 import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -56,6 +57,12 @@ import {
   submitBusinessConfiguration,
 } from '@/lib/business-management';
 import { confirmAction } from '@/lib/platform-dialog';
+
+const BusinessPickupOrderingSettings = lazy(() =>
+  import('@/components/business-pickup-ordering-settings').then((module) => ({
+    default: module.BusinessPickupOrderingSettings,
+  })),
+);
 
 const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -2054,12 +2061,23 @@ function BusinessSetupContent({
           {expectedUserId &&
           (configuration.business.kind === 'restaurant' ||
             configuration.business.kind === 'food_truck') ? (
-            <BusinessPickupOrderingSettings
-              businessId={businessId}
-              expectedUserId={expectedUserId}
-              state={configuration.business.state}
-              verification={configuration.business.verification}
-            />
+            <Suspense
+              fallback={(
+                <View accessibilityLiveRegion="polite" style={styles.pickupSettingsLoading}>
+                  <ActivityIndicator
+                    accessibilityLabel="Loading pickup preferences"
+                    color={palette.accentDeep}
+                  />
+                  <Text style={styles.helperText}>Loading pickup preferences…</Text>
+                </View>
+              )}>
+              <BusinessPickupOrderingSettings
+                businessId={businessId}
+                expectedUserId={expectedUserId}
+                state={configuration.business.state}
+                verification={configuration.business.verification}
+              />
+            </Suspense>
           ) : null}
 
           <Section
@@ -3307,6 +3325,12 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.72,
+  },
+  pickupSettingsLoading: {
+    alignItems: 'center',
+    gap: spacing.sm,
+    justifyContent: 'center',
+    minHeight: 180,
   },
   disabled: {
     opacity: 0.48,

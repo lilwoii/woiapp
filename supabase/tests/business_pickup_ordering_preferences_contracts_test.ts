@@ -15,6 +15,9 @@ const studio = await Deno.readTextFile(
     import.meta.url,
   ),
 );
+const businessSetup = await Deno.readTextFile(
+  new URL("../../app/business-setup.tsx", import.meta.url),
+);
 
 Deno.test("pickup opt-in is owner/manager, AAL2, category, and publication bound", () => {
   assertMatch(migration, /perform private\.require_aal2\(\)/);
@@ -106,5 +109,16 @@ Deno.test("Studio discloses every launch option without implying payment availab
   assertMatch(
     studio,
     /state === 'published' && verification === 'verified'/,
+  );
+});
+
+Deno.test("pickup settings stay behind a route-local lazy boundary", () => {
+  assertMatch(
+    businessSetup,
+    /lazy\(\(\) =>[\s\S]+import\('@\/components\/business-pickup-ordering-settings'\)/,
+  );
+  assertMatch(
+    businessSetup,
+    /<Suspense[\s\S]+Loading pickup preferences[\s\S]+<BusinessPickupOrderingSettings/,
   );
 });
