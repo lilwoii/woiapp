@@ -73,6 +73,19 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   reservation consumption and ledger insertion. The clean PostgreSQL runtime
   replay proves stale provider-location withdrawal, direct-RPC denial,
   duplicate delivery, shadow-mode nonbilling, and reservation release.
+- Business-follow authority commits `86e9d0409d87565a33d96c0e3cf0ce5049ab80cb`
+  through `f57f2e953782610929768b35763b6b2f2ecb0515` are covered by the green
+  GitHub [Quality](https://github.com/lilwoii/woiapp/actions/runs/33330799170)
+  and [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33330799206)
+  workflows. Direct authenticated follow-table writes are removed; the
+  account-bound mutation authority is active-user, eligibility, deletion,
+  rate-limit, follow-cap, idempotency, and change-audit guarded. Stale or
+  archived listings remain removable, and the parent lock serializes unfollow
+  with hard deletion. The manually dispatched
+  [release run](https://github.com/lilwoii/woiapp/actions/runs/33331218617)
+  reproduced the full green release suite and commit-bound web artifact. That
+  exact artifact is privately published as owner-only Sites version 54 at
+  https://noshatlas-live.lilwoi.chatgpt.site/.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
   Edge contracts, Expo alignment and Doctor, iOS and Android exports,
