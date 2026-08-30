@@ -62,6 +62,14 @@ Deno.test("business follow authority is active-account, deletion, and eligibilit
       "private.is_business_publicly_eligible",
     ),
   );
+  assert(
+    migration.slice(unfollowBranchStart, branchEnd).includes(
+      "from public.businesses business",
+    ),
+  );
+  assert(
+    migration.slice(unfollowBranchStart, branchEnd).includes("for key share"),
+  );
 });
 
 Deno.test("business follow abuse controls are bounded and change-audited", () => {

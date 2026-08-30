@@ -73,7 +73,17 @@ begin
   else
     -- Removing a saved listing must remain possible after the listing becomes
     -- archived, provider-stale, or otherwise ineligible for public discovery.
-    eligible_business_id := target_business_id;
+    -- The parent lock serializes the follow delete and audit FK with a
+    -- concurrent hard business deletion without reapplying eligibility.
+    select business.id
+    into eligible_business_id
+    from public.businesses business
+    where business.id = target_business_id
+    for key share;
+    if eligible_business_id is null then
+      return false;
+    end if;
+
     delete from public.follows follow
     where follow.user_id = actor
       and follow.business_id = eligible_business_id;
