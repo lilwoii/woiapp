@@ -54,7 +54,7 @@ set search_path = ''
 as $$
 declare
   payload jsonb;
-  decision_id uuid;
+  selected_decision_id uuid;
   removed_event_count integer := 0;
   removed_reservation_count integer := 0;
   selected_location_id uuid;
@@ -76,18 +76,18 @@ begin
   end if;
 
   begin
-    decision_id := (payload->>'placement_id')::uuid;
+    selected_decision_id := (payload->>'placement_id')::uuid;
   exception
     when invalid_text_representation then
       raise exception using errcode = '55000', message = 'SPONSORED_SELECTION_INVALID';
   end;
-  if decision_id is null then
+  if selected_decision_id is null then
     raise exception using errcode = '55000', message = 'SPONSORED_SELECTION_INVALID';
   end if;
 
   perform 1
   from private.ad_serving_decisions decision
-  where decision.id = decision_id
+  where decision.id = selected_decision_id
     and decision.token_hash = private.ad_sha256_hex(payload->>'placement_token')
   for update;
   if not found then
@@ -98,7 +98,7 @@ begin
   into selected_location_id, selected_latitude, selected_longitude
   from public.public_business_locations location
   join private.ad_serving_decisions decision
-    on decision.id = decision_id
+    on decision.id = selected_decision_id
    and decision.business_id = location.business_id
   where public.st_dwithin(
     public.st_setsrid(
@@ -130,15 +130,15 @@ begin
   set selected_public_location_id = selected_location_id,
       selected_public_latitude = selected_latitude,
       selected_public_longitude = selected_longitude
-  where decision.id = decision_id;
+  where decision.id = selected_decision_id;
 
   delete from private.ad_events event
-  where event.decision_id = decision_id
+  where event.decision_id = selected_decision_id
     and event.event_type = 'impression';
   get diagnostics removed_event_count = row_count;
 
   delete from private.ad_budget_reservations reservation
-  where reservation.decision_id = decision_id
+  where reservation.decision_id = selected_decision_id
     and reservation.state = 'held';
   get diagnostics removed_reservation_count = row_count;
 
