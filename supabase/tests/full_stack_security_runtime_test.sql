@@ -692,6 +692,10 @@ select pg_catalog.set_config(
 );
 
 do $business_follow_authority$
+declare
+  first_result boolean;
+  second_result boolean;
+  saved_count bigint;
 begin
   begin
     insert into public.follows (user_id, business_id) values (
@@ -713,20 +717,24 @@ begin
       if sqlerrm <> 'INVALID_BUSINESS_FOLLOW_REQUEST' then raise; end if;
   end;
 
-  if public.set_business_follow(
-      '70000000-0000-4000-8000-000000000007', true
-    ) is distinct from true
-    or public.set_business_follow(
-      '70000000-0000-4000-8000-000000000007', true
-    ) is distinct from true
-    or (
-      select count(*)
-      from public.follows follow
-      where follow.user_id = '20000000-0000-4000-8000-000000000002'
-        and follow.business_id = '70000000-0000-4000-8000-000000000007'
-    ) <> 1
+  first_result := public.set_business_follow(
+    '70000000-0000-4000-8000-000000000007', true
+  );
+  second_result := public.set_business_follow(
+    '70000000-0000-4000-8000-000000000007', true
+  );
+  select count(*)
+  into saved_count
+  from public.follows follow
+  where follow.user_id = '20000000-0000-4000-8000-000000000002'
+    and follow.business_id = '70000000-0000-4000-8000-000000000007';
+
+  if first_result is distinct from true
+    or second_result is distinct from true
+    or saved_count <> 1
   then
-    raise exception 'Business follow was not idempotent';
+    raise exception 'Business follow was not idempotent (first %, second %, count %)',
+      first_result, second_result, saved_count;
   end if;
 end;
 $business_follow_authority$;
