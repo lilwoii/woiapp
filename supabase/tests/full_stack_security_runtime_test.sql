@@ -3079,6 +3079,111 @@ $public_discovery_service_execution$;
 
 reset role;
 
+do $mobile_map_location_authority$
+declare
+  visible_count integer;
+  visible_location_id uuid;
+begin
+  update public.businesses
+  set kind = 'food_truck'
+  where id = '70000000-0000-4000-8000-000000000007';
+
+  select count(*)::integer, min(place.location_id::text)::uuid
+  into visible_count, visible_location_id
+  from public.map_food_places(
+    -118.3, 34.0, -118.2, 34.1, 18,
+    array['food_truck']::text[], 100
+  ) place
+  where place.business_id = '70000000-0000-4000-8000-000000000007';
+  if visible_count <> 1
+    or visible_location_id <> '73000000-0000-4000-8000-000000000007'
+  then
+    raise exception 'Mobile map did not use the primary fallback';
+  end if;
+
+  insert into public.mobile_stops (
+    id, business_id, location_id, starts_at, ends_at, state, confirmed_at
+  ) values
+    (
+      '76000000-0000-4000-8000-000000000001',
+      '70000000-0000-4000-8000-000000000007',
+      '73100000-0000-4000-8000-000000000007',
+      now() - interval '2 hours', now() - interval '1 hour',
+      'completed', now() - interval '2 hours'
+    ),
+    (
+      '76000000-0000-4000-8000-000000000002',
+      '70000000-0000-4000-8000-000000000007',
+      '73200000-0000-4000-8000-000000000007',
+      now() + interval '1 day', now() + interval '2 days',
+      'scheduled', now()
+    );
+
+  select count(*)::integer, min(place.location_id::text)::uuid
+  into visible_count, visible_location_id
+  from public.map_food_places(
+    -118.3, 34.0, -118.2, 34.1, 18,
+    array['food_truck']::text[], 100
+  ) place
+  where place.business_id = '70000000-0000-4000-8000-000000000007';
+  if visible_count <> 1
+    or visible_location_id <> '73000000-0000-4000-8000-000000000007'
+  then
+    raise exception 'Mobile map treated stale or future stops as current';
+  end if;
+
+  insert into public.mobile_stops (
+    id, business_id, location_id, starts_at, ends_at, state, confirmed_at
+  ) values (
+    '76000000-0000-4000-8000-000000000003',
+    '70000000-0000-4000-8000-000000000007',
+    '73100000-0000-4000-8000-000000000007',
+    now() - interval '5 minutes', now() + interval '1 hour',
+    'live', now()
+  );
+
+  select count(*)::integer, min(place.location_id::text)::uuid
+  into visible_count, visible_location_id
+  from public.map_food_places(
+    -118.3, 34.0, -118.2, 34.1, 18,
+    array['food_truck']::text[], 100
+  ) place
+  where place.business_id = '70000000-0000-4000-8000-000000000007';
+  if visible_count <> 1
+    or visible_location_id <> '73100000-0000-4000-8000-000000000007'
+  then
+    raise exception 'Mobile map ignored the current active stop';
+  end if;
+
+  update public.mobile_stops
+  set state = 'completed'
+  where id = '76000000-0000-4000-8000-000000000003';
+
+  select count(*)::integer, min(place.location_id::text)::uuid
+  into visible_count, visible_location_id
+  from public.map_food_places(
+    -118.3, 34.0, -118.2, 34.1, 18,
+    array['food_truck']::text[], 100
+  ) place
+  where place.business_id = '70000000-0000-4000-8000-000000000007';
+  if visible_count <> 1
+    or visible_location_id <> '73000000-0000-4000-8000-000000000007'
+  then
+    raise exception 'Mobile map did not restore the primary fallback';
+  end if;
+
+  delete from public.mobile_stops
+  where id in (
+    '76000000-0000-4000-8000-000000000001',
+    '76000000-0000-4000-8000-000000000002',
+    '76000000-0000-4000-8000-000000000003'
+  );
+  update public.businesses
+  set kind = 'restaurant'
+  where id = '70000000-0000-4000-8000-000000000007';
+end;
+$mobile_map_location_authority$;
+
 do $public_discovery_service_success$
 declare
   response jsonb;
