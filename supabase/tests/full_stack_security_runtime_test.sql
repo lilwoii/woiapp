@@ -2154,6 +2154,26 @@ set enabled = true,
     updated_at = now()
 where singleton;
 
+-- The private pickup is exactly at the request origin, but its public
+-- projection is snapped away from that coordinate. Sponsored selection must
+-- use the redacted projection and therefore return no placement within 500m.
+set local role service_role;
+do $sponsored_redacted_location_boundary$
+declare
+  result jsonb;
+begin
+  result := public.select_sponsored_placement(
+    'discover', 34.043, -118.237, 500,
+    array['restaurant']::public.business_kind[],
+    repeat('c', 64), repeat('d', 64), null
+  );
+  if result is not null then
+    raise exception 'Sponsored selector exposed a raw redacted location';
+  end if;
+end;
+$sponsored_redacted_location_boundary$;
+reset role;
+
 create temporary table runtime_sponsored_result (payload jsonb not null);
 grant select, insert on runtime_sponsored_result to service_role, anon;
 
