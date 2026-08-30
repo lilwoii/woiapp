@@ -337,6 +337,23 @@ async function verifyProviderClaimSerializationBarrier(projectRoot, containerNam
     });
   }
 
+  // Notification dispatch must join the same provider lifecycle protocol
+  // before it takes business rows. Holding a real provider mutation proves
+  // the effective post-migration helper waits at the barrier instead of
+  // reaching the historical business -> provider row-lock cycle.
+  await assertBarrierBlocks({
+    projectRoot,
+    containerName,
+    holderFile: holders[0][0],
+    readyMarker: holders[0][1],
+    waiterSql: [
+      'begin;',
+      "set local lock_timeout = '500ms';",
+      "select private.lock_notification_business_eligibility(array['00000000-0000-4000-8000-000000000001'::uuid]);",
+      'rollback;',
+    ].join(' '),
+  });
+
   // An untrusted AAL2 caller must be rejected before the exclusive approval
   // barrier is attempted. Holding the shared barrier turns incorrect ordering
   // into a lock-timeout SQLSTATE instead of the expected authorization error.

@@ -57,10 +57,42 @@ describe('global map camera integration', () => {
     expect(webMap).not.toMatch(/Use tilted map perspective/);
   });
 
+  it('reconciles same-id web fallback markers when visible mobility content changes', () => {
+    expect(webMap).toMatch(/client-place:\$\{mapPlaceMarkerSignature\(feature\.place\)\}/);
+    expect(webMap).toMatch(/if \(existing\?\.signature === signature\)/);
+    expect(webMap).toMatch(/existing\.marker\.remove\(\)[\s\S]*markerRefs\.current\.delete\(feature\.id\)/);
+    expect(webMap).toMatch(/businessId: feature\.kind === 'place'[\s\S]*signature,/);
+  });
+
   it('drops routes for moved destinations and aborts timed-out provider work', () => {
     expect(navigationScreen).toMatch(/destinationKey\(destinationRef\.current\) !== requestedDestinationKey/);
-    expect(navigationScreen).toMatch(/const visibleRoute = routeMatchesDestination \? route : null/);
+    expect(navigationScreen).toMatch(/const visibleRoute = routeMatchesDestination && routeIsFresh \? route : null/);
+    expect(navigationScreen).toMatch(/This route estimate expired/);
     expect(navigationLibrary).toMatch(/signal: controller\.signal/);
     expect(navigationLibrary).toMatch(/finally \{[\s\S]*clearTimeout\(timeout\)/);
+  });
+
+  it('offers on-device travel detection, traffic ETA, and explicit external map choices', () => {
+    expect(navigationLibrary).toMatch(/export function inferTravelMode/);
+    expect(navigationScreen).toMatch(/Auto estimated/);
+    expect(navigationScreen).toMatch(/ETA \{formatRouteArrivalTime\(visibleRoute\)\}/);
+    expect(navigationScreen).toMatch(/openExternalMaps\('apple'\)/);
+    expect(navigationScreen).toMatch(/openExternalMaps\('google'\)/);
+  });
+
+  it('cancels hidden tracking when a public destination disappears or becomes blocked without unmounting', () => {
+    expect(navigationScreen).toMatch(/const cancelTrackingSession = useCallback/);
+    expect(navigationScreen).toMatch(
+      /const hasTrackableDestination = Boolean\([\s\S]*place\.category !== 'home_kitchen'[\s\S]*!isHomeKitchenBlocked\(place\.category\)/,
+    );
+    expect(navigationScreen).toMatch(
+      /if \(hasTrackableDestination\) return;[\s\S]*watcher\.current !== null[\s\S]*activeRouteRequest\.current !== null[\s\S]*if \(sessionIsActive\) cancelTrackingSession\(\)/,
+    );
+    expect(navigationScreen).toMatch(
+      /const cancelTrackingSession = useCallback\([\s\S]*routeRequestSequence\.current \+= 1[\s\S]*watcher\.current\?\.remove\(\)[\s\S]*setRoute\(null\)[\s\S]*setLocation\(null\)/,
+    );
+    expect(navigationScreen).toMatch(
+      /const stopTracking = \(\) => \{\s*cancelTrackingSession\('Live tracking stopped\.'\);\s*\}/,
+    );
   });
 });

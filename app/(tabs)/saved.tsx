@@ -14,6 +14,15 @@ import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
 import { featureFlags, filterHomeKitchenPlaces } from '@/lib/features';
 import {
+  currentIanaTimeZone,
+  QUIET_HOURS_PRESETS,
+  quietHoursForPreset,
+  quietHoursSummaryForUpdate,
+  type NotificationPreferenceState,
+  type QuietHoursPresetId,
+  type QuietHoursSummary,
+} from '@/lib/notification-preferences';
+import {
   registerPushNotificationDevice,
   revokeAllPushNotificationDevices,
   revokePushNotificationDevice,
@@ -21,19 +30,30 @@ import {
 import {
   fetchFollowAlertPreferences,
   updateFollowAlertPreference,
+  updateFollowQuietHours,
 } from '@/lib/marketplace-api';
 
 type SavedFilter = 'all' | 'food_truck' | 'restaurant';
 type AlertPreference = 'owner_bundle';
+type PreferenceOperation = AlertPreference | 'quiet_hours';
+
+const QUIET_HOURS_OFF: QuietHoursSummary = {
+  state: 'off',
+  presetId: 'off',
+  start: null,
+  end: null,
+  timeZone: null,
+};
 
 export default function SavedScreen() {
   const { followedIds, places, publicPlaces, toggleFollow } = useMarketplaceStore();
   const auth = useAuth();
   const accountId = auth.status === 'authenticated' ? auth.account?.id : undefined;
   const [filter, setFilter] = useState<SavedFilter>('all');
-  const [ownerUpdates, setOwnerUpdates] = useState(false);
+  const [ownerUpdatesState, setOwnerUpdatesState] = useState<NotificationPreferenceState>('none');
+  const [quietHours, setQuietHours] = useState<QuietHoursSummary>(QUIET_HOURS_OFF);
   const [loadedPreferenceScope, setLoadedPreferenceScope] = useState<string | null>(null);
-  const [preferenceBusy, setPreferenceBusy] = useState<AlertPreference | 'loading' | null>(null);
+  const [preferenceBusy, setPreferenceBusy] = useState<PreferenceOperation | 'loading' | null>(null);
   const [preferenceMessage, setPreferenceMessage] = useState('');
   const [deliveryBusy, setDeliveryBusy] = useState(false);
   const [deliveryMessage, setDeliveryMessage] = useState('');
@@ -41,6 +61,7 @@ export default function SavedScreen() {
   const deliveryGeneration = useRef(0);
   const nativePushDeliveryAvailable =
     featureFlags.pushNotifications && (Platform.OS === 'ios' || Platform.OS === 'android');
+  const deviceTimeZone = useMemo(() => currentIanaTimeZone(), []);
 
   const followedKey = [...followedIds].sort().join(',');
   const hasFollowedPlaces = followedIds.length > 0;
@@ -50,7 +71,9 @@ export default function SavedScreen() {
     Boolean(preferenceScope) &&
     loadedPreferenceScope === preferenceScope &&
     preferenceBusy !== 'loading';
-  const visibleOwnerUpdates = preferenceIsCurrent ? ownerUpdates : false;
+  const visibleOwnerUpdatesState = preferenceIsCurrent ? ownerUpdatesState : 'none';
+  const visibleOwnerUpdates = visibleOwnerUpdatesState !== 'none';
+  const visibleQuietHours = preferenceIsCurrent ? quietHours : QUIET_HOURS_OFF;
 
   useEffect(() => {
     preferenceContext.current = { accountId, followedKey, preferenceScope };
@@ -76,7 +99,8 @@ export default function SavedScreen() {
       void fetchFollowAlertPreferences(requestedFollowedIds, requestedAccountId).then((result) => {
         if (!active || generation !== preferenceGeneration.current) return;
         if (result.ok && result.data) {
-          setOwnerUpdates(result.data.ownerUpdates);
+          setOwnerUpdatesState(result.data.ownerUpdatesState);
+          setQuietHours(result.data.quietHours);
           setLoadedPreferenceScope(requestedScope);
         } else if (!result.ok) {
           setPreferenceMessage(result.reason);
@@ -116,8 +140,8 @@ export default function SavedScreen() {
     const requestedAccountId = accountId;
     const requestedFollowedIds = [...followedIds];
     const generation = ++preferenceGeneration.current;
-    const previous = visibleOwnerUpdates;
-    setOwnerUpdates(next);
+    const previous = visibleOwnerUpdatesState;
+    setOwnerUpdatesState(next ? 'all' : 'none');
     setLoadedPreferenceScope(requestedScope);
     setPreferenceBusy(field);
     setPreferenceMessage('');
@@ -133,13 +157,61 @@ export default function SavedScreen() {
       preferenceContext.current.preferenceScope !== requestedScope
     ) return;
     if (!result.ok) {
-      setOwnerUpdates(previous);
+      setOwnerUpdatesState(previous);
       setPreferenceMessage(result.reason);
     } else {
       setPreferenceMessage(
         featureFlags.pushNotifications
           ? 'Alert preferences saved.'
           : 'Preferences saved. Delivery activates when secure push notifications are connected.'
+      );
+    }
+    setPreferenceBusy(null);
+  };
+
+  const saveQuietHours = async (presetId: QuietHoursPresetId) => {
+    if (auth.isConfigured && auth.status !== 'authenticated') {
+      router.push('/auth');
+      return;
+    }
+    if (!accountId) {
+      router.push('/auth');
+      return;
+    }
+    const requestedScope = preferenceScope;
+    if (!requestedScope) return;
+    const schedule = quietHoursForPreset(presetId, deviceTimeZone);
+    if (!schedule.ok) {
+      setPreferenceMessage(schedule.reason);
+      return;
+    }
+    const requestedAccountId = accountId;
+    const requestedFollowedIds = [...followedIds];
+    const generation = ++preferenceGeneration.current;
+    const previous = visibleQuietHours;
+    setQuietHours(quietHoursSummaryForUpdate(schedule.data));
+    setLoadedPreferenceScope(requestedScope);
+    setPreferenceBusy('quiet_hours');
+    setPreferenceMessage('');
+
+    const result = await updateFollowQuietHours(
+      requestedFollowedIds,
+      presetId,
+      deviceTimeZone,
+      requestedAccountId,
+    );
+    if (
+      generation !== preferenceGeneration.current ||
+      preferenceContext.current.preferenceScope !== requestedScope
+    ) return;
+    if (!result.ok) {
+      setQuietHours(previous);
+      setPreferenceMessage(result.reason);
+    } else {
+      setPreferenceMessage(
+        featureFlags.pushNotifications
+          ? 'Quiet hours saved for the places you follow.'
+          : 'Quiet hours saved to your account. Device push remains off for this release.'
       );
     }
     setPreferenceBusy(null);
@@ -290,22 +362,22 @@ export default function SavedScreen() {
 
         <View style={styles.preferencePanel}>
           <SectionHeading
-            detail="Choose what appears in Spottr and, when enabled, on this device."
+            detail="Business choices and quiet hours are saved to your account. Delivery on this device is separate."
             eyebrow="Notifications"
-            title="Following alerts"
+            title="Alert settings"
           />
           <View style={styles.deliveryRow}>
             <View style={styles.preferenceIcon}>
               <FontAwesome6 color={palette.accent} name="bell" size={14} />
             </View>
             <View style={styles.preferenceCopy}>
-              <Text style={styles.preferenceTitle}>Device delivery</Text>
+              <Text style={styles.preferenceTitle}>This device</Text>
               <Text style={styles.preferenceDetail}>
                 {nativePushDeliveryAvailable
-                  ? 'Enable to consent to product alerts with generic lock-screen text. Marketing stays off.'
+                  ? 'Enable push for this signed device. Only product updates from places you follow are included.'
                   : Platform.OS === 'web' && featureFlags.pushNotifications
-                    ? 'In-app updates are available. Web push is not available in this release.'
-                    : 'In-app updates are available. Device delivery remains safely off for this release.'}
+                    ? 'Web push is not available in this release. Account preferences below are still saved.'
+                    : 'Push delivery is disabled for this release. Account preferences below are still saved.'}
               </Text>
             </View>
             {nativePushDeliveryAvailable ? (
@@ -314,11 +386,11 @@ export default function SavedScreen() {
                 disabled={deliveryBusy}
                 onPress={() => void changeDeviceDelivery('enable')}
                 style={({ pressed }) => [styles.deliveryAction, pressed && styles.deliveryActionPressed]}>
-                <Text style={styles.deliveryActionText}>{deliveryBusy ? 'Working…' : 'Enable'}</Text>
+                <Text style={styles.deliveryActionText}>{deliveryBusy ? 'Working…' : 'Enable device'}</Text>
               </Pressable>
             ) : (
               <View style={styles.inAppBadge}>
-                <Text style={styles.inAppBadgeText}>In app</Text>
+                <Text style={styles.inAppBadgeText}>Push off</Text>
               </View>
             )}
           </View>
@@ -329,14 +401,14 @@ export default function SavedScreen() {
                 disabled={deliveryBusy}
                 onPress={() => void changeDeviceDelivery('disable_device')}
                 style={styles.deliveryDisable}>
-                <Text style={styles.deliveryDisableText}>Turn off this device</Text>
+                <Text style={styles.deliveryDisableText}>Remove this device</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 disabled={deliveryBusy}
                 onPress={() => void changeDeviceDelivery('unsubscribe')}
                 style={styles.deliveryDisable}>
-                <Text style={styles.deliveryDisableText}>Unsubscribe every device</Text>
+                <Text style={styles.deliveryDisableText}>Turn off account delivery</Text>
               </Pressable>
             </View>
           ) : null}
@@ -347,28 +419,22 @@ export default function SavedScreen() {
           ) : null}
           <View style={styles.preferenceRow}>
             <View style={styles.preferenceIcon}>
-              <FontAwesome6 color={palette.success} name="location-crosshairs" size={15} />
-            </View>
-            <View style={styles.preferenceCopy}>
-              <Text style={styles.preferenceTitle}>Starts serving</Text>
-              <Text style={styles.preferenceDetail}>
-                Coming after a privacy-reviewed starts-serving delivery path. Spottr does not infer your location in the background.
-              </Text>
-            </View>
-            <View style={styles.inAppBadge}>
-              <Text style={styles.inAppBadgeText}>Planned</Text>
-            </View>
-          </View>
-          <View style={styles.preferenceRow}>
-            <View style={styles.preferenceIcon}>
               <FontAwesome6 color={palette.accent} name="bullhorn" size={14} />
             </View>
             <View style={styles.preferenceCopy}>
-              <Text style={styles.preferenceTitle}>Business updates</Text>
-              <Text style={styles.preferenceDetail}>Location changes, menu returns, sold-out notes, and extended hours.</Text>
+              <Text style={styles.preferenceTitle}>Places you follow</Text>
+              <Text style={styles.preferenceDetail}>
+                {visibleOwnerUpdatesState === 'all'
+                  ? 'All followed places can send location changes, menu returns, and owner updates. Turning this off applies to all.'
+                  : visibleOwnerUpdatesState === 'some'
+                    ? 'Some followed places or alert types are on. Changing this switch applies the new choice to all.'
+                    : 'Location changes, menu returns, and owner updates are off for every followed place.'}
+              </Text>
             </View>
             <Switch
-              accessibilityLabel="Alert for updates from followed business owners"
+              accessibilityHint="Changing this switch updates every followed business."
+              accessibilityLabel="Account alerts for every followed business"
+              accessibilityValue={{ text: visibleOwnerUpdatesState }}
               disabled={preferenceBusy !== null || followedIds.length === 0}
               onValueChange={(next) => void savePreference('owner_bundle', next)}
               thumbColor="#FFFFFF"
@@ -376,10 +442,86 @@ export default function SavedScreen() {
               value={visibleOwnerUpdates}
             />
           </View>
+          <View style={styles.quietHoursSection}>
+            <View style={styles.quietHoursHeader}>
+              <View style={styles.preferenceIcon}>
+                <FontAwesome6 color={palette.accentDeep} name="moon" size={14} />
+              </View>
+              <View style={styles.preferenceCopy}>
+                <Text style={styles.preferenceTitle}>Quiet hours</Text>
+                <Text style={styles.preferenceDetail}>
+                  {visibleQuietHours.state === 'mixed'
+                    ? 'Schedules currently vary by place. A preset aligns quiet hours without changing any business alert types.'
+                    : visibleQuietHours.presetId === 'custom'
+                      ? `A custom ${visibleQuietHours.start}–${visibleQuietHours.end} schedule is saved. Choose a preset to replace only quiet hours.`
+                      : 'Choose when future device alerts should pause. Business alert types stay unchanged.'}
+                </Text>
+              </View>
+              <View style={styles.inAppBadge}>
+                <Text style={styles.inAppBadgeText}>
+                  {visibleQuietHours.state === 'mixed'
+                    ? 'Varies'
+                    : visibleQuietHours.presetId === 'custom'
+                      ? 'Custom'
+                      : visibleQuietHours.state === 'off'
+                        ? 'Off'
+                        : 'Set'}
+                </Text>
+              </View>
+            </View>
+            <View
+              accessibilityLabel="Quiet hours presets"
+              accessibilityRole="radiogroup"
+              style={styles.quietHoursOptions}>
+              {QUIET_HOURS_PRESETS.map((preset) => {
+                const selected = visibleQuietHours.presetId === preset.id;
+                const timezoneRequired = preset.start !== null;
+                const disabled = preferenceBusy !== null || followedIds.length === 0 ||
+                  (timezoneRequired && !deviceTimeZone);
+                return (
+                  <Pressable
+                    accessibilityHint={timezoneRequired && deviceTimeZone
+                      ? `Uses ${deviceTimeZone}.`
+                      : undefined}
+                    accessibilityLabel={`${preset.label}. ${preset.detail}`}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: selected, disabled }}
+                    disabled={disabled}
+                    key={preset.id}
+                    onPress={() => void saveQuietHours(preset.id)}
+                    style={({ pressed }) => [
+                      styles.quietHoursOption,
+                      selected && styles.quietHoursOptionSelected,
+                      disabled && styles.quietHoursOptionDisabled,
+                      pressed && styles.quietHoursOptionPressed,
+                    ]}>
+                    <View style={[styles.radioOuter, selected && styles.radioOuterSelected]}>
+                      {selected ? <View style={styles.radioInner} /> : null}
+                    </View>
+                    <View style={styles.quietHoursOptionCopy}>
+                      <Text style={[styles.quietHoursOptionLabel, selected && styles.quietHoursOptionLabelSelected]}>
+                        {preset.label}
+                      </Text>
+                      <Text style={styles.quietHoursOptionDetail}>{preset.detail}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={styles.quietHoursTimezone}>
+              {deviceTimeZone
+                ? visibleQuietHours.timeZone && visibleQuietHours.timeZone !== deviceTimeZone
+                  ? `Saved schedule: ${visibleQuietHours.timeZone}. New presets use this device: ${deviceTimeZone}.`
+                  : visibleQuietHours.state === 'uniform' && !visibleQuietHours.timeZone
+                    ? `The saved schedule uses each registered device timezone. New presets use ${deviceTimeZone}.`
+                  : `Presets use ${deviceTimeZone}, including daylight-saving changes.`
+                : 'This device could not provide a verified IANA timezone. You can still turn quiet hours off.'}
+            </Text>
+          </View>
           <View style={styles.preferenceNotice}>
-            <FontAwesome6 color={palette.muted} name="moon" size={12} />
+            <FontAwesome6 color={palette.muted} name="shield-halved" size={12} />
             <Text style={styles.preferenceNoticeText}>
-              Quiet hours will be configurable before device delivery is activated. No notification provider is enabled in this release.
+              No notification provider is enabled in this release. These controls do not request background location or opt you into marketing.
             </Text>
           </View>
           {preferenceBusy === 'loading' ? (
@@ -635,6 +777,82 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '900',
   },
+  quietHoursSection: {
+    borderTopColor: palette.line,
+    borderTopWidth: 1,
+    gap: spacing.md,
+    paddingTop: spacing.md,
+  },
+  quietHoursHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  quietHoursOptions: {
+    gap: spacing.sm,
+  },
+  quietHoursOption: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    minHeight: 56,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  quietHoursOptionSelected: {
+    backgroundColor: palette.accentSoft,
+    borderColor: palette.accent,
+  },
+  quietHoursOptionDisabled: {
+    opacity: 0.48,
+  },
+  quietHoursOptionPressed: {
+    opacity: 0.76,
+  },
+  quietHoursOptionCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  quietHoursOptionLabel: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  quietHoursOptionLabelSelected: {
+    color: palette.accentDeep,
+    fontWeight: '900',
+  },
+  quietHoursOptionDetail: {
+    color: palette.muted,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  quietHoursTimezone: {
+    color: palette.muted,
+    fontSize: 10,
+    lineHeight: 15,
+  },
+  radioOuter: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.pill,
+    borderWidth: 2,
+    height: 18,
+    justifyContent: 'center',
+    width: 18,
+  },
+  radioOuterSelected: {
+    borderColor: palette.accent,
+  },
+  radioInner: {
+    backgroundColor: palette.accent,
+    borderRadius: radii.pill,
+    height: 8,
+    width: 8,
+  },
   inAppBadge: {
     backgroundColor: palette.accentSoft,
     borderRadius: radii.pill,
@@ -651,6 +869,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: palette.bg,
     borderRadius: radii.md,
+    flexShrink: 0,
     height: 38,
     justifyContent: 'center',
     width: 38,

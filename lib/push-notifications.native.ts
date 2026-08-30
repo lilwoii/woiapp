@@ -147,7 +147,7 @@ export async function revokeAllPushNotificationDevices(
       },
     });
     if (error) throw error;
-    return { ok: true };
+    return { ok: true, message: 'Device delivery is off for this account.' };
   } catch {
     return { ok: false, code: 'UNKNOWN', reason: 'Registered devices could not be removed.' };
   }

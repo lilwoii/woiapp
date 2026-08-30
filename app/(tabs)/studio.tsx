@@ -64,7 +64,7 @@ const updateTypes: { id: BusinessUpdate['type']; label: string; icon: keyof type
 
 const quickStatuses: { id: VenueStatus; label: string; icon: keyof typeof FontAwesome6.glyphMap }[] = [
   { id: 'open', label: 'Go live', icon: 'signal' },
-  { id: 'moving_soon', label: 'Moving soon', icon: 'truck-fast' },
+  { id: 'moving_soon', label: 'Moving to next location', icon: 'truck-fast' },
   { id: 'closed', label: 'Close early', icon: 'door-closed' },
 ];
 
@@ -987,35 +987,37 @@ export default function StudioScreen() {
         ) : null}
 
         <View style={styles.quickActions}>
-          {quickStatuses.map((action) => {
-            const active = place.status === action.id;
-            return (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{
-                  busy: statusPending === action.id,
-                  disabled: !canOperate,
-                  selected: active,
-                }}
-                disabled={Boolean(statusPending) || !canOperate}
-                key={action.id}
-                onPress={() => void changeStatus(action.id)}
-                style={[
-                  styles.quickAction,
-                  active && styles.quickActionActive,
-                  !canOperate && styles.buttonDisabled,
-                ]}>
-                <View style={[styles.quickIcon, active && styles.quickIconActive]}>
-                  {statusPending === action.id ? (
-                    <ActivityIndicator color={active ? '#FFFFFF' : palette.ink} size="small" />
-                  ) : (
-                    <FontAwesome6 color={active ? '#FFFFFF' : palette.ink} name={action.icon} size={15} />
-                  )}
-                </View>
-                <Text style={[styles.quickLabel, active && styles.quickLabelActive]}>{action.label}</Text>
-              </Pressable>
-            );
-          })}
+          {quickStatuses
+            .filter((action) => action.id !== 'moving_soon' || place.category === 'food_truck')
+            .map((action) => {
+              const active = place.status === action.id;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{
+                    busy: statusPending === action.id,
+                    disabled: !canOperate,
+                    selected: active,
+                  }}
+                  disabled={Boolean(statusPending) || !canOperate}
+                  key={action.id}
+                  onPress={() => void changeStatus(action.id)}
+                  style={[
+                    styles.quickAction,
+                    active && styles.quickActionActive,
+                    !canOperate && styles.buttonDisabled,
+                  ]}>
+                  <View style={[styles.quickIcon, active && styles.quickIconActive]}>
+                    {statusPending === action.id ? (
+                      <ActivityIndicator color={active ? '#FFFFFF' : palette.ink} size="small" />
+                    ) : (
+                      <FontAwesome6 color={active ? '#FFFFFF' : palette.ink} name={action.icon} size={15} />
+                    )}
+                  </View>
+                  <Text style={[styles.quickLabel, active && styles.quickLabelActive]}>{action.label}</Text>
+                </Pressable>
+              );
+            })}
         </View>
 
         {feedback ? (

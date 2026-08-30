@@ -5,6 +5,14 @@ import {
 } from '@/lib/features';
 import { mapLogoPaths } from '@/lib/map-inventory';
 import { safePublicHttpsUrl } from '@/lib/links';
+import { movingServiceFromPublicRow } from '@/lib/mobile-service';
+import {
+  quietHoursForPreset,
+  summarizeFollowAlertPreferences,
+  type FollowAlertPreferenceSummary,
+  type FollowNotificationPreference,
+  type QuietHoursPresetId,
+} from '@/lib/notification-preferences';
 import { publicBadgeFromCode, type PublicBadge } from '@/lib/trust-badges';
 import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
 import {
@@ -219,7 +227,15 @@ function toDiscoveryActionError<T>(error: unknown, fallback: string): ActionResu
 }
 
 export function createMarketplaceIdempotencyKey(
-  scope: 'review' | 'update' | 'response' | 'sponsor' | 'post' | 'invite' | 'notification-preference'
+  scope:
+    | 'review'
+    | 'update'
+    | 'response'
+    | 'sponsor'
+    | 'post'
+    | 'invite'
+    | 'notification-preference'
+    | 'notification-quiet-hours'
 ) {
   const cryptoApi = globalThis.crypto;
   let nonce: string | undefined = cryptoApi?.randomUUID?.();
@@ -974,6 +990,7 @@ export async function fetchMapFoodFeatures(
       const businessId = stringValue(entry.business_id);
       const locationId = stringValue(entry.location_id);
       const rawSourceLabel = stringValue(entry.source_label);
+      const rawMobilityState = stringValue(entry.mobility_state);
       features.push({
         type,
         id,
@@ -992,6 +1009,9 @@ export async function fetchMapFoodFeatures(
             ? { sourceLabel: rawSourceLabel as Place['sourceLabel'] }
             : {}
         ),
+        ...(rawMobilityState === 'moving_to_next_location'
+          ? { mobilityState: 'moving_to_next_location' as const }
+          : {}),
       });
     }
     return { ok: true, data: features };
@@ -1145,6 +1165,7 @@ export async function fetchMarketplacePlaces(
       stopsResult,
       updatesResult,
       liveStatusResult,
+      mobileServiceResult,
       aggregatesResult,
       contactsResult,
       hoursResult,
@@ -1172,6 +1193,7 @@ export async function fetchMarketplacePlaces(
         .in('business_id', ids)
         .order('created_at', { ascending: false }),
       client.from('public_business_live_status').select('*').in('business_id', ids),
+      client.from('public_business_mobile_service').select('*').in('business_id', ids),
       client.from('public_business_review_aggregates').select('*').in('business_id', ids),
       detailedIds.length
         ? client.from('public_business_contacts').select('*').in('business_id', detailedIds)
@@ -1207,6 +1229,7 @@ export async function fetchMarketplacePlaces(
       stopsResult,
       updatesResult,
       liveStatusResult,
+      mobileServiceResult,
       aggregatesResult,
       contactsResult,
       hoursResult,
@@ -1277,6 +1300,7 @@ export async function fetchMarketplacePlaces(
     const reviewBadges = rows(reviewBadgesResult.data);
     const businessMedia = rows(businessMediaResult.data);
     const liveStatuses = rows(liveStatusResult.data);
+    const mobileServices = rows(mobileServiceResult.data);
     const aggregates = rows(aggregatesResult.data);
     const contacts = rows(contactsResult.data);
     const distanceByBusiness = new Map(
@@ -1335,6 +1359,15 @@ export async function fetchMarketplacePlaces(
       ) as BusinessCategory;
       const businessStops = stops.filter((entry) => entry.business_id === id);
       const nowTimestamp = Date.now();
+      const timeZone = stringValue(business.timezone, 'America/Los_Angeles');
+      const mobility = kind === 'food_truck'
+        ? movingServiceFromPublicRow(
+            mobileServices.find((entry) => entry.business_id === id),
+            id,
+            timeZone,
+            nowTimestamp,
+          )
+        : undefined;
       const activeStop = businessStops.find((entry) => {
         const startsAt = Date.parse(stringValue(entry.starts_at));
         const endsAt = Date.parse(stringValue(entry.ends_at));
@@ -1347,6 +1380,7 @@ export async function fetchMarketplacePlaces(
         nearbyRows.find((entry) => entry.business_id === id)?.location_id
       );
       const selectedLocationId =
+        mobility?.nextStop.locationId ||
         (uuidPattern.test(options.preferredLocationId ?? '')
           && businessLocations.some((entry) => locationIdOf(entry) === options.preferredLocationId)
           ? options.preferredLocationId
@@ -1359,7 +1393,6 @@ export async function fetchMarketplacePlaces(
         locations.find((entry) => entry.business_id === id && entry.is_primary === true) ??
         locations.find((entry) => entry.business_id === id);
       const coordinates = locationCoordinates(location);
-      const timeZone = stringValue(business.timezone, 'America/Los_Angeles');
       const hasDetails = includeDetails || managedIds.includes(id);
       const hoursInfo = hasDetails
         ? buildHours(hours, specialHours, id, timeZone)
@@ -1374,9 +1407,11 @@ export async function fetchMarketplacePlaces(
           Date.parse(stringValue(entry.expires_at)) > nowTimestamp
       );
       const liveState = stringValue(liveStatus?.status) as VenueStatus;
-      const status: VenueStatus = ['open', 'opening_soon', 'moving_soon', 'closed'].includes(liveState)
-        ? liveState
-        : ['open', 'opening_soon', 'moving_soon', 'closed'].includes(
+      const status: VenueStatus = mobility
+        ? 'moving_soon'
+        : ['open', 'opening_soon', 'closed'].includes(liveState)
+          ? liveState
+        : ['open', 'opening_soon', 'closed'].includes(
               stringValue(business.effective_status)
             )
           ? (business.effective_status as VenueStatus)
@@ -1402,7 +1437,17 @@ export async function fetchMarketplacePlaces(
       const nextStopLocation = upcomingStop
         ? locations.find((entry) => locationIdOf(entry) === upcomingStop.location_id)
         : undefined;
-      const nextStop = upcomingStop
+      const nextStopAddress = mobility
+        ? [
+            mobility.nextStop.address,
+            mobility.nextStop.city,
+            mobility.nextStop.region,
+            mobility.nextStop.postalCode,
+          ].filter(Boolean).join(', ')
+        : '';
+      const nextStop = mobility
+        ? `${mobility.nextStop.timeWindow} · ${nextStopAddress}`
+        : upcomingStop
         ? `${new Intl.DateTimeFormat('en-US', {
             timeZone,
             weekday: 'short',
@@ -1473,6 +1518,7 @@ export async function fetchMarketplacePlaces(
         todayHours: hoursInfo.todayHours,
         weeklyHours: hoursInfo.weeklyHours,
         nextStop,
+        mobility,
         description: stringValue(business.description, 'Independent local food on Spottr.'),
         priceLevel: Math.min(4, Math.max(1, numberValue(business.price_level, 2))) as 1 | 2 | 3 | 4,
         accent: categoryAccents[kind],
@@ -2476,18 +2522,47 @@ export async function updateFollowAlertPreference(
   }
 }
 
+export async function updateFollowQuietHours(
+  businessIds: string[],
+  presetId: QuietHoursPresetId,
+  timeZone: string | null,
+  expectedUserId: string,
+): Promise<ActionResult> {
+  if (!supabase) return configurationRequired();
+  const user = await authenticatedUserId(expectedUserId);
+  if (!user.ok) return user;
+  if (!businessIds.length) return { ok: true };
+  const schedule = quietHoursForPreset(presetId, timeZone);
+  if (!schedule.ok) {
+    return { ok: false, code: 'INVALID', reason: schedule.reason };
+  }
+  const client = await marketplaceMutationClient(user.data);
+  if (!client) return accountChanged();
+
+  try {
+    const { error } = await client.rpc('update_follow_notification_quiet_hours', {
+      target_business_ids: businessIds,
+      target_timezone: schedule.data.timeZone,
+      target_quiet_hours_start: schedule.data.start,
+      target_quiet_hours_end: schedule.data.end,
+      idempotency_key: createMarketplaceIdempotencyKey('notification-quiet-hours'),
+    });
+    if (error) throw error;
+    return { ok: true };
+  } catch (error) {
+    return toActionError(error, 'Quiet hours could not be saved.');
+  }
+}
+
 export async function fetchFollowAlertPreferences(
   businessIds: string[],
   expectedUserId: string,
-): Promise<ActionResult<{
-  liveNearby: boolean;
-  ownerUpdates: boolean;
-}>> {
+): Promise<ActionResult<FollowAlertPreferenceSummary>> {
   if (!supabase) return configurationRequired();
   if (!businessIds.length) {
     return {
       ok: true,
-      data: { liveNearby: false, ownerUpdates: false },
+      data: summarizeFollowAlertPreferences([], []),
     };
   }
   const user = await authenticatedUserId(expectedUserId);
@@ -2498,7 +2573,9 @@ export async function fetchFollowAlertPreferences(
     if (!client) return accountChanged();
     const { data, error } = await client
       .from('notification_preferences')
-      .select('business_id, live_nearby, location_change, owner_update, menu_return')
+      .select(
+        'business_id, live_nearby, location_change, owner_update, menu_return, quiet_hours_start, quiet_hours_end, timezone'
+      )
       .eq('user_id', user.data)
       .in('business_id', businessIds);
     if (error) throw error;
@@ -2509,24 +2586,24 @@ export async function fetchFollowAlertPreferences(
       location_change: boolean;
       owner_update: boolean;
       menu_return: boolean;
+      quiet_hours_start: string | null;
+      quiet_hours_end: string | null;
+      timezone: string | null;
     }[];
-    const byBusiness = new Map(rows.map((row) => [row.business_id, row]));
+    const preferences: FollowNotificationPreference[] = rows.map((row) => ({
+      businessId: row.business_id,
+      liveNearby: row.live_nearby,
+      locationChange: row.location_change,
+      ownerUpdate: row.owner_update,
+      menuReturn: row.menu_return,
+      quietHoursStart: row.quiet_hours_start,
+      quietHoursEnd: row.quiet_hours_end,
+      timeZone: row.timezone,
+    }));
 
     return {
       ok: true,
-      data: {
-        liveNearby: businessIds.every(
-          (businessId) => byBusiness.get(businessId)?.live_nearby ?? false
-        ),
-        ownerUpdates: businessIds.every(
-          (businessId) => {
-            const preference = byBusiness.get(businessId);
-            return preference
-              ? preference.location_change && preference.owner_update && preference.menu_return
-              : false;
-          }
-        ),
-      },
+      data: summarizeFollowAlertPreferences(businessIds, preferences),
     };
   } catch (error) {
     return toActionError(error, 'Notification preferences could not be loaded.');

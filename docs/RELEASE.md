@@ -440,6 +440,15 @@ replacement, and requires a new explicit sign-in. A non-secret quarantine
 marker prevents a rejected identity from being restored after restart until
 Spottr proves the local replacement was cleared.
 
+Migration `20261020000000_notification_provider_lock_order.sql` makes delivery
+eligibility join the provider-lifecycle advisory barrier before business row
+locks, removing the historical business-to-provider/provider-to-business lock
+cycle. Migration `20261021000000_notification_quiet_hours_settings.sql` adds a
+narrow followed-business RPC that changes only quiet-hour/timezone columns and
+leaves alert types, consent, runtime gates, and leased delivery state untouched.
+The settings UI distinguishes account preferences from this-device delivery;
+none of these controls activates a push provider.
+
 Database enqueue/delivery, device registration, provider access, dispatch, the
 receipt worker, and the client remain independently gated and default false.
 The production-maintenance client also has a separate default-false
@@ -507,6 +516,13 @@ merchant fulfillment queue used by the staff pilot UI. Do not change
 `pilot_mode` to `shadow` outside an internal operations environment until its
 RLS/runtime/concurrency tests have passed against the target Postgres instance.
 No migration in this chain authorizes or implements prepaid checkout.
+
+Migration `20261019000000_business_pickup_ordering_preferences.sql` lets an
+AAL2 owner/manager of a verified, published restaurant or food truck record a
+future pickup preference. Its only accepted launch option is `pay_in_person`;
+customer ordering, card charging, and Apple Pay are hard false. This preference
+is planning data, not a checkout entitlement, and does not change the customer
+feature gate.
 
 The zero-money placement and pending-cancellation client persists only the
 opaque operation IDs, versions, fixed reason, and original idempotency key before

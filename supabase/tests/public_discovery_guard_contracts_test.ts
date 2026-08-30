@@ -211,13 +211,21 @@ Deno.test("public discovery response is whitelisted and rejects malformed rows",
     business_name: "Maya Taco Truck",
     logo_path: null,
     source_label: "Owner verified",
+    mobility_state: "moving_to_next_location",
     private_field: "must not cross the gateway",
   }]);
   assertEquals(Object.hasOwn(rows[0], "private_field"), false);
+  assertEquals(rows[0].mobility_state, "moving_to_next_location");
   assertThrows(() =>
     normalizePublicDiscoveryRows(request, [{
       ...rows[0],
       category_counts: { food_truck: 2 },
+    }])
+  );
+  assertThrows(() =>
+    normalizePublicDiscoveryRows(request, [{
+      ...rows[0],
+      mobility_state: "live_tracking",
     }])
   );
 

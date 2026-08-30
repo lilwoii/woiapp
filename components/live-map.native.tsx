@@ -17,7 +17,7 @@ import { mapCategoryPresentation, mapClusterCategorySummary } from '@/lib/map-pr
 import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 import type { NavigationCoordinate, TravelMode } from '@/types/navigation';
-import { Place } from '@/types/marketplace';
+import { MOVING_TO_NEXT_LOCATION_LABEL, Place } from '@/types/marketplace';
 
 type Props = {
   places: Place[];
@@ -49,12 +49,14 @@ function VenueMarker({
   logoUrl,
   onLogoError,
   onLogoSettled,
+  moving,
   selected,
 }: {
   category: Place['category'];
   logoUrl?: string;
   onLogoError?: () => void;
   onLogoSettled?: () => void;
+  moving: boolean;
   selected: boolean;
 }) {
   const presentation = mapCategoryPresentation[category];
@@ -63,6 +65,7 @@ function VenueMarker({
       style={[
         styles.pin,
         styles[`pin_${presentation.shape}`],
+        moving && styles.movingPin,
         selected && styles.selectedPin,
       ]}>
       {logoUrl ? (
@@ -70,8 +73,12 @@ function VenueMarker({
       ) : (
         <FontAwesome6 color={palette.ink} name={presentation.icon} size={14} />
       )}
-      <View style={[styles.categoryBadge, category === 'food_truck' && styles.truckBadge]}>
-        <Text style={styles.categoryBadgeText}>{presentation.badge}</Text>
+      <View style={[
+        styles.categoryBadge,
+        category === 'food_truck' && styles.truckBadge,
+        moving && styles.movingBadge,
+      ]}>
+        <Text style={styles.categoryBadgeText}>{moving ? 'NEXT' : presentation.badge}</Text>
       </View>
     </View>
   );
@@ -82,6 +89,7 @@ function VenueMapMarker({
   coordinate,
   description,
   logoUrl,
+  moving,
   onPress,
   selected,
   title,
@@ -90,6 +98,7 @@ function VenueMapMarker({
   coordinate: { latitude: number; longitude: number };
   description?: string;
   logoUrl?: string;
+  moving: boolean;
   onPress?: () => void;
   selected: boolean;
   title: string;
@@ -115,6 +124,7 @@ function VenueMapMarker({
           setTracksLogo(false);
         }}
         onLogoSettled={() => setTracksLogo(false)}
+        moving={moving}
         selected={selected}
       />
     </Marker>
@@ -365,19 +375,23 @@ export function LiveMap({
           );
         }
         const place = feature.businessId ? placesById.get(feature.businessId) : undefined;
+        const moving = feature.mobilityState === 'moving_to_next_location';
         return (
           <VenueMapMarker
             category={feature.dominantCategory}
             coordinate={{ latitude: feature.latitude, longitude: feature.longitude }}
-            description={place?.todayHours ?? feature.sourceLabel}
-            key={`${feature.id}:${feature.logoUrl ?? ''}:${feature.businessId === selectedId}`}
+            description={moving
+              ? `${MOVING_TO_NEXT_LOCATION_LABEL}. Scheduled next-stop destination; no live vehicle location.`
+              : place?.todayHours ?? feature.sourceLabel}
+            key={`${feature.id}:${feature.logoUrl ?? ''}:${moving}:${feature.businessId === selectedId}`}
             logoUrl={feature.logoUrl}
+            moving={moving}
             onPress={() => {
               if (place && (!feature.locationId || place.locationId === feature.locationId)) onSelect?.(place);
               else if (feature.businessId) onSelectBusinessId?.(feature.businessId, feature.locationId);
             }}
             selected={feature.businessId === selectedId}
-            title={place?.name ?? feature.name ?? 'Food place'}
+            title={`${place?.name ?? feature.name ?? 'Food place'}${moving ? ` — ${MOVING_TO_NEXT_LOCATION_LABEL}` : ''}`}
           />
         );
       })}
@@ -418,9 +432,12 @@ export function LiveMap({
           <VenueMapMarker
             category={place.category}
             coordinate={{ latitude: place.latitude, longitude: place.longitude }}
-            description={`${place.categoryLabel} · ${place.todayHours}`}
+            description={place.mobility
+              ? `${MOVING_TO_NEXT_LOCATION_LABEL} · ${place.mobility.nextStop.timeWindow}. Scheduled next-stop destination; no live vehicle location.`
+              : `${place.categoryLabel} · ${place.todayHours}`}
             key={`${place.id}:${place.logoUrl}:${isSelected}`}
             logoUrl={place.logoUrl}
+            moving={Boolean(place.mobility)}
             onPress={() => onSelect?.(place)}
             selected={isSelected}
             title={place.name}
@@ -588,6 +605,10 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     width: 54,
   },
+  movingPin: {
+    backgroundColor: palette.warningSoft,
+    borderColor: palette.warning,
+  },
   pin_circle: {
     borderRadius: 999,
   },
@@ -622,6 +643,10 @@ const styles = StyleSheet.create({
   },
   truckBadge: {
     backgroundColor: palette.dark,
+  },
+  movingBadge: {
+    backgroundColor: palette.warning,
+    minWidth: 34,
   },
   categoryBadgeText: {
     color: '#FFFFFF',

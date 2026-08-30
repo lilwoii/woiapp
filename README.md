@@ -131,7 +131,8 @@ The connected web project is identified by
 Sites workflow; do not create a duplicate project. See [RELEASE.md](docs/RELEASE.md)
 for the exact evidence and deployment checklist, [PRODUCT.md](docs/PRODUCT.md)
 for scope, [GLOBAL_DIRECTORY.md](docs/GLOBAL_DIRECTORY.md) for worldwide food
-inventory and map clustering, and [SECURITY.md](docs/SECURITY.md) for security boundaries.
+inventory and map clustering, [MAP_PLATFORM.md](docs/MAP_PLATFORM.md) for the
+licensed 3D/routing provider plan, and [SECURITY.md](docs/SECURITY.md) for security boundaries.
 
 The ordinary Quality workflow exports only the fail-closed release-candidate
 shell. A public-launch web artifact must come from the manual **Production web

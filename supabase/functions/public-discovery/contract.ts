@@ -495,10 +495,15 @@ function mapResponseRow(
   const businessName = nullableSafeText(row.business_name, 200);
   const logoPath = nullableSafeText(row.logo_path, 512);
   const sourceLabel = nullableSafeText(row.source_label, 40);
+  const mobilityState = row.mobility_state == null
+    ? null
+    : row.mobility_state === "moving_to_next_location"
+    ? row.mobility_state
+    : fail("INVALID_DISCOVERY_RESPONSE");
   if (featureType === "cluster") {
     if (
       businessId !== null || locationId !== null || businessName !== null ||
-      logoPath !== null || sourceLabel !== null
+      logoPath !== null || sourceLabel !== null || mobilityState !== null
     ) {
       fail("INVALID_DISCOVERY_RESPONSE");
     }
@@ -508,6 +513,7 @@ function mapResponseRow(
     businessName === null ||
     sourceLabel === null ||
     !sourceLabels.includes(sourceLabel as typeof sourceLabels[number]) ||
+    (mobilityState !== null && row.dominant_kind !== "food_truck") ||
     placeCount !== 1
   ) {
     fail("INVALID_DISCOVERY_RESPONSE");
@@ -526,6 +532,7 @@ function mapResponseRow(
     business_name: businessName,
     logo_path: logoPath,
     source_label: sourceLabel,
+    mobility_state: mobilityState,
   };
 }
 

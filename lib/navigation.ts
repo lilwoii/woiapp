@@ -5,6 +5,7 @@ import type { NavigationCoordinate, RoutePlan, RouteStep, TravelMode } from '@/t
 
 const routeModes: TravelMode[] = ['drive', 'walk', 'bike'];
 const ROUTE_REQUEST_TIMEOUT_MS = 12_000;
+export type ExternalMapProvider = 'apple' | 'google';
 
 function coordinate(value: unknown): NavigationCoordinate | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -67,12 +68,24 @@ export function externalDirectionsUrl(
   platform: string,
   mode?: TravelMode | null,
 ): string | null {
+  return externalDirectionsProviderUrl(
+    destination,
+    platform === 'ios' ? 'apple' : 'google',
+    mode,
+  );
+}
+
+export function externalDirectionsProviderUrl(
+  destination: NavigationCoordinate,
+  provider: ExternalMapProvider,
+  mode?: TravelMode | null,
+): string | null {
   const validDestination = coordinate(destination);
   if (!validDestination) return null;
   const encodedDestination = encodeURIComponent(
     `${validDestination.latitude},${validDestination.longitude}`,
   );
-  if (platform === 'ios') {
+  if (provider === 'apple') {
     const appleMode = mode === 'drive' ? '&dirflg=d' : mode === 'walk' ? '&dirflg=w' : '';
     return `https://maps.apple.com/?daddr=${encodedDestination}${appleMode}`;
   }
@@ -128,6 +141,15 @@ export function formatRouteDuration(seconds: number): string {
   return remaining ? `${hours} hr ${remaining} min` : `${hours} hr`;
 }
 
+export function formatRouteArrivalTime(route: RoutePlan, locales?: string | string[]): string {
+  const generatedAt = Date.parse(route.generatedAt);
+  const arrivalAt = generatedAt + route.durationSeconds * 1_000;
+  return new Intl.DateTimeFormat(locales, {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(arrivalAt));
+}
+
 export function navigationDistanceMeters(left: NavigationCoordinate, right: NavigationCoordinate): number {
   const radians = (degrees: number) => degrees * Math.PI / 180;
   const latitudeDelta = radians(right.latitude - left.latitude);
@@ -136,6 +158,30 @@ export function navigationDistanceMeters(left: NavigationCoordinate, right: Navi
     Math.cos(radians(left.latitude)) * Math.cos(radians(right.latitude)) *
     Math.sin(longitudeDelta / 2) ** 2;
   return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+export function inferTravelMode(input: {
+  speedMetersPerSecond?: number | null;
+  horizontalAccuracyMeters?: number | null;
+  distanceMeters: number;
+}): Extract<TravelMode, 'drive' | 'walk'> {
+  const speed = input.speedMetersPerSecond;
+  const accuracy = input.horizontalAccuracyMeters;
+  const speedIsUsable = typeof speed === 'number' && Number.isFinite(speed) &&
+    speed >= 0 && speed <= 70 &&
+    (accuracy === null || accuracy === undefined ||
+      (Number.isFinite(accuracy) && accuracy >= 0 && accuracy <= 65));
+
+  if (speedIsUsable && speed >= 3.6) return 'drive';
+  // A near-zero reading is common while someone is still choosing a route in
+  // a parked car. Treat it as ambiguous and let trip distance decide instead
+  // of confidently labelling every stationary start as walking.
+  if (speedIsUsable && speed >= 0.55 && speed <= 2.2) return 'walk';
+
+  const distance = Number.isFinite(input.distanceMeters)
+    ? Math.max(0, input.distanceMeters)
+    : Number.POSITIVE_INFINITY;
+  return distance <= 2_400 ? 'walk' : 'drive';
 }
 
 export function shouldRequestAutomaticReroute(input: {

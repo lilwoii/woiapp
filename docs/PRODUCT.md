@@ -25,15 +25,21 @@ Venue types:
 
 The universal client currently supports:
 
-- foreground-location and city/ZIP/business/cuisine discovery;
+- foreground-location and city/ZIP/business/cuisine discovery, with
+  diacritic-safe token relevance over already-public names, cuisines, features,
+  and loaded menu fields;
 - map/list results with visually distinct truck markers;
 - open-only, venue, cuisine, dietary, payment, price, distance, rating, pickup,
   Nearby, Popular, Trending, and Top rated controls;
 - timezone-aware weekly and special hours, mobile stops, expiring status
-  overrides, and short owner updates;
+  overrides, short owner updates, and a food-truck-only “Moving to next
+  location” state backed by the next approved exact public stop rather than
+  vehicle tracking;
 - published menus with integer minor-unit prices, availability, dietary tags,
   and payment methods;
-- follows, saved places, alert preferences, reviews, reports, and blocks;
+- follows, saved places, per-business alert preferences, account quiet-hours
+  presets, reviews, reports, and blocks; device push remains a separate gated
+  capability;
 - customer workflows plus AAL2-protected business draft, claim, and scheduling
   workflows in one account;
 - draft business setup, claims, staged published-listing revisions, and mobile
@@ -76,6 +82,9 @@ organic results.
   the live directory.
 - Food-truck locations are deliberate public business stops, not background
   tracking.
+- A moving marker represents the next approved destination and schedule, never
+  the truck's current GPS position. Clients re-fetch both the listing and map
+  inventory when that schedule boundary arrives.
 - Home-kitchen public coordinates are approximate and street/postal details are
   withheld.
 - `EXPO_PUBLIC_HOME_KITCHENS_ENABLED` is a client presentation flag only. The

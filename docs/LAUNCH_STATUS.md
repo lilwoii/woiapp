@@ -101,6 +101,44 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   reproduced the full green release suite and produced the commit-bound web
   artifact. That exact artifact is privately published as owner-only Sites
   version 55 at https://noshatlas-live.lilwoi.chatgpt.site/.
+- Map-first polish commits `209f90faae7186acbe4348249e7b1492a412be35`
+  through `b5819e546f90ff0de174ba339bd4b85f80dfb559` are covered by the
+  exact-head green GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33338197377)
+  and [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33338197370)
+  workflows. Discovery now retains the map through empty and disconnected
+  states without inventing a city, bounds dense fallback rendering while
+  preserving represented counts and the selected listing, cancels stale area
+  searches, and refuses oversized live-inventory viewports. Native driving
+  mode exposes the platform traffic layer. Route requests abort on timeout,
+  preserve the selected travel mode when opening Apple or Google Maps, and
+  discard guidance if a mobile destination moves. Web controls advertise 3D
+  only when the loaded licensed style actually contains building extrusion
+  data, and rendered markers remain keyboard reachable. Foreground native
+  notification presentation and strictly parsed notification-tap routes are
+  also covered while every production push gate remains false. The rendered
+  desktop/mobile suite exercised 100 accessibility and functional cases,
+  including customer and owner authentication fixtures, registration
+  contracts, duplicate-username rejection, chat, feed, map, navigation, and
+  empty-search state.
+- The current map-first release candidate adds a food-truck-only “Moving to
+  next location” projection backed by a confirmed exact public stop within 12
+  hours. Web and native markers clearly identify the scheduled destination and
+  never claim to show a vehicle's live position; stale detail state cannot
+  override authoritative inventory, and clients batch an authoritative refresh
+  when the stop boundary arrives. Navigation now offers conservative on-device
+  Auto estimation, traffic-aware drive/walk/bike route requests, absolute ETA,
+  route expiry, explicit Apple/Google handoff, and immediate foreground watcher
+  cancellation if a destination disappears or becomes privacy-blocked. Search
+  is diacritic-safe and token-aware over public food data, with exact business,
+  cuisine, and loaded-menu matches ahead of incidental text.
+- Account notification settings now preserve mixed per-business choices and
+  offer validated IANA quiet-hours presets without changing consent or delivery
+  state. Push remains visibly and technically off. Verified restaurants and
+  food trucks may record a future pay-in-person pickup preference, but public
+  ordering, card charging, and Apple Pay remain hard disabled. The licensed 3D
+  basemap/routing decision and legal data boundary are documented in
+  [MAP_PLATFORM.md](MAP_PLATFORM.md).
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
   Edge contracts, Expo alignment and Doctor, iOS and Android exports,
@@ -153,6 +191,10 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 
 - Sites has no production environment values. The deployed owner preview is a
   fail-closed interface, not a live-backend release.
+- The latest exact-head artifact is not published: Sites is bound to `main`,
+  while the verified release candidate remains on the protected
+  `production-hardening-rc` branch pending explicit promotion approval. The
+  owner-only version 55 publication therefore remains the current preview.
 - The current Sites publication does not emit Spottr's required CSP, HSTS,
   anti-framing, content-type, referrer, and permissions headers. It must remain
   private until the verified artifact is placed behind a supported Worker-first

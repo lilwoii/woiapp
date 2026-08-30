@@ -1,8 +1,11 @@
 import {
   advanceRouteStepIndex,
+  externalDirectionsProviderUrl,
   externalDirectionsUrl,
+  formatRouteArrivalTime,
   formatRouteDistance,
   formatRouteDuration,
+  inferTravelMode,
   nearestRouteStep,
   parseRoutePlan,
   shouldRequestAutomaticReroute,
@@ -38,11 +41,31 @@ describe('route plan parsing', () => {
       .toBe('https://www.google.com/maps/dir/?api=1&destination=34.05%2C-118.24&travelmode=driving');
     expect(externalDirectionsUrl(destination, 'android', 'bike'))
       .toBe('https://www.google.com/maps/dir/?api=1&destination=34.05%2C-118.24&travelmode=bicycling');
+    expect(externalDirectionsProviderUrl(destination, 'google', 'walk'))
+      .toBe('https://www.google.com/maps/dir/?api=1&destination=34.05%2C-118.24&travelmode=walking');
+    expect(externalDirectionsProviderUrl(destination, 'apple', 'drive'))
+      .toBe('https://maps.apple.com/?daddr=34.05%2C-118.24&dirflg=d');
     expect(externalDirectionsUrl({ latitude: 91, longitude: 0 }, 'ios')).toBeNull();
   });
   it('formats compact route guidance values', () => {
     expect(formatRouteDistance(1_550)).toBe('1.0 mi');
     expect(formatRouteDuration(3_900)).toBe('1 hr 5 min');
+    const route = parseRoutePlan(valid, 'walk', now);
+    expect(route && formatRouteArrivalTime(route, 'en-US')).toMatch(/\d/);
+  });
+  it('detects walking or driving conservatively on-device', () => {
+    expect(inferTravelMode({ speedMetersPerSecond: 0.8, horizontalAccuracyMeters: 12, distanceMeters: 8_000 }))
+      .toBe('walk');
+    expect(inferTravelMode({ speedMetersPerSecond: 12, horizontalAccuracyMeters: 18, distanceMeters: 500 }))
+      .toBe('drive');
+    expect(inferTravelMode({ speedMetersPerSecond: -1, horizontalAccuracyMeters: 12, distanceMeters: 1_000 }))
+      .toBe('walk');
+    expect(inferTravelMode({ speedMetersPerSecond: 0, horizontalAccuracyMeters: 8, distanceMeters: 9_000 }))
+      .toBe('drive');
+    expect(inferTravelMode({ speedMetersPerSecond: 0, horizontalAccuracyMeters: 8, distanceMeters: 1_200 }))
+      .toBe('walk');
+    expect(inferTravelMode({ speedMetersPerSecond: 9, horizontalAccuracyMeters: 250, distanceMeters: 5_000 }))
+      .toBe('drive');
   });
   it('selects the nearest maneuver for live guidance', () => {
     const route = parseRoutePlan(valid, 'walk', now);

@@ -1,6 +1,6 @@
 import type FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 
-import type { BusinessCategory } from '@/types/marketplace';
+import type { BusinessCategory, Place } from '@/types/marketplace';
 
 export type MapMarkerShape = 'capsule' | 'circle' | 'market' | 'cup' | 'home';
 
@@ -78,4 +78,17 @@ export function mapClusterCategorySummary(
 
 export function mapClusterCategorySignature(counts: Partial<Record<BusinessCategory, number>>) {
   return mapCategoryOrder.map((category) => `${category}:${counts[category] ?? 0}`).join('|');
+}
+
+export function mapPlaceMarkerSignature(
+  place: Pick<Place, 'id' | 'name' | 'category' | 'logoUrl' | 'distanceMiles' | 'mobility'>,
+) {
+  return JSON.stringify([
+    place.id,
+    place.name,
+    place.category,
+    place.logoUrl,
+    place.distanceMiles,
+    place.mobility?.state ?? null,
+  ]);
 }

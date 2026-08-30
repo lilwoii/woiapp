@@ -13,11 +13,17 @@ import {
   viewportIsLiveInventoryEligible,
 } from '@/lib/map-clustering';
 import { boundsForMapCoordinates } from '@/lib/map-camera';
-import { categoryMarkerLabel, mapCategoryPresentation, mapClusterCategorySignature, mapClusterCategorySummary } from '@/lib/map-presentation';
+import {
+  categoryMarkerLabel,
+  mapCategoryPresentation,
+  mapClusterCategorySignature,
+  mapClusterCategorySummary,
+  mapPlaceMarkerSignature,
+} from '@/lib/map-presentation';
 import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 import type { NavigationCoordinate, TravelMode } from '@/types/navigation';
-import { Place } from '@/types/marketplace';
+import { MOVING_TO_NEXT_LOCATION_LABEL, Place } from '@/types/marketplace';
 
 export type Props = {
   places: Place[];
@@ -84,7 +90,8 @@ function createMapStyle(): maplibregl.StyleSpecification | string {
 
 function markerElement(
   place: Pick<Place, 'name' | 'category' | 'categoryLabel' | 'distanceMiles' | 'logoUrl'>,
-  selected: boolean
+  selected: boolean,
+  moving = false,
 ) {
   const presentation = mapCategoryPresentation[place.category];
   const element = document.createElement('button');
@@ -92,15 +99,16 @@ function markerElement(
   element.tabIndex = 0;
   element.setAttribute(
     'aria-label',
-    `${categoryMarkerLabel(place.category, place.name)}${
+    `${categoryMarkerLabel(place.category, place.name)}${moving ? `, ${MOVING_TO_NEXT_LOCATION_LABEL}. Scheduled next-stop destination; not a live vehicle position` : ''}${
       place.distanceMiles !== null ? `, ${place.distanceMiles.toFixed(1)} miles away` : ''
     }`
   );
   element.dataset.category = place.category;
   element.dataset.markerShape = presentation.shape;
+  element.dataset.mobilityState = moving ? 'moving_to_next_location' : '';
   element.style.alignItems = 'center';
-  element.style.background = '#FFFFFF';
-  element.style.border = `3px solid ${selected ? palette.accentDeep : '#FFFFFF'}`;
+  element.style.background = moving ? palette.warningSoft : '#FFFFFF';
+  element.style.border = `3px solid ${selected ? palette.accentDeep : moving ? palette.warning : '#FFFFFF'}`;
   element.style.borderRadius = {
     capsule: '15px',
     circle: '999px',
@@ -110,7 +118,9 @@ function markerElement(
   }[presentation.shape];
   element.style.boxShadow = selected
     ? '0 10px 26px rgba(23, 44, 42, 0.34)'
-    : '0 6px 18px rgba(23, 44, 42, 0.24)';
+    : moving
+      ? '0 7px 20px rgba(182, 122, 42, 0.38)'
+      : '0 6px 18px rgba(23, 44, 42, 0.24)';
   element.style.cursor = 'pointer';
   element.style.display = 'flex';
   element.style.height = '46px';
@@ -170,14 +180,36 @@ function markerElement(
   badge.style.right = '-7px';
   element.appendChild(badge);
 
+  if (moving) {
+    const movingBadge = document.createElement('span');
+    movingBadge.setAttribute('aria-hidden', 'true');
+    movingBadge.textContent = 'NEXT';
+    movingBadge.style.background = palette.warning;
+    movingBadge.style.border = '2px solid #FFFFFF';
+    movingBadge.style.borderRadius = '999px';
+    movingBadge.style.bottom = '-7px';
+    movingBadge.style.color = '#FFFFFF';
+    movingBadge.style.fontFamily = 'system-ui, sans-serif';
+    movingBadge.style.fontSize = '7px';
+    movingBadge.style.fontWeight = '900';
+    movingBadge.style.left = '-11px';
+    movingBadge.style.letterSpacing = '0.2px';
+    movingBadge.style.padding = '4px 6px';
+    movingBadge.style.position = 'absolute';
+    element.appendChild(movingBadge);
+  }
+
   return element;
 }
 
 function updateMarkerSelection(element: HTMLButtonElement, selected: boolean) {
-  element.style.borderColor = selected ? palette.accentDeep : '#FFFFFF';
+  const moving = element.dataset.mobilityState === 'moving_to_next_location';
+  element.style.borderColor = selected ? palette.accentDeep : moving ? palette.warning : '#FFFFFF';
   element.style.boxShadow = selected
     ? '0 10px 26px rgba(23, 44, 42, 0.34)'
-    : '0 6px 18px rgba(23, 44, 42, 0.24)';
+    : moving
+      ? '0 7px 20px rgba(182, 122, 42, 0.38)'
+      : '0 6px 18px rgba(23, 44, 42, 0.24)';
   element.style.transform = selected ? 'translateY(-3px) scale(1.1)' : 'none';
 }
 
@@ -426,7 +458,7 @@ export default function MapLibreMapView({
     for (const inventoryFeature of visibleInventoryFeatures) {
       const signature = inventoryFeature.type === 'cluster'
         ? `cluster:${inventoryFeature.count}:${inventoryFeature.dominantCategory}:${mapClusterCategorySignature(inventoryFeature.categoryCounts)}`
-        : `place:${inventoryFeature.businessId ?? ''}:${inventoryFeature.name ?? ''}:${inventoryFeature.logoUrl ?? ''}`;
+        : `place:${inventoryFeature.businessId ?? ''}:${inventoryFeature.name ?? ''}:${inventoryFeature.logoUrl ?? ''}:${inventoryFeature.mobilityState ?? ''}`;
       const existing = markerRefs.current.get(inventoryFeature.id);
       if (existing?.signature === signature) {
         existing.marker.setLngLat([inventoryFeature.longitude, inventoryFeature.latitude]);
@@ -449,7 +481,8 @@ export default function MapLibreMapView({
               distanceMiles: null,
               logoUrl: inventoryFeature.logoUrl ?? '',
             },
-            inventoryFeature.businessId === selectedId
+            inventoryFeature.businessId === selectedId,
+            inventoryFeature.mobilityState === 'moving_to_next_location',
           );
       element.addEventListener('click', () => {
         if (inventoryFeature.type === 'cluster') {
@@ -482,14 +515,21 @@ export default function MapLibreMapView({
     }
 
     for (const feature of features) {
+      const signature = feature.kind === 'cluster'
+        ? `client-cluster:${feature.count}:${mapClusterCategorySignature(feature.categories)}`
+        : `client-place:${mapPlaceMarkerSignature(feature.place)}`;
       const existing = markerRefs.current.get(feature.id);
-      if (existing) {
+      if (existing?.signature === signature) {
         existing.marker.setLngLat([feature.longitude, feature.latitude]);
         continue;
       }
+      if (existing) {
+        existing.marker.remove();
+        markerRefs.current.delete(feature.id);
+      }
       const element = feature.kind === 'cluster'
         ? clusterElement({ count: feature.count, categories: feature.categories })
-        : markerElement(feature.place, false);
+        : markerElement(feature.place, false, Boolean(feature.place.mobility));
       element.addEventListener('click', () => {
         if (feature.kind === 'cluster') {
           userMovedMap.current = true;
@@ -510,6 +550,7 @@ export default function MapLibreMapView({
         marker,
         element,
         businessId: feature.kind === 'place' ? feature.place.id : undefined,
+        signature,
       });
     }
 

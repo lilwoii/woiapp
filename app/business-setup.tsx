@@ -26,6 +26,7 @@ import {
 } from 'react-native';
 
 import { BrandMark } from '@/components/brand-mark';
+import { BusinessPickupOrderingSettings } from '@/components/business-pickup-ordering-settings';
 import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -2049,6 +2050,17 @@ function BusinessSetupContent({
               onPress={() => void savePayments()}
             />
           </Section>
+
+          {expectedUserId &&
+          (configuration.business.kind === 'restaurant' ||
+            configuration.business.kind === 'food_truck') ? (
+            <BusinessPickupOrderingSettings
+              businessId={businessId}
+              expectedUserId={expectedUserId}
+              state={configuration.business.state}
+              verification={configuration.business.verification}
+            />
+          ) : null}
 
           <Section
             complete={readiness.menu}

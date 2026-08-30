@@ -28,6 +28,7 @@ import {
   MarketplaceRequestToken,
   resolveMarketplaceScope,
 } from '@/lib/marketplace-scope';
+import { earliestMovingServiceBoundary } from '@/lib/mobile-service';
 import {
   filterHomeKitchenPlaces,
   HOME_KITCHEN_UNAVAILABLE_REASON,
@@ -193,6 +194,12 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
     ),
     [detailOnlyPlaceIdSet, places]
   );
+  const movingServiceBoundary = useMemo(
+    () => earliestMovingServiceBoundary(places),
+    [places]
+  );
+  const movingBoundaryAttempt = useRef<{ key: string; attempts: number } | null>(null);
+  const [movingBoundaryRetryTick, setMovingBoundaryRetryTick] = useState(0);
   const [sponsoredExpiryTick, setSponsoredExpiryTick] = useState<number | null>(null);
   useEffect(() => {
     const expiresAt = candidateSponsoredPlace?.sponsoredPlacement.expiresAt;
@@ -387,6 +394,77 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
     },
     [commitStore, expectedUserId, requestGuard, scopeKey]
   );
+
+  const refreshMovingServiceBoundary = useCallback(async (placeIds: string[]) => {
+    if (!isSupabaseConfigured || !placeIds.length) return;
+    const token = requestGuard.begin(scopeKey, 'moving-service-boundary');
+    if (!token) return;
+
+    // The map inventory and full place projections are separate authoritative
+    // reads. Invalidate both at the scheduled boundary; never guess a truck's
+    // new coordinates from the expired cached destination.
+    setMobileMapRevision((current) => current + 1);
+    const result = await fetchMarketplacePlaces({
+      expectedUserId: expectedUserId ?? undefined,
+      includeBusinessIds: placeIds,
+      includeDetails: true,
+      onlyIncludedBusinesses: true,
+      resultLimit: 100,
+    });
+    if (!requestGuard.isCurrent(token)) return;
+    if (!result.ok || !result.data) return;
+
+    const targetIds = new Set(placeIds);
+    const refreshedPlaces = new Map(
+      result.data.places
+        .filter((place) => targetIds.has(place.id) && !isHomeKitchenBlocked(place.category))
+        .map((place) => [place.id, place])
+    );
+    commitStore(token, (current) => ({
+      ...current,
+      places: current.places.flatMap((place) => {
+        if (!targetIds.has(place.id)) return [place];
+        const refreshed = refreshedPlaces.get(place.id);
+        return refreshed ? [refreshed] : [];
+      }),
+      detailOnlyPlaceIds: current.detailOnlyPlaceIds.filter(
+        (placeId) => !targetIds.has(placeId) || refreshedPlaces.has(placeId)
+      ),
+    }));
+  }, [commitStore, expectedUserId, requestGuard, scopeKey]);
+
+  useEffect(() => {
+    if (!movingServiceBoundary) {
+      movingBoundaryAttempt.current = null;
+      return;
+    }
+
+    const boundaryKey = `${scopeKey}:${movingServiceBoundary.startsAtMs}:${movingServiceBoundary.placeIds.join(',')}`;
+    if (movingBoundaryAttempt.current?.key !== boundaryKey) {
+      movingBoundaryAttempt.current = { key: boundaryKey, attempts: 0 };
+    }
+    const attempt = movingBoundaryAttempt.current;
+    if (!attempt || attempt.attempts >= 3) return;
+
+    const remaining = movingServiceBoundary.startsAtMs - Date.now();
+    const delay = remaining > 0
+      ? remaining + 350
+      : attempt.attempts === 0 ? 0 : 5_000;
+    let active = true;
+    const timer = setTimeout(() => {
+      if (!active || movingBoundaryAttempt.current?.key !== boundaryKey) return;
+      movingBoundaryAttempt.current.attempts += 1;
+      void refreshMovingServiceBoundary(movingServiceBoundary.placeIds)
+        .catch(() => undefined)
+        .finally(() => {
+          if (active) setMovingBoundaryRetryTick((current) => current + 1);
+        });
+    }, Math.min(delay, 2_147_483_647));
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [movingBoundaryRetryTick, movingServiceBoundary, refreshMovingServiceBoundary, scopeKey]);
 
   const searchArea = useCallback(
     async (searchText: string): Promise<ActionResult> => {
@@ -667,6 +745,9 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
         (event) => {
           const publicEvent = event.new as { event_type?: unknown };
           if (publicEvent.event_type === 'mobile_stop') {
+            setMobileMapRevision((current) => current + 1);
+          }
+          if (publicEvent.event_type === 'live_status') {
             setMobileMapRevision((current) => current + 1);
           }
           if (timer) clearTimeout(timer);

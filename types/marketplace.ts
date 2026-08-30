@@ -7,6 +7,23 @@ export type BusinessCategory =
 
 export type VenueStatus = 'open' | 'opening_soon' | 'moving_soon' | 'closed';
 
+export const MOVING_TO_NEXT_LOCATION_LABEL = 'Moving to next location' as const;
+
+export type MovingServiceState = {
+  state: 'moving_to_next_location';
+  label: typeof MOVING_TO_NEXT_LOCATION_LABEL;
+  nextStop: {
+    locationId: string;
+    address: string;
+    city: string;
+    region?: string;
+    postalCode?: string;
+    startsAt: string;
+    endsAt: string;
+    timeWindow: string;
+  };
+};
+
 export type PaymentMethod =
   | 'Cash'
   | 'Visa'
@@ -89,6 +106,7 @@ export type Place = {
   todayHours: string;
   weeklyHours: WeeklyHours[];
   nextStop?: string;
+  mobility?: MovingServiceState;
   description: string;
   priceLevel: 1 | 2 | 3 | 4;
   accent: string;

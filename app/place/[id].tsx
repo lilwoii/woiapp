@@ -567,7 +567,11 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
             </Pressable>
           ) : null}
           {canOpenPublicDirections ? (
-            <Pressable accessibilityLabel="Open directions in external maps" accessibilityRole="link" onPress={openDirections} style={styles.secondaryAction}>
+            <Pressable
+              accessibilityLabel={place.mobility ? 'Open directions to the next public stop' : 'Open directions in external maps'}
+              accessibilityRole="link"
+              onPress={openDirections}
+              style={styles.secondaryAction}>
               <FontAwesome6 color={palette.ink} name="arrow-up-right-from-square" size={13} />
               <Text style={styles.secondaryActionText}>Open in Maps</Text>
             </Pressable>
@@ -1045,6 +1049,28 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
                 <Text style={styles.infoTitle}>Location & hours</Text>
                 <Text style={styles.infoFresh}>Updated {place.lastConfirmedAt}</Text>
               </View>
+              {place.mobility ? (
+                <View accessibilityLiveRegion="polite" style={styles.movingNotice}>
+                  <View style={styles.movingNoticeIcon}>
+                    <FontAwesome6 color={palette.warning} name="truck-fast" size={15} />
+                  </View>
+                  <View style={styles.movingNoticeCopy}>
+                    <Text style={styles.movingNoticeLabel}>{place.mobility.label}</Text>
+                    <Text style={styles.movingNoticeAddress}>
+                      {[
+                        place.mobility.nextStop.address,
+                        place.mobility.nextStop.city,
+                        place.mobility.nextStop.region,
+                        place.mobility.nextStop.postalCode,
+                      ].filter(Boolean).join(', ')}
+                    </Text>
+                    <Text style={styles.movingNoticeWindow}>{place.mobility.nextStop.timeWindow}</Text>
+                    <Text style={styles.movingNoticePrivacy}>
+                      Destination schedule only — no live vehicle location is shared.
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
               <View style={styles.infoRow}>
                 <View style={styles.infoIcon}>
                   <FontAwesome6 color={palette.accent} name="location-dot" size={14} solid />
@@ -1079,7 +1105,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
                   ))}
                 </View>
               ) : null}
-              {place.nextStop ? (
+              {place.nextStop && !place.mobility ? (
                 <View style={styles.nextStop}>
                   <FontAwesome6 color={palette.accent} name="truck-fast" size={13} />
                   <View style={styles.nextStopCopy}>
@@ -1824,6 +1850,48 @@ const styles = StyleSheet.create({
     color: palette.success,
     fontSize: 9,
     fontWeight: '800',
+  },
+  movingNotice: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.warningSoft,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  movingNoticeIcon: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: radii.pill,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  movingNoticeCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  movingNoticeLabel: {
+    color: palette.warning,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  movingNoticeAddress: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
+    lineHeight: 16,
+  },
+  movingNoticeWindow: {
+    color: palette.ink,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  movingNoticePrivacy: {
+    color: palette.muted,
+    fontSize: 9,
+    lineHeight: 14,
+    marginTop: 2,
   },
   infoRow: {
     alignItems: 'flex-start',

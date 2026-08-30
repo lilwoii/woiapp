@@ -1,12 +1,12 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { palette } from '@/constants/theme';
-import { VenueStatus } from '@/types/marketplace';
+import { MOVING_TO_NEXT_LOCATION_LABEL, VenueStatus } from '@/types/marketplace';
 
 const statusCopy: Record<VenueStatus, string> = {
   open: 'Open now',
   opening_soon: 'Opening soon',
-  moving_soon: 'Moving soon',
+  moving_soon: MOVING_TO_NEXT_LOCATION_LABEL,
   closed: 'Closed',
 };
 

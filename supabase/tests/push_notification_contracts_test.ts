@@ -274,8 +274,10 @@ Deno.test("notification UX stays capability-aware and notification taps are rout
   const routeParser = await text("../lib/notification-routing.ts");
   assert(saved.includes("nativePushDeliveryAvailable"));
   assert(saved.includes("Web push is not available in this release."));
-  assert(saved.includes("Quiet hours will be configurable before device delivery is activated."));
-  assert(saved.includes("<Text style={styles.inAppBadgeText}>Planned</Text>"));
+  assert(saved.includes("QUIET_HOURS_PRESETS.map"));
+  assert(saved.includes("No notification provider is enabled in this release."));
+  assert(saved.includes("do not request background location or opt you into marketing"));
+  assert(!saved.includes("<Text style={styles.inAppBadgeText}>In app</Text>"));
   assert(!saved.includes("onValueChange={(next) => void savePreference('live_nearby', next)}"));
   assert(nativeHandler.includes("getLastNotificationResponseAsync"));
   assert(nativeHandler.includes("addNotificationResponseReceivedListener"));

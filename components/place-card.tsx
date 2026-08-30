@@ -75,9 +75,27 @@ export function PlaceCard({ place, followed, onToggleFollow, compact = false }: 
           <Text numberOfLines={1} style={styles.cuisine}>
             {place.categoryLabel} · {place.cuisines.join(' · ')}
           </Text>
-          <Text numberOfLines={1} style={styles.hours}>
-            {place.todayHours}
-          </Text>
+          {place.mobility ? (
+            <View style={styles.movingRow}>
+              <FontAwesome6 color={palette.warning} name="truck-fast" size={12} />
+              <View style={styles.movingCopy}>
+                <Text numberOfLines={1} style={styles.movingAddress}>
+                  Next: {[
+                    place.mobility.nextStop.address,
+                    place.mobility.nextStop.city,
+                    place.mobility.nextStop.region,
+                  ].filter(Boolean).join(', ')}
+                </Text>
+                <Text numberOfLines={1} style={styles.movingWindow}>
+                  {place.mobility.nextStop.timeWindow}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <Text numberOfLines={1} style={styles.hours}>
+              {place.todayHours}
+            </Text>
+          )}
 
           <View style={styles.paymentRow}>
             <FontAwesome6 color={palette.muted} name="wallet" size={12} />
@@ -203,6 +221,25 @@ const styles = StyleSheet.create({
   hours: {
     color: palette.muted,
     fontSize: 12,
+  },
+  movingRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 7,
+  },
+  movingCopy: {
+    flex: 1,
+    gap: 1,
+  },
+  movingAddress: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  movingWindow: {
+    color: palette.warning,
+    fontSize: 10,
+    fontWeight: '800',
   },
   paymentRow: {
     alignItems: 'center',
