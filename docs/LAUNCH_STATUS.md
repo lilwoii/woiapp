@@ -58,6 +58,21 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   require explicit non-null intent after authorization. The rollback-only
   PostgreSQL runtime proves malformed inputs preserve the existing authority,
   follow, and block state.
+- Sponsored privacy and viewability commits
+  `615e383c0592180966b9ffbe1be0afcfeba63ef9` through
+  `1d6f07e034dfa9e79b5b610f0cec0e1df51af757` are covered by the cumulative
+  green GitHub [Quality](https://github.com/lilwoii/woiapp/actions/runs/33328978993)
+  and [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33328979081)
+  workflows. Sponsored selection now targets only the public redacted location
+  projection and cannot create an unseen impression or budget hold. The client
+  acknowledges an impression only after the filtered placement remains at
+  least 50% visible for one continuous second while the app is foregrounded;
+  the service-only interaction boundary then revalidates subject binding,
+  campaign and public-location eligibility, budget, and idempotency before it
+  atomically acquires the hold. Open billing retains the campaign lock through
+  reservation consumption and ledger insertion. The clean PostgreSQL runtime
+  replay proves stale provider-location withdrawal, direct-RPC denial,
+  duplicate delivery, shadow-mode nonbilling, and reservation release.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
   Edge contracts, Expo alignment and Doctor, iOS and Android exports,
