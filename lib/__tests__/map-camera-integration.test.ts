@@ -9,6 +9,8 @@ const { resolve } = require('path');
 const discover = readFileSync(resolve(__dirname, '../../app/(tabs)/index.tsx'), 'utf8');
 const nativeMap = readFileSync(resolve(__dirname, '../../components/live-map.native.tsx'), 'utf8');
 const webMap = readFileSync(resolve(__dirname, '../../components/maplibre-map.web.tsx'), 'utf8');
+const navigationScreen = readFileSync(resolve(__dirname, '../../app/navigation/[id].tsx'), 'utf8');
+const navigationLibrary = readFileSync(resolve(__dirname, '../../lib/navigation.ts'), 'utf8');
 
 describe('global map camera integration', () => {
   it('re-centers an untouched native map after delayed non-LA location resolution', () => {
@@ -53,5 +55,12 @@ describe('global map camera integration', () => {
     expect(webMap.match(/element\.tabIndex = 0/g)?.length).toBe(2);
     expect(webMap).toMatch(/\{supports3D \? \(/);
     expect(webMap).not.toMatch(/Use tilted map perspective/);
+  });
+
+  it('drops routes for moved destinations and aborts timed-out provider work', () => {
+    expect(navigationScreen).toMatch(/destinationKey\(destinationRef\.current\) !== requestedDestinationKey/);
+    expect(navigationScreen).toMatch(/const visibleRoute = routeMatchesDestination \? route : null/);
+    expect(navigationLibrary).toMatch(/signal: controller\.signal/);
+    expect(navigationLibrary).toMatch(/finally \{[\s\S]*clearTimeout\(timeout\)/);
   });
 });

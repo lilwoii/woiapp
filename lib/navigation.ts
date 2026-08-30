@@ -90,32 +90,28 @@ export async function requestRoutePlan(input: {
   if (!isSupabaseConfigured || !supabase) {
     return { ok: false, code: 'CONFIG_REQUIRED', reason: 'Live navigation is not configured for this build.' };
   }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ROUTE_REQUEST_TIMEOUT_MS);
   try {
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    const resultPromise = supabase.functions.invoke('route-plan', { body: input })
-      .then((result) => ({ kind: 'result' as const, result }));
-    let outcome: Awaited<typeof resultPromise> | { kind: 'timeout' };
-    try {
-      outcome = await Promise.race([
-        resultPromise,
-        new Promise<{ kind: 'timeout' }>((resolve) => {
-          timeout = setTimeout(() => resolve({ kind: 'timeout' }), ROUTE_REQUEST_TIMEOUT_MS);
-        }),
-      ]);
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
-    if (outcome.kind === 'timeout') {
+    const { data, error } = await supabase.functions.invoke('route-plan', {
+      body: input,
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) {
       return { ok: false, code: 'UNKNOWN', reason: 'The routing provider took too long to respond. Try again.' };
     }
-    const { data, error } = outcome.result;
     if (error) return toActionError(error, 'A route could not be created right now.');
     const route = parseRoutePlan(data, input.mode);
     return route ? { ok: true, data: route } : {
       ok: false, code: 'UNKNOWN', reason: 'The routing provider returned an invalid or expired route.',
     };
   } catch (error) {
+    if (controller.signal.aborted) {
+      return { ok: false, code: 'UNKNOWN', reason: 'The routing provider took too long to respond. Try again.' };
+    }
     return toActionError(error, 'A route could not be created right now.');
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

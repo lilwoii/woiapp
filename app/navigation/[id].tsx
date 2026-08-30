@@ -42,6 +42,10 @@ const travelModes: { id: TravelMode; label: string; icon: 'car-side' | 'person-w
 const automaticReroutingPrivacyNotice = 'When on, Spottr may send your updated precise current location to Mapbox after at least 100 m of movement and 90 seconds to refresh the route. Turn it off to stop additional Mapbox route requests while your foreground live marker continues.';
 const CURRENT_LOCATION_TIMEOUT_MS = 15_000;
 
+function destinationKey(destination: NavigationCoordinate | null) {
+  return destination ? `${destination.latitude}:${destination.longitude}` : '';
+}
+
 async function currentPositionWithTimeout() {
   let timeout: ReturnType<typeof setTimeout> | null = null;
   let outcome: { kind: 'timeout' } | {
@@ -81,6 +85,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   const place = placeBlocked ? undefined : loadedPlace;
   const [placeRequestPending, setPlaceRequestPending] = useState(Boolean(placeId && !place && !placeBlocked));
   const [route, setRoute] = useState<RoutePlan | null>(null);
+  const [routedDestinationKey, setRoutedDestinationKey] = useState<string | null>(null);
   const [routeVisible, setRouteVisible] = useState(true);
   const [routeStepIndex, setRouteStepIndex] = useState(0);
   const [mode, setMode] = useState<TravelMode | null>(null);
@@ -91,6 +96,8 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const watcher = useRef<Location.LocationSubscription | null>(null);
   const routeRef = useRef<RoutePlan | null>(null);
+  const routeDestinationKey = useRef<string | null>(null);
+  const destinationRef = useRef<NavigationCoordinate | null>(null);
   const trackingWanted = useRef(false);
   const modeRef = useRef<TravelMode | null>(null);
   const routeRequestOrigin = useRef<NavigationCoordinate | null>(null);
@@ -132,16 +139,25 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     latitude: place.latitude,
     longitude: place.longitude,
   } : null, [place]);
+  const currentDestinationKey = destinationKey(destination);
+  const routeMatchesDestination = !route || routedDestinationKey === currentDestinationKey;
+  const visibleRoute = routeMatchesDestination ? route : null;
+
+  useEffect(() => {
+    destinationRef.current = destination;
+  }, [destination]);
 
   const refreshRoute = useCallback(async (origin: NavigationCoordinate, selectedMode: TravelMode) => {
-    if (!mounted.current || !destination || activeRouteRequest.current !== null) return false;
+    const requestedDestination = destinationRef.current;
+    if (!mounted.current || !requestedDestination || activeRouteRequest.current !== null) return false;
+    const requestedDestinationKey = destinationKey(requestedDestination);
     const requestId = routeRequestSequence.current + 1;
     routeRequestSequence.current = requestId;
     activeRouteRequest.current = requestId;
     lastRouteRequestAt.current = Date.now();
     let result: Awaited<ReturnType<typeof requestRoutePlan>>;
     try {
-      result = await requestRoutePlan({ origin, destination, mode: selectedMode });
+      result = await requestRoutePlan({ origin, destination: requestedDestination, mode: selectedMode });
     } catch {
       if (activeRouteRequest.current === requestId) activeRouteRequest.current = null;
       if (mounted.current && routeRequestSequence.current === requestId) {
@@ -151,18 +167,24 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     }
     if (!mounted.current || activeRouteRequest.current !== requestId || routeRequestSequence.current !== requestId) return false;
     activeRouteRequest.current = null;
+    if (destinationKey(destinationRef.current) !== requestedDestinationKey) {
+      setMessage('This destination moved while the route was loading. Try the route again.');
+      return false;
+    }
     if (!result.ok || !result.data) {
       setMessage(result.ok ? 'A route could not be created.' : result.reason);
       return false;
     }
     routeRequestOrigin.current = origin;
     routeRef.current = result.data;
+    routeDestinationKey.current = requestedDestinationKey;
+    setRoutedDestinationKey(requestedDestinationKey);
     setRouteStepIndex(0);
     setRoute(result.data);
     setRouteVisible(true);
     setMessage(null);
     return true;
-  }, [destination]);
+  }, []);
 
   const beginWatching = useCallback(async () => {
     if (!mounted.current) return;
@@ -183,7 +205,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
         const next = { latitude: position.coords.latitude, longitude: position.coords.longitude };
         setLocation(next);
         const activeRoute = routeRef.current;
-        if (activeRoute) {
+        if (activeRoute && routeDestinationKey.current === destinationKey(destinationRef.current)) {
           setRouteStepIndex((current) => advanceRouteStepIndex(activeRoute, next, current));
         }
         const selectedMode = modeRef.current;
@@ -283,7 +305,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   };
 
   const changeTravelMode = async (selectedMode: TravelMode) => {
-    if (!mode || selectedMode === mode || busy) return;
+    if (!mode || (selectedMode === mode && routeMatchesDestination) || busy) return;
     if (!location) {
       setMessage('Your current location is not available yet. Try changing travel mode again.');
       return;
@@ -323,6 +345,8 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     modeRef.current = null;
     setMode(null);
     routeRef.current = null;
+    routeDestinationKey.current = null;
+    setRoutedDestinationKey(null);
     setRoute(null);
     setRouteStepIndex(0);
     setLocation(null);
@@ -395,7 +419,10 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     );
   }
 
-  const nextStep = route?.steps[routeStepIndex] ?? null;
+  const nextStep = visibleRoute?.steps[routeStepIndex] ?? null;
+  const routeStatusMessage = message ?? (route && !routeMatchesDestination
+    ? 'This destination moved. Select your current travel mode to refresh the route.'
+    : null);
   const travelModePrivacyNotice = mode
     ? 'Changing travel mode sends your current precise location, this public destination, and the new travel mode to Mapbox to calculate a replacement route.'
     : 'Starting navigation sends your precise current starting location, this public destination, and travel mode to Mapbox to calculate one route. Spottr does not send later movement to Mapbox for rerouting unless you separately turn on Automatic rerouting. Spottr does not save your route to your profile.';
@@ -415,12 +442,12 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        {route ? (
+        {visibleRoute ? (
           <View accessibilityLiveRegion="polite" style={styles.guidanceStrip}>
             <FontAwesome6 color="#FFFFFF" name="diamond-turn-right" size={20} />
             <View style={styles.guidanceCopy}>
               <Text numberOfLines={2} style={styles.guidanceInstruction}>{nextStep?.instruction ?? 'Continue toward your destination'}</Text>
-              <Text style={styles.guidanceMeta}>{formatRouteDuration(route.durationSeconds)} · {formatRouteDistance(route.distanceMeters)}</Text>
+              <Text style={styles.guidanceMeta}>{formatRouteDuration(visibleRoute.durationSeconds)} · {formatRouteDistance(visibleRoute.distanceMeters)}</Text>
             </View>
           </View>
         ) : null}
@@ -429,7 +456,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
           <LiveMap
             navigationMode={mode ?? undefined}
             places={[place]}
-            routeCoordinates={routeVisible ? route?.coordinates : []}
+            routeCoordinates={routeVisible ? visibleRoute?.coordinates : []}
             selectedId={place.id}
             userCoordinates={location}
           />
@@ -483,10 +510,12 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
                 </Pressable>
               </View>
               <View style={styles.activeControls}>
-                <Pressable accessibilityRole="button" onPress={() => setRouteVisible((value) => !value)} style={styles.secondaryButton}>
-                  <FontAwesome6 color={palette.ink} name={routeVisible ? 'route' : 'eye'} size={13} />
-                  <Text style={styles.secondaryButtonText}>{routeVisible ? 'Hide route' : 'Show route'}</Text>
-                </Pressable>
+                {visibleRoute ? (
+                  <Pressable accessibilityRole="button" onPress={() => setRouteVisible((value) => !value)} style={styles.secondaryButton}>
+                    <FontAwesome6 color={palette.ink} name={routeVisible ? 'route' : 'eye'} size={13} />
+                    <Text style={styles.secondaryButtonText}>{routeVisible ? 'Hide route' : 'Show route'}</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable accessibilityRole="button" onPress={stopTracking} style={styles.stopButton}>
                   <FontAwesome6 color="#FFFFFF" name="location-crosshairs" size={13} />
                   <Text style={styles.stopButtonText}>Stop tracking</Text>
@@ -494,9 +523,9 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
               </View>
             </>
           ) : null}
-          {message ? <Text accessibilityLiveRegion="assertive" style={styles.message}>{message}</Text> : null}
+          {routeStatusMessage ? <Text accessibilityLiveRegion="assertive" style={styles.message}>{routeStatusMessage}</Text> : null}
           <Text style={styles.disclaimer}>Foreground only. Route guidance is informational—follow posted signs, closures, and real-world conditions.</Text>
-          {route ? <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(route.attributionUrl)}><Text style={styles.attribution}>{route.attribution}</Text></Pressable> : null}
+          {visibleRoute ? <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(visibleRoute.attributionUrl)}><Text style={styles.attribution}>{visibleRoute.attribution}</Text></Pressable> : null}
         </View>
       </ScrollView>
     </View>
