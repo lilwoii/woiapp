@@ -28,6 +28,7 @@ describe('notification preferences', () => {
     expect(canonicalIanaTimeZone('UTC')).toBe('UTC');
     expect(canonicalIanaTimeZone('PDT')).toBeNull();
     expect(canonicalIanaTimeZone('-07:00')).toBeNull();
+    expect(canonicalIanaTimeZone('+05:30')).toBeNull();
     expect(canonicalIanaTimeZone(' America/Los_Angeles')).toBeNull();
     expect(canonicalIanaTimeZone('Not/A_Zone')).toBeNull();
   });
