@@ -28,6 +28,24 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   all three mutation paths block a concurrent approval barrier and proves an
   unauthorized caller is rejected before it can wait on that barrier. Claim
   submission and evidence intake remain fail-closed.
+- Account-portability commit
+  `1eeb9f73b181a0079da06ef9a8709e3a3d3a6a6c` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33289445672) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33289445608) workflows.
+  The final service-only export again preserves chat, neighborhood-meetup, and
+  push sections, adds subject-scoped social profile, follow, reaction, comment,
+  business-post, invitation, and sanitized media records, and replaces private
+  storage paths with opaque asset identifiers. The cloud runtime also proves
+  Auth deletion cascades or anonymizes the corresponding social records.
+- Global map-camera commit
+  `aad85320db62e7131f6f6aad653c27e1e85131d8` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33290028588) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33290028574) workflows.
+  Native maps now initialize and deliberately refocus from actual worldwide
+  results or foreground location instead of a fixed-city camera, without
+  overriding manual exploration. Native and web place and route fitting share
+  latitude-safe shortest-arc geometry for high-latitude and international-date-
+  line cases, and stale selections cannot override a new city or ZIP fit.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
   Edge contracts, Expo alignment and Doctor, iOS and Android exports,
