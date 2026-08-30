@@ -31,4 +31,19 @@ describe('global map camera integration', () => {
     expect(discover.match(/setSelectedId\(undefined\)/g)?.length).toBeGreaterThanOrEqual(3);
     expect(discover).toMatch(/selectedId=\{explicitSelection\?\.id\}/);
   });
+
+  it('keeps the map available in empty and disconnected areas without inventing a nearby city', () => {
+    expect(discover).toMatch(/<View style=\{\[styles\.workspace, wide && styles\.workspaceWide\]\}>/);
+    expect(discover).not.toMatch(/ranked\.length \|\| visibleMapInventory\.length \|\| mapMarkersSuppressed \? \(/);
+    expect(discover).toMatch(/The map is ready when listings reconnect/);
+    expect(webMap).toMatch(/const fallbackCenter: \[number, number\] = \[0, 20\]/);
+    expect(webMap).toMatch(/zoom: first \? 11\.5 : 2\.35/);
+    expect(nativeMap).toMatch(/latitude: 20,[\s\S]*longitude: 0,[\s\S]*latitudeDelta: 100,[\s\S]*longitudeDelta: 160/);
+  });
+
+  it('makes web markers keyboard reachable and offers 3D only when the loaded style supports it', () => {
+    expect(webMap.match(/element\.tabIndex = 0/g)?.length).toBe(2);
+    expect(webMap).toMatch(/\{supports3D \? \(/);
+    expect(webMap).not.toMatch(/Use tilted map perspective/);
+  });
 });

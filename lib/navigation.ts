@@ -4,6 +4,7 @@ import type { ActionResult } from '@/types/marketplace';
 import type { NavigationCoordinate, RoutePlan, RouteStep, TravelMode } from '@/types/navigation';
 
 const routeModes: TravelMode[] = ['drive', 'walk', 'bike'];
+const ROUTE_REQUEST_TIMEOUT_MS = 12_000;
 
 function coordinate(value: unknown): NavigationCoordinate | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -64,15 +65,21 @@ export function parseRoutePlan(value: unknown, expectedMode?: TravelMode, now = 
 export function externalDirectionsUrl(
   destination: NavigationCoordinate,
   platform: string,
+  mode?: TravelMode | null,
 ): string | null {
   const validDestination = coordinate(destination);
   if (!validDestination) return null;
   const encodedDestination = encodeURIComponent(
     `${validDestination.latitude},${validDestination.longitude}`,
   );
-  return platform === 'ios'
-    ? `https://maps.apple.com/?daddr=${encodedDestination}`
-    : `https://www.google.com/maps/dir/?api=1&destination=${encodedDestination}`;
+  if (platform === 'ios') {
+    const appleMode = mode === 'drive' ? '&dirflg=d' : mode === 'walk' ? '&dirflg=w' : '';
+    return `https://maps.apple.com/?daddr=${encodedDestination}${appleMode}`;
+  }
+  const googleMode = mode === 'drive' ? 'driving' : mode === 'walk' ? 'walking' : mode === 'bike' ? 'bicycling' : null;
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodedDestination}${
+    googleMode ? `&travelmode=${googleMode}` : ''
+  }`;
 }
 
 export async function requestRoutePlan(input: {
@@ -84,7 +91,24 @@ export async function requestRoutePlan(input: {
     return { ok: false, code: 'CONFIG_REQUIRED', reason: 'Live navigation is not configured for this build.' };
   }
   try {
-    const { data, error } = await supabase.functions.invoke('route-plan', { body: input });
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const resultPromise = supabase.functions.invoke('route-plan', { body: input })
+      .then((result) => ({ kind: 'result' as const, result }));
+    let outcome: Awaited<typeof resultPromise> | { kind: 'timeout' };
+    try {
+      outcome = await Promise.race([
+        resultPromise,
+        new Promise<{ kind: 'timeout' }>((resolve) => {
+          timeout = setTimeout(() => resolve({ kind: 'timeout' }), ROUTE_REQUEST_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+    if (outcome.kind === 'timeout') {
+      return { ok: false, code: 'UNKNOWN', reason: 'The routing provider took too long to respond. Try again.' };
+    }
+    const { data, error } = outcome.result;
     if (error) return toActionError(error, 'A route could not be created right now.');
     const route = parseRoutePlan(data, input.mode);
     return route ? { ok: true, data: route } : {
@@ -142,4 +166,18 @@ export function nearestRouteStep(route: RoutePlan, current: NavigationCoordinate
     }
   }
   return nearest;
+}
+
+export function advanceRouteStepIndex(
+  route: RoutePlan,
+  current: NavigationCoordinate,
+  previousIndex: number,
+): number {
+  if (!route.steps.length) return 0;
+  const index = Math.min(route.steps.length - 1, Math.max(0, Math.trunc(previousIndex)));
+  const nextIndex = index + 1;
+  if (nextIndex >= route.steps.length) return index;
+  const currentDistance = navigationDistanceMeters(current, route.steps[index].maneuver);
+  const nextDistance = navigationDistanceMeters(current, route.steps[nextIndex].maneuver);
+  return currentDistance <= 35 || nextDistance + 25 < currentDistance ? nextIndex : index;
 }

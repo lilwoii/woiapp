@@ -25,10 +25,10 @@ import {
   publicListingRouteUnavailableReason,
 } from '@/lib/features';
 import {
+  advanceRouteStepIndex,
   externalDirectionsUrl,
   formatRouteDistance,
   formatRouteDuration,
-  nearestRouteStep,
   requestRoutePlan,
   shouldRequestAutomaticReroute,
 } from '@/lib/navigation';
@@ -40,6 +40,30 @@ const travelModes: { id: TravelMode; label: string; icon: 'car-side' | 'person-w
   { id: 'bike', label: 'Bike', icon: 'bicycle' },
 ];
 const automaticReroutingPrivacyNotice = 'When on, Spottr may send your updated precise current location to Mapbox after at least 100 m of movement and 90 seconds to refresh the route. Turn it off to stop additional Mapbox route requests while your foreground live marker continues.';
+const CURRENT_LOCATION_TIMEOUT_MS = 15_000;
+
+async function currentPositionWithTimeout() {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let outcome: { kind: 'timeout' } | {
+    kind: 'position';
+    position: Awaited<ReturnType<typeof Location.getCurrentPositionAsync>>;
+  };
+  try {
+    outcome = await Promise.race([
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then((position) => ({
+        kind: 'position' as const,
+        position,
+      })),
+      new Promise<{ kind: 'timeout' }>((resolve) => {
+        timeout = setTimeout(() => resolve({ kind: 'timeout' }), CURRENT_LOCATION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+  if (outcome.kind === 'timeout') throw new Error('CURRENT_LOCATION_TIMEOUT');
+  return outcome.position;
+}
 
 export default function NavigationScreen() {
   const params = useLocalSearchParams<{ id?: string | string[] }>();
@@ -58,6 +82,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   const [placeRequestPending, setPlaceRequestPending] = useState(Boolean(placeId && !place && !placeBlocked));
   const [route, setRoute] = useState<RoutePlan | null>(null);
   const [routeVisible, setRouteVisible] = useState(true);
+  const [routeStepIndex, setRouteStepIndex] = useState(0);
   const [mode, setMode] = useState<TravelMode | null>(null);
   const [location, setLocation] = useState<NavigationCoordinate | null>(null);
   const [automaticRerouting, setAutomaticRerouting] = useState(false);
@@ -65,6 +90,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   const [pendingMode, setPendingMode] = useState<TravelMode | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const watcher = useRef<Location.LocationSubscription | null>(null);
+  const routeRef = useRef<RoutePlan | null>(null);
   const trackingWanted = useRef(false);
   const modeRef = useRef<TravelMode | null>(null);
   const routeRequestOrigin = useRef<NavigationCoordinate | null>(null);
@@ -130,6 +156,8 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
       return false;
     }
     routeRequestOrigin.current = origin;
+    routeRef.current = result.data;
+    setRouteStepIndex(0);
     setRoute(result.data);
     setRouteVisible(true);
     setMessage(null);
@@ -154,6 +182,10 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
         ) return;
         const next = { latitude: position.coords.latitude, longitude: position.coords.longitude };
         setLocation(next);
+        const activeRoute = routeRef.current;
+        if (activeRoute) {
+          setRouteStepIndex((current) => advanceRouteStepIndex(activeRoute, next, current));
+        }
         const selectedMode = modeRef.current;
         const priorOrigin = routeRequestOrigin.current;
         if (selectedMode && shouldRequestAutomaticReroute({
@@ -221,7 +253,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
         setMessage('Allow foreground location access to start live navigation. Spottr does not request background tracking.');
         return;
       }
-      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const current = await currentPositionWithTimeout();
       if (!mounted.current || navigationOperationGeneration.current !== navigationGeneration) return;
       const origin = { latitude: current.coords.latitude, longitude: current.coords.longitude };
       setLocation(origin);
@@ -290,7 +322,9 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     watcher.current = null;
     modeRef.current = null;
     setMode(null);
+    routeRef.current = null;
     setRoute(null);
+    setRouteStepIndex(0);
     setLocation(null);
     automaticReroutingRef.current = false;
     setAutomaticRerouting(false);
@@ -307,7 +341,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
 
   const openExternalMaps = () => {
     if (!place) return;
-    const url = externalDirectionsUrl(place, Platform.OS);
+    const url = externalDirectionsUrl(place, Platform.OS, mode);
     if (!url) {
       setMessage('This listing does not have a valid public destination.');
       return;
@@ -361,7 +395,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     );
   }
 
-  const nextStep = route && location ? nearestRouteStep(route, location) : route?.steps[0] ?? null;
+  const nextStep = route?.steps[routeStepIndex] ?? null;
   const travelModePrivacyNotice = mode
     ? 'Changing travel mode sends your current precise location, this public destination, and the new travel mode to Mapbox to calculate a replacement route.'
     : 'Starting navigation sends your precise current starting location, this public destination, and travel mode to Mapbox to calculate one route. Spottr does not send later movement to Mapbox for rerouting unless you separately turn on Automatic rerouting. Spottr does not save your route to your profile.';

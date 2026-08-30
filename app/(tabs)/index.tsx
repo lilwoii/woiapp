@@ -946,47 +946,7 @@ function ScopedDiscoverScreen() {
           />
         ) : null}
 
-        {syncStatus === 'error' ? (
-          <View accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.syncBannerError}>
-            <View style={styles.syncBannerCopy}>
-              <Text style={styles.syncBannerTitle}>Live listings could not refresh</Text>
-              <Text style={styles.syncBannerDetail}>{syncMessage}</Text>
-            </View>
-            <Pressable accessibilityRole="button" onPress={() => void refresh()} style={styles.syncRetry}>
-              <Text style={styles.syncRetryText}>Retry</Text>
-            </Pressable>
-          </View>
-        ) : null}
-
-        {syncStatus === 'idle' && !enabledPlaces.length ? (
-          <View accessibilityLiveRegion="polite" style={styles.empty}>
-            <View style={styles.emptyIcon}>
-              <FontAwesome6 color={palette.accent} name="location-crosshairs" size={22} />
-            </View>
-            <Text accessibilityRole="header" {...webSectionHeading} style={styles.emptyTitle}>
-              Start with your real search area
-            </Text>
-            <Text style={styles.emptyBody}>
-              {locating
-                ? 'Checking whether location access is already enabled…'
-                : 'Use foreground location or enter a city or ZIP. Spottr will not pretend global results are nearby.'}
-            </Text>
-            {!locating ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setLocationPanelOpen(true)}
-                style={styles.emptyButton}>
-                <Text style={styles.emptyButtonText}>Choose an area</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : syncStatus === 'syncing' && !enabledPlaces.length ? (
-          <View accessibilityLiveRegion="polite" style={styles.loadingState}>
-            <ActivityIndicator color={palette.accentDeep} />
-            <Text style={styles.loadingText}>Loading nearby food…</Text>
-          </View>
-        ) : ranked.length || visibleMapInventory.length || mapMarkersSuppressed ? (
-          <View style={[styles.workspace, wide && styles.workspaceWide]}>
+        <View style={[styles.workspace, wide && styles.workspaceWide]}>
             <View style={[styles.mapColumn, wide && styles.mapColumnWide]}>
               <LiveMap
                 inventoryError={authoritativeMapInventory ? mapInventoryError : null}
@@ -1065,6 +1025,17 @@ function ScopedDiscoverScreen() {
             </View>
 
             <View style={[styles.resultsColumn, wide && styles.resultsColumnWide]}>
+              {syncStatus === 'error' ? (
+                <View accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.syncBannerError}>
+                  <View style={styles.syncBannerCopy}>
+                    <Text style={styles.syncBannerTitle}>Live listings could not refresh</Text>
+                    <Text style={styles.syncBannerDetail}>{syncMessage}</Text>
+                  </View>
+                  <Pressable accessibilityRole="button" onPress={() => void refresh()} style={styles.syncRetry}>
+                    <Text style={styles.syncRetryText}>Retry</Text>
+                  </Pressable>
+                </View>
+              ) : null}
               <View style={styles.resultsHeader}>
                 <View>
                   <Text accessibilityRole="header" {...webSectionHeading} style={styles.resultsTitle}>
@@ -1080,9 +1051,43 @@ function ScopedDiscoverScreen() {
               <View style={styles.resultsList}>
                 {!visibleRanked.length ? (
                   <View style={styles.mapOnlyResult}>
-                    <FontAwesome6 color={palette.accentDeep} name="map-location-dot" size={17} />
-                    <Text style={styles.mapOnlyTitle}>More places are visible on the map</Text>
-                    <Text style={styles.mapOnlyBody}>Zoom into a cluster or search this area to load its detailed list.</Text>
+                    <FontAwesome6
+                      color={palette.accentDeep}
+                      name={syncStatus === 'syncing' ? 'spinner' : 'map-location-dot'}
+                      size={17}
+                    />
+                    <Text style={styles.mapOnlyTitle}>
+                      {syncStatus === 'syncing'
+                        ? 'Loading verified places'
+                        : visibleMapInventory.length
+                          ? 'More places are visible on the map'
+                          : syncStatus === 'error'
+                            ? 'The map is ready when listings reconnect'
+                            : enabledPlaces.length
+                              ? 'No places match these filters'
+                              : 'Choose an area to find what is serving'}
+                    </Text>
+                    <Text style={styles.mapOnlyBody}>
+                      {syncStatus === 'syncing'
+                        ? 'You can keep exploring the map while Spottr refreshes this area.'
+                        : visibleMapInventory.length
+                          ? 'Zoom into a cluster or search this area to load its detailed list.'
+                          : syncStatus === 'error'
+                            ? 'Base-map exploration remains available. Retry to restore live, verified listings.'
+                            : enabledPlaces.length
+                              ? 'Clear a filter or search another visible area.'
+                              : locating
+                                ? 'Checking foreground location access…'
+                                : 'Use foreground location or enter a city or ZIP. Spottr never invents nearby results.'}
+                    </Text>
+                    {!locating && !enabledPlaces.length && syncStatus !== 'error' ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => setLocationPanelOpen(true)}
+                        style={styles.mapOnlyAction}>
+                        <Text style={styles.mapOnlyActionText}>Choose an area</Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 ) : null}
                 {visibleRanked.map((place) => (
@@ -1119,31 +1124,6 @@ function ScopedDiscoverScreen() {
               </View>
             </View>
           </View>
-        ) : (
-          <View style={styles.empty}>
-            <View style={styles.emptyIcon}>
-              <FontAwesome6 color={palette.accent} name="location-dot" size={22} />
-            </View>
-            <Text accessibilityRole="header" {...webSectionHeading} style={styles.emptyTitle}>
-              {enabledPlaces.length ? 'No matches in this area' : 'No verified listings here yet'}
-            </Text>
-            <Text style={styles.emptyBody}>
-              {enabledPlaces.length
-                ? 'Try Everything, clear Open now, or choose another city or ZIP code.'
-                : 'Try another area or check back as local businesses join Spottr.'}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setQuery('');
-                setCategory('all');
-                setOpenOnly(false);
-              }}
-              style={styles.emptyButton}>
-              <Text style={styles.emptyButtonText}>Reset search</Text>
-            </Pressable>
-          </View>
-        )}
 
         <View style={styles.trustLine}>
           <FontAwesome6 color={palette.success} name="shield-halved" size={15} />
@@ -1268,7 +1248,7 @@ const styles = StyleSheet.create({
   },
   intro: {
     gap: spacing.sm,
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
     maxWidth: 760,
   },
   eyebrow: {
@@ -1280,20 +1260,20 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.ink,
-    fontSize: 36,
+    fontSize: 32,
     fontWeight: '900',
     letterSpacing: -2,
-    lineHeight: 40,
+    lineHeight: 36,
   },
   titleWide: {
-    fontSize: 44,
-    letterSpacing: -2.2,
-    lineHeight: 47,
+    fontSize: 36,
+    letterSpacing: -1.8,
+    lineHeight: 40,
   },
   subtitle: {
     color: palette.muted,
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 14,
+    lineHeight: 21,
     maxWidth: 620,
   },
   searchBar: {
@@ -1304,7 +1284,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: spacing.sm,
-    marginTop: spacing.xl,
+    marginTop: spacing.lg,
     paddingHorizontal: spacing.md,
   },
   searchInput: {
@@ -1315,7 +1295,7 @@ const styles = StyleSheet.create({
   },
   categoryRow: {
     gap: spacing.sm,
-    paddingVertical: spacing.lg,
+    paddingVertical: spacing.md,
   },
   categoryChip: {
     alignItems: 'center',
@@ -1575,7 +1555,7 @@ const styles = StyleSheet.create({
     color: '#F2DDD6',
   },
   workspace: {
-    gap: spacing.xl,
+    gap: spacing.lg,
   },
   workspaceWide: {
     alignItems: 'flex-start',
@@ -1797,6 +1777,20 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 11,
     lineHeight: 17,
+  },
+  mapOnlyAction: {
+    alignItems: 'center',
+    backgroundColor: palette.accentDeep,
+    borderRadius: radii.pill,
+    justifyContent: 'center',
+    marginTop: spacing.xs,
+    minHeight: 44,
+    paddingHorizontal: spacing.lg,
+  },
+  mapOnlyActionText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
   },
   loadMoreButton: {
     alignItems: 'center',

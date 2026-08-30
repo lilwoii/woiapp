@@ -1,4 +1,5 @@
 import {
+  advanceRouteStepIndex,
   externalDirectionsUrl,
   formatRouteDistance,
   formatRouteDuration,
@@ -31,6 +32,12 @@ describe('route plan parsing', () => {
       .toBe('https://maps.apple.com/?daddr=34.05%2C-118.24');
     expect(externalDirectionsUrl(destination, 'android'))
       .toBe('https://www.google.com/maps/dir/?api=1&destination=34.05%2C-118.24');
+    expect(externalDirectionsUrl(destination, 'ios', 'walk'))
+      .toBe('https://maps.apple.com/?daddr=34.05%2C-118.24&dirflg=w');
+    expect(externalDirectionsUrl(destination, 'android', 'drive'))
+      .toBe('https://www.google.com/maps/dir/?api=1&destination=34.05%2C-118.24&travelmode=driving');
+    expect(externalDirectionsUrl(destination, 'android', 'bike'))
+      .toBe('https://www.google.com/maps/dir/?api=1&destination=34.05%2C-118.24&travelmode=bicycling');
     expect(externalDirectionsUrl({ latitude: 91, longitude: 0 }, 'ios')).toBeNull();
   });
   it('formats compact route guidance values', () => {
@@ -41,6 +48,20 @@ describe('route plan parsing', () => {
     const route = parseRoutePlan(valid, 'walk', now);
     expect(route && nearestRouteStep(route, { latitude: 34.041, longitude: -118.231 })?.instruction)
       .toBe('Turn right on Spring Street');
+  });
+  it('advances guidance one step at a time and never jumps backward', () => {
+    const route = parseRoutePlan({
+      ...valid,
+      steps: [
+        { ...valid.steps[0], instruction: 'First turn', maneuver: { latitude: 34.05, longitude: -118.24 } },
+        { ...valid.steps[0], instruction: 'Second turn', maneuver: { latitude: 34.049, longitude: -118.239 } },
+        { ...valid.steps[0], instruction: 'Third turn', maneuver: { latitude: 34.048, longitude: -118.238 } },
+      ],
+    }, 'walk', now);
+    expect(route).not.toBeNull();
+    if (!route) return;
+    expect(advanceRouteStepIndex(route, { latitude: 34.05, longitude: -118.24 }, 0)).toBe(1);
+    expect(advanceRouteStepIndex(route, { latitude: 34.05, longitude: -118.24 }, 2)).toBe(2);
   });
   it('never shares a refreshed origin unless automatic rerouting is explicitly enabled', () => {
     const request = {

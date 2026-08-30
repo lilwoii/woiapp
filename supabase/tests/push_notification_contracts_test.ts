@@ -268,6 +268,22 @@ Deno.test("event enqueue stores only references and bounded workers use leases",
   assert(migration.includes("last_provider_code = 'device_revoked'"));
 });
 
+Deno.test("notification UX stays capability-aware and notification taps are route constrained", async () => {
+  const saved = await text("../app/(tabs)/saved.tsx");
+  const nativeHandler = await text("../components/notification-response-handler.native.tsx");
+  const routeParser = await text("../lib/notification-routing.ts");
+  assert(saved.includes("nativePushDeliveryAvailable"));
+  assert(saved.includes("Web push is not available in this release."));
+  assert(saved.includes("Quiet hours will be configurable before device delivery is activated."));
+  assert(saved.includes("<Text style={styles.inAppBadgeText}>Planned</Text>"));
+  assert(!saved.includes("onValueChange={(next) => void savePreference('live_nearby', next)}"));
+  assert(nativeHandler.includes("getLastNotificationResponseAsync"));
+  assert(nativeHandler.includes("addNotificationResponseReceivedListener"));
+  assert(nativeHandler.includes("parseNotificationRoute"));
+  assertMatch(routeParser, /\^\\\/place\\\/\(\[0-9a-f\]/);
+  assert(!routeParser.includes("new URL("));
+});
+
 Deno.test("delivery claim and provider handoff revalidate public business eligibility", async () => {
   const migration = await text(
     "migrations/20260926000000_notification_business_eligibility_lifecycle.sql",

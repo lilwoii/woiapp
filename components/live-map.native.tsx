@@ -38,10 +38,10 @@ type Props = {
 };
 
 const fallbackRegion = {
-  latitude: 34.0722,
-  longitude: -118.2737,
-  latitudeDelta: 0.18,
-  longitudeDelta: 0.17,
+  latitude: 20,
+  longitude: 0,
+  latitudeDelta: 100,
+  longitudeDelta: 160,
 };
 
 function VenueMarker({

@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { BrandMark } from '@/components/brand-mark';
 import { FocusAwareScreen } from '@/components/focus-aware-screen';
@@ -24,14 +24,13 @@ import {
 } from '@/lib/marketplace-api';
 
 type SavedFilter = 'all' | 'food_truck' | 'restaurant';
-type AlertPreference = 'live_nearby' | 'owner_bundle';
+type AlertPreference = 'owner_bundle';
 
 export default function SavedScreen() {
   const { followedIds, places, publicPlaces, toggleFollow } = useMarketplaceStore();
   const auth = useAuth();
   const accountId = auth.status === 'authenticated' ? auth.account?.id : undefined;
   const [filter, setFilter] = useState<SavedFilter>('all');
-  const [nearbyAlerts, setNearbyAlerts] = useState(false);
   const [ownerUpdates, setOwnerUpdates] = useState(false);
   const [loadedPreferenceScope, setLoadedPreferenceScope] = useState<string | null>(null);
   const [preferenceBusy, setPreferenceBusy] = useState<AlertPreference | 'loading' | null>(null);
@@ -40,6 +39,8 @@ export default function SavedScreen() {
   const [deliveryMessage, setDeliveryMessage] = useState('');
   const preferenceGeneration = useRef(0);
   const deliveryGeneration = useRef(0);
+  const nativePushDeliveryAvailable =
+    featureFlags.pushNotifications && (Platform.OS === 'ios' || Platform.OS === 'android');
 
   const followedKey = [...followedIds].sort().join(',');
   const hasFollowedPlaces = followedIds.length > 0;
@@ -49,7 +50,6 @@ export default function SavedScreen() {
     Boolean(preferenceScope) &&
     loadedPreferenceScope === preferenceScope &&
     preferenceBusy !== 'loading';
-  const visibleNearbyAlerts = preferenceIsCurrent ? nearbyAlerts : false;
   const visibleOwnerUpdates = preferenceIsCurrent ? ownerUpdates : false;
 
   useEffect(() => {
@@ -76,7 +76,6 @@ export default function SavedScreen() {
       void fetchFollowAlertPreferences(requestedFollowedIds, requestedAccountId).then((result) => {
         if (!active || generation !== preferenceGeneration.current) return;
         if (result.ok && result.data) {
-          setNearbyAlerts(result.data.liveNearby);
           setOwnerUpdates(result.data.ownerUpdates);
           setLoadedPreferenceScope(requestedScope);
         } else if (!result.ok) {
@@ -117,13 +116,8 @@ export default function SavedScreen() {
     const requestedAccountId = accountId;
     const requestedFollowedIds = [...followedIds];
     const generation = ++preferenceGeneration.current;
-    const current = {
-      live_nearby: visibleNearbyAlerts,
-      owner_bundle: visibleOwnerUpdates,
-    };
-    const previous = current[field];
-    setNearbyAlerts(field === 'live_nearby' ? next : visibleNearbyAlerts);
-    setOwnerUpdates(field === 'owner_bundle' ? next : visibleOwnerUpdates);
+    const previous = visibleOwnerUpdates;
+    setOwnerUpdates(next);
     setLoadedPreferenceScope(requestedScope);
     setPreferenceBusy(field);
     setPreferenceMessage('');
@@ -139,8 +133,7 @@ export default function SavedScreen() {
       preferenceContext.current.preferenceScope !== requestedScope
     ) return;
     if (!result.ok) {
-      if (field === 'live_nearby') setNearbyAlerts(previous);
-      else setOwnerUpdates(previous);
+      setOwnerUpdates(previous);
       setPreferenceMessage(result.reason);
     } else {
       setPreferenceMessage(
@@ -308,12 +301,14 @@ export default function SavedScreen() {
             <View style={styles.preferenceCopy}>
               <Text style={styles.preferenceTitle}>Device delivery</Text>
               <Text style={styles.preferenceDetail}>
-                {featureFlags.pushNotifications
+                {nativePushDeliveryAvailable
                   ? 'Enable to consent to product alerts with generic lock-screen text. Marketing stays off.'
-                  : 'In-app updates are available. Device delivery remains safely off for this release.'}
+                  : Platform.OS === 'web' && featureFlags.pushNotifications
+                    ? 'In-app updates are available. Web push is not available in this release.'
+                    : 'In-app updates are available. Device delivery remains safely off for this release.'}
               </Text>
             </View>
-            {featureFlags.pushNotifications ? (
+            {nativePushDeliveryAvailable ? (
               <Pressable
                 accessibilityRole="button"
                 disabled={deliveryBusy}
@@ -327,7 +322,7 @@ export default function SavedScreen() {
               </View>
             )}
           </View>
-          {featureFlags.pushNotifications ? (
+          {nativePushDeliveryAvailable ? (
             <View style={styles.deliveryDisableRow}>
               <Pressable
                 accessibilityRole="button"
@@ -357,17 +352,12 @@ export default function SavedScreen() {
             <View style={styles.preferenceCopy}>
               <Text style={styles.preferenceTitle}>Starts serving</Text>
               <Text style={styles.preferenceDetail}>
-                When a followed place goes live. Distance-based alerts stay off until you choose a privacy-safe option.
+                Coming after a privacy-reviewed starts-serving delivery path. Spottr does not infer your location in the background.
               </Text>
             </View>
-            <Switch
-              accessibilityLabel="Alert when a followed business goes live"
-              disabled={preferenceBusy !== null || followedIds.length === 0}
-              onValueChange={(next) => void savePreference('live_nearby', next)}
-              thumbColor="#FFFFFF"
-              trackColor={{ false: palette.line, true: palette.success }}
-              value={visibleNearbyAlerts}
-            />
+            <View style={styles.inAppBadge}>
+              <Text style={styles.inAppBadgeText}>Planned</Text>
+            </View>
           </View>
           <View style={styles.preferenceRow}>
             <View style={styles.preferenceIcon}>
@@ -385,6 +375,12 @@ export default function SavedScreen() {
               trackColor={{ false: palette.line, true: palette.success }}
               value={visibleOwnerUpdates}
             />
+          </View>
+          <View style={styles.preferenceNotice}>
+            <FontAwesome6 color={palette.muted} name="moon" size={12} />
+            <Text style={styles.preferenceNoticeText}>
+              Quiet hours will be configurable before device delivery is activated. No notification provider is enabled in this release.
+            </Text>
           </View>
           {preferenceBusy === 'loading' ? (
             <Text accessibilityLiveRegion="polite" style={styles.preferenceStatus}>
@@ -672,6 +668,20 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 11,
     lineHeight: 16,
+  },
+  preferenceNotice: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.bg,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  preferenceNoticeText: {
+    color: palette.muted,
+    flex: 1,
+    fontSize: 10,
+    lineHeight: 15,
   },
   preferenceStatus: {
     color: palette.muted,

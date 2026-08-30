@@ -37,7 +37,7 @@ export type Props = {
   navigationMode?: TravelMode;
 };
 
-const fallbackCenter: [number, number] = [-118.2437, 34.0522];
+const fallbackCenter: [number, number] = [0, 20];
 const mapAttribution = process.env.EXPO_PUBLIC_MAP_ATTRIBUTION?.trim() || '© OpenStreetMap';
 const mapAttributionUrl = (() => {
   const candidate =
@@ -89,7 +89,7 @@ function markerElement(
   const presentation = mapCategoryPresentation[place.category];
   const element = document.createElement('button');
   element.type = 'button';
-  element.tabIndex = -1;
+  element.tabIndex = 0;
   element.setAttribute(
     'aria-label',
     `${categoryMarkerLabel(place.category, place.name)}${
@@ -185,7 +185,7 @@ function clusterElement(feature: { count: number; categories: Partial<Record<Pla
   const summary = mapClusterCategorySummary(feature.categories);
   const element = document.createElement('button');
   element.type = 'button';
-  element.tabIndex = -1;
+  element.tabIndex = 0;
   element.setAttribute('aria-label', `${feature.count} food places in this area. ${summary.accessibilityLabel}. Zoom in to explore.`);
   element.style.alignItems = 'center';
   element.style.background = palette.accentDeep;
@@ -342,7 +342,7 @@ export default function MapLibreMapView({
         minZoom: 2,
         pitchWithRotate: true,
         style: createMapStyle(),
-        zoom: 11.5,
+        zoom: first ? 11.5 : 2.35,
       });
       mapRef.current = map;
       map.on('load', () => {
@@ -693,24 +693,26 @@ export default function MapLibreMapView({
           style={styles.controlButton}>
           <FontAwesome6 color={palette.ink} name="minus" size={13} />
         </Pressable>
-        <Pressable
-          accessibilityLabel={perspective ? 'Use flat map view' : supports3D ? 'Use 3D map perspective' : 'Use tilted map perspective'}
-          accessibilityRole="button"
-          aria-pressed={perspective}
-          onPress={() => {
-            mapWasInteracted.current = true;
-            const next = !perspective;
-            setPerspective(next);
-            mapRef.current?.easeTo({
-              bearing: next ? -12 : 0,
-              duration: motionDuration(reduceMotion, 320),
-              pitch: next ? 48 : 0,
-            });
-          }}
-          style={[styles.controlButton, perspective && styles.controlButtonActive]}>
-          <FontAwesome6 color={perspective ? '#FFFFFF' : palette.ink} name="cube" size={12} />
-          <Text style={[styles.controlText, perspective && styles.controlTextActive]}>{supports3D ? '3D' : 'Tilt'}</Text>
-        </Pressable>
+        {supports3D ? (
+          <Pressable
+            accessibilityLabel={perspective ? 'Use flat map view' : 'Use 3D map perspective'}
+            accessibilityRole="button"
+            aria-pressed={perspective}
+            onPress={() => {
+              mapWasInteracted.current = true;
+              const next = !perspective;
+              setPerspective(next);
+              mapRef.current?.easeTo({
+                bearing: next ? -12 : 0,
+                duration: motionDuration(reduceMotion, 320),
+                pitch: next ? 48 : 0,
+              });
+            }}
+            style={[styles.controlButton, perspective && styles.controlButtonActive]}>
+            <FontAwesome6 color={perspective ? '#FFFFFF' : palette.ink} name="cube" size={12} />
+            <Text style={[styles.controlText, perspective && styles.controlTextActive]}>3D</Text>
+          </Pressable>
+        ) : null}
       </View>
       {pendingViewport && onSearchArea ? (
         <Pressable
