@@ -86,6 +86,21 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   reproduced the full green release suite and commit-bound web artifact. That
   exact artifact is privately published as owner-only Sites version 54 at
   https://noshatlas-live.lilwoi.chatgpt.site/.
+- Mobile-map authority commits `0a85b1120e699a63b893f12325e881208779c4e4`
+  through `f6f44b8910dcb5b0dee77205eee283a5ed1762eb` are covered by the exact-head
+  green GitHub [Quality](https://github.com/lilwoii/woiapp/actions/runs/33333087287)
+  and [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33333087264)
+  workflows. Food trucks and pop-ups now expose only their deterministic
+  current scheduled/live stop, or their eligible primary fallback, while
+  fixed-location categories retain their published multi-location behavior.
+  The visible foreground map revalidates on mobile-stop events and bounded
+  expiry intervals, reads the latest viewport after debounce, and fails closed
+  to the retry state instead of leaving an unverified stale marker visible.
+  The manually dispatched
+  [release run](https://github.com/lilwoii/woiapp/actions/runs/33333501766)
+  reproduced the full green release suite and produced the commit-bound web
+  artifact. That exact artifact is privately published as owner-only Sites
+  version 55 at https://noshatlas-live.lilwoi.chatgpt.site/.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
   Edge contracts, Expo alignment and Doctor, iOS and Android exports,
