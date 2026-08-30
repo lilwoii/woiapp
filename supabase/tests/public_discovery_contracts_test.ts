@@ -205,6 +205,6 @@ Deno.test("gateway is anonymous-JWT optional but fail-closed for identity and so
   );
   assertMatch(
     inventoryLoader,
-    /if \(!result\.ok\) \{\s+setMapInventoryError\('Map places could not refresh\. The verified list is still available\.'\);\s+return result;\s+\}/,
+    /if \(!result\.ok\) \{\s+setMapInventoryFeatures\(\[\]\);\s+setMapMarkersSuppressed\(true\);\s+setMapInventoryError\('Map places could not refresh\. The verified list is still available\.'\);\s+return result;\s+\}/,
   );
 });
