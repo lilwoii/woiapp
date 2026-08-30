@@ -2218,6 +2218,30 @@ begin
 end;
 $sponsored_selection$;
 
+insert into private.provider_location_sources (
+  provider_slug,
+  business_external_id,
+  location_external_id,
+  materialized_location_id,
+  source_status,
+  source_updated_at,
+  source_url,
+  license_agreement_id,
+  normalized_payload,
+  normalized_payload_hash
+) values (
+  'runtime_provider',
+  'runtime-missing-listing',
+  'runtime-primary-location',
+  '73000000-0000-4000-8000-000000000007',
+  'active',
+  now(),
+  null,
+  'runtime-license',
+  '{"externalId":"runtime-primary-location"}'::jsonb,
+  repeat('e', 64)
+);
+
 create temporary table runtime_sponsored_stale_result (payload jsonb not null);
 grant select, insert on runtime_sponsored_stale_result to service_role;
 
@@ -2230,9 +2254,12 @@ select public.select_sponsored_placement(
 );
 reset role;
 
-update public.business_locations
-set publication_state = 'private'
-where id = '73000000-0000-4000-8000-000000000007';
+update private.provider_location_sources
+set source_status = 'missing',
+    missing_since = now()
+where provider_slug = 'runtime_provider'
+  and business_external_id = 'runtime-missing-listing'
+  and location_external_id = 'runtime-primary-location';
 
 set local role service_role;
 do $sponsored_location_revalidation$
@@ -2268,9 +2295,13 @@ end;
 $sponsored_location_revalidation$;
 reset role;
 
-update public.business_locations
-set publication_state = 'published'
-where id = '73000000-0000-4000-8000-000000000007';
+update private.provider_location_sources
+set source_status = 'active',
+    missing_since = null,
+    last_seen_at = now()
+where provider_slug = 'runtime_provider'
+  and business_external_id = 'runtime-missing-listing'
+  and location_external_id = 'runtime-primary-location';
 
 set local role service_role;
 do $sponsored_public_boundary$
