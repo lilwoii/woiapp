@@ -344,4 +344,3 @@ grant execute on function public.map_food_places(
   text[],
   integer
 ) to service_role;
-
