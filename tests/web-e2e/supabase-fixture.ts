@@ -764,6 +764,37 @@ export async function installSpottrFixture(page: Page) {
         return;
       }
       if (
+        rpc === 'list_followed_feed' && method === 'POST' && role !== 'anonymous' &&
+        exactBodyKeys(
+          body,
+          'feed_filter',
+          'cursor_created_at',
+          'cursor_feed_type',
+          'cursor_content_id',
+          'result_limit',
+        ) &&
+        typeof body.feed_filter === 'string' &&
+        ['all', 'business_post', 'user_review'].includes(body.feed_filter) &&
+        body.cursor_created_at === null &&
+        body.cursor_feed_type === null &&
+        body.cursor_content_id === null &&
+        body.result_limit === 20
+      ) {
+        if (request.headers().authorization !== `Bearer ${accessToken(role)}`) {
+          unexpected.push(`${label} carried an unexpected bearer token`);
+        }
+        feedRequests.push({
+          accountId: role === 'business' ? ids.owner : ids.customer,
+          role,
+        });
+        const rows = (tableRows('public_followed_feed', role) ?? []) as Record<string, unknown>[];
+        const filteredRows = body.feed_filter === 'all'
+          ? rows
+          : rows.filter((row) => row.feed_type === body.feed_filter);
+        await json(route, filteredRows.map((row) => ({ ...row, has_more: false })));
+        return;
+      }
+      if (
         method === 'POST' &&
         ['map_food_places', 'nearby_businesses', 'search_businesses'].includes(rpc)
       ) {

@@ -89,6 +89,74 @@ begin
     raise exception 'Authenticated users can execute a service-only maintenance RPC';
   end if;
 
+  if has_function_privilege(
+      'anon',
+      'public.respond_creator_invitation(uuid,text,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.respond_creator_invitation(uuid,text,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.respond_creator_invitation(uuid,text,text)',
+      'execute'
+    )
+  then
+    raise exception 'Creator invitation response RPC has an unsafe effective ACL';
+  end if;
+
+  if has_function_privilege(
+      'anon',
+      'public.review_business_revision(uuid,text,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.review_business_revision(uuid,text,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.review_business_revision(uuid,text,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.send_creator_invitation(uuid,uuid,text,text,timestamptz,timestamptz,boolean,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.send_creator_invitation(uuid,uuid,text,text,timestamptz,timestamptz,boolean,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.send_creator_invitation(uuid,uuid,text,text,timestamptz,timestamptz,boolean,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.respond_business_invitation(uuid,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.respond_business_invitation(uuid,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.respond_business_invitation(uuid,text)',
+      'execute'
+    )
+  then
+    raise exception 'A null-safe authority RPC has an unsafe effective ACL';
+  end if;
+
   if not exists (
     select 1
     from pg_catalog.pg_class relation
@@ -793,6 +861,33 @@ insert into public.creator_invitations (
     'Runtime received invitation tests subject-scoped export.',
     now() + interval '1 day', now() + interval '2 days', repeat('a', 64), repeat('b', 64)
   );
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $creator_invitation_null_decision$
+begin
+  begin
+    perform public.respond_creator_invitation(
+      '75700000-0000-4000-8000-000000000007',
+      null,
+      null
+    );
+    raise exception 'Null creator invitation response bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid invitation response' then
+        raise;
+      end if;
+  end;
+end;
+$creator_invitation_null_decision$;
+
+reset role;
 
 do $social_account_export_contract$
 declare
@@ -1540,6 +1635,148 @@ begin
   end if;
 end;
 $mobile_submission_review_state$;
+
+insert into private.business_revision_requests (
+  id, business_id, requested_by, base_updated_at, proposed_patch
+)
+select
+  '79a00000-0000-4000-8000-000000000009',
+  business.id,
+  '10000000-0000-4000-8000-000000000001',
+  business.updated_at,
+  '{"profile":{"description":"A null decision must never apply this revision."}}'::jsonb
+from public.businesses business
+where business.id = '79000000-0000-4000-8000-000000000009';
+
+insert into private.business_invitations (
+  id, business_id, target_type, target_normalized, target_hint,
+  target_user_id, role, state, invited_by, expires_at
+) values (
+  '79b00000-0000-4000-8000-000000000009',
+  '79000000-0000-4000-8000-000000000009',
+  'username', 'runtime_b', 'r***b',
+  '20000000-0000-4000-8000-000000000002',
+  'staff', 'pending', '10000000-0000-4000-8000-000000000001',
+  now() + interval '7 days'
+);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $business_revision_null_decision$
+begin
+  begin
+    perform public.review_business_revision(
+      '79a00000-0000-4000-8000-000000000009',
+      null,
+      'An explicit review decision is required.'
+    );
+    raise exception 'Null business revision decision bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid revision decision' then
+        raise;
+      end if;
+  end;
+end;
+$business_revision_null_decision$;
+
+reset role;
+do $business_revision_null_state$
+begin
+  if not exists (
+      select 1
+      from private.business_revision_requests revision
+      where revision.id = '79a00000-0000-4000-8000-000000000009'
+        and revision.state = 'pending'
+        and revision.reviewed_at is null
+    )
+    or exists (
+      select 1
+      from public.businesses business
+      where business.id = '79000000-0000-4000-8000-000000000009'
+        and business.description = 'A null decision must never apply this revision.'
+    )
+  then
+    raise exception 'Null business revision decision changed revision or business state';
+  end if;
+end;
+$business_revision_null_state$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $business_invitation_null_decision$
+begin
+  begin
+    perform public.respond_business_invitation(
+      '79b00000-0000-4000-8000-000000000009',
+      null
+    );
+    raise exception 'Null business invitation response bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid invitation decision' then
+        raise;
+      end if;
+  end;
+end;
+$business_invitation_null_decision$;
+
+reset role;
+do $business_invitation_null_state$
+begin
+  if not exists (
+    select 1
+    from private.business_invitations invitation
+    where invitation.id = '79b00000-0000-4000-8000-000000000009'
+      and invitation.state = 'pending'
+      and invitation.responded_at is null
+  ) then
+    raise exception 'Null business invitation response changed invitation state';
+  end if;
+end;
+$business_invitation_null_state$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $creator_invitation_null_acknowledgment$
+begin
+  begin
+    perform public.send_creator_invitation(
+      '79000000-0000-4000-8000-000000000009',
+      '79c00000-0000-4000-8000-000000000009',
+      'Runtime invitation',
+      'This invitation never requires a favorable review.',
+      now() + interval '1 day',
+      now() + interval '1 day 2 hours',
+      null,
+      'spottr:invite:runtime-null-ack'
+    );
+    raise exception 'Null creator invitation acknowledgment bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Review independence acknowledgment required' then
+        raise;
+      end if;
+  end;
+end;
+$creator_invitation_null_acknowledgment$;
+
+reset role;
 
 set local role anon;
 do $mobile_submission_public_projection$
