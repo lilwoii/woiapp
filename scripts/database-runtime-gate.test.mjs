@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  interactivePsqlFileArguments,
   orderedMigrationNames,
   psqlArguments,
+  psqlCommandArguments,
   runtimeSupabaseConfig,
 } from './database-runtime-gate.mjs';
 
@@ -34,6 +36,29 @@ test('builds fail-fast isolated transactional psql arguments', () => {
   assert.ok(args.includes('-1'));
   assert.equal(args.at(-1), '/tmp/migration.sql');
   assert.equal(psqlArguments('/tmp/contract.sql', false).includes('-1'), false);
+});
+
+test('builds captured psql commands with verbose SQLSTATE output', () => {
+  const args = psqlCommandArguments('supabase_db_runtime', 'select 1;');
+  assert.deepEqual(args.slice(0, 2), ['exec', 'supabase_db_runtime']);
+  assert.ok(args.includes('-X'));
+  assert.ok(args.includes('-At'));
+  assert.deepEqual(
+    args.slice(args.indexOf('VERBOSITY=verbose') - 1, args.indexOf('VERBOSITY=verbose') + 1),
+    ['-v', 'VERBOSITY=verbose'],
+  );
+  assert.deepEqual(args.slice(-2), ['-c', 'select 1;']);
+});
+
+test('keeps stdin attached for advisory-lock holder sessions', () => {
+  const args = interactivePsqlFileArguments(
+    'supabase_db_runtime',
+    '/tmp/shared-holder.sql',
+  );
+  assert.deepEqual(args.slice(0, 3), ['exec', '-i', 'supabase_db_runtime']);
+  assert.ok(args.includes('-X'));
+  assert.equal(args.includes('-1'), false);
+  assert.equal(args.at(-1), '/tmp/shared-holder.sql');
 });
 
 test('isolates the temporary Supabase database on an available host port', () => {

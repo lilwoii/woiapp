@@ -12,6 +12,45 @@ const mediaStage = await Deno.readTextFile(
 const runtimeSql = await Deno.readTextFile(
   new URL("./full_stack_security_runtime_test.sql", import.meta.url),
 );
+const databaseRuntimeGate = await Deno.readTextFile(
+  new URL("../../scripts/database-runtime-gate.mjs", import.meta.url),
+);
+const conflictSetup = await Deno.readTextFile(
+  new URL(
+    "./business_claim_evidence_migration_conflict_setup.sql",
+    import.meta.url,
+  ),
+);
+const conflictAssertion = await Deno.readTextFile(
+  new URL(
+    "./business_claim_evidence_migration_conflict_assert_and_cleanup.sql",
+    import.meta.url,
+  ),
+);
+const mutationRollbackSetup = await Deno.readTextFile(
+  new URL(
+    "./business_claim_evidence_migration_mutation_rollback_setup.sql",
+    import.meta.url,
+  ),
+);
+const mutationRollbackAssertion = await Deno.readTextFile(
+  new URL(
+    "./business_claim_evidence_migration_mutation_rollback_assert_and_cleanup.sql",
+    import.meta.url,
+  ),
+);
+const sharedBarrierHolder = await Deno.readTextFile(
+  new URL(
+    "./business_claim_evidence_shared_barrier_holder.sql",
+    import.meta.url,
+  ),
+);
+const exclusiveBarrierHolder = await Deno.readTextFile(
+  new URL(
+    "./business_claim_evidence_exclusive_barrier_holder.sql",
+    import.meta.url,
+  ),
+);
 
 function section(start: string, end: string): string {
   const startIndex = migration.indexOf(start);
@@ -150,6 +189,62 @@ Deno.test("storage mutation barrier precedes cleanup, deletion, and migration ro
   assertMatch(preflight, /deletion_item\.state in \('pending', 'deleted'\)/);
   assert(
     !preflight.includes("delete from private.account_deletion_storage_items"),
+  );
+});
+
+Deno.test("disposable runtime proves migration rollback and both advisory lock directions", () => {
+  assertMatch(
+    databaseRuntimeGate,
+    /migrationName === CLAIM_EVIDENCE_MIGRATION[\s\S]+business_claim_evidence_migration_conflict_setup\.sql[\s\S]+copyAndExpectSqlFailure[\s\S]+LEGACY_CLAIM_EVIDENCE_ACCOUNT_DELETION_CONFLICT[\s\S]+business_claim_evidence_migration_conflict_assert_and_cleanup\.sql[\s\S]+Applying \$\{migrationName\}/,
+  );
+  assertMatch(
+    databaseRuntimeGate,
+    /business_claim_evidence_migration_mutation_rollback_setup\.sql[\s\S]+migrationSource\.trimEnd\(\)[\s\S]+CLAIM_EVIDENCE_FORCED_ROLLBACK[\s\S]+business_claim_evidence_migration_mutation_rollback_assert_and_cleanup\.sql[\s\S]+Applying \$\{migrationName\}/,
+  );
+  assertMatch(
+    databaseRuntimeGate,
+    /business_claim_evidence_shared_barrier_holder\.sql[\s\S]+SPOTTR_CLAIM_EVIDENCE_SHARED_BARRIER_READY[\s\S]+pg_advisory_xact_lock\(\$\{CLAIM_EVIDENCE_BARRIER_CLASS_ID\}, \$\{CLAIM_EVIDENCE_BARRIER_OBJECT_ID\}\)/,
+  );
+  assertMatch(
+    databaseRuntimeGate,
+    /business_claim_evidence_exclusive_barrier_holder\.sql[\s\S]+SPOTTR_CLAIM_EVIDENCE_EXCLUSIVE_BARRIER_READY[\s\S]+prepare_media_cleanup_batch\(\)/,
+  );
+  assertMatch(databaseRuntimeGate, /\[\/55P03\/, \/lock timeout\/i\]/);
+  assertMatch(databaseRuntimeGate, /await holder\.waitForOutput\(/);
+  assertMatch(databaseRuntimeGate, /holder\.sendLine\('release'\)/);
+  assertMatch(databaseRuntimeGate, /await holder\.waitForCompletion\(/);
+  assertMatch(databaseRuntimeGate, /child\.kill\('SIGKILL'\)/);
+  assertMatch(
+    databaseRuntimeGate,
+    /interactivePsqlFileArguments[\s\S]+args\.splice\(1, 0, '-i'\)[\s\S]+const holderArguments = interactivePsqlFileArguments/,
+  );
+  assertMatch(
+    databaseRuntimeGate,
+    /await verifyBusinessClaimEvidenceStorageBarrier\(/,
+  );
+  assertMatch(
+    conflictSetup,
+    /insert into public\.business_claims[\s\S]+evidence_private_path[\s\S]+insert into storage\.objects[\s\S]+insert into private\.account_deletion_storage_items/,
+  );
+  assertMatch(
+    conflictAssertion,
+    /to_regclass\('private\.business_claim_evidence'\) is not null[\s\S]+claim\.evidence_private_path[\s\S]+item\.state = 'pending'/,
+  );
+  assertMatch(
+    sharedBarrierHolder,
+    /begin;[\s\S]+prepare_media_cleanup_batch\(\)[\s\S]+SPOTTR_CLAIM_EVIDENCE_SHARED_BARRIER_READY[\s\S]+\\prompt '' release_signal[\s\S]+rollback;/,
+  );
+  assertMatch(
+    exclusiveBarrierHolder,
+    /begin;[\s\S]+pg_advisory_xact_lock\(7742004, 1\)[\s\S]+SPOTTR_CLAIM_EVIDENCE_EXCLUSIVE_BARRIER_READY[\s\S]+\\prompt '' release_signal[\s\S]+rollback;/,
+  );
+  assertMatch(
+    mutationRollbackSetup,
+    /insert into public\.business_claims[\s\S]+evidence_private_path[\s\S]+insert into storage\.objects/,
+  );
+  assertMatch(
+    mutationRollbackAssertion,
+    /to_regclass\('private\.business_claim_evidence'\) is not null[\s\S]+claim\.evidence_private_path[\s\S]+business_claims_legacy_evidence_path_retired/,
   );
 });
 

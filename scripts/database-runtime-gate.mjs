@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
@@ -9,6 +9,10 @@ export const SUPABASE_CLI_VERSION = '2.84.2';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION_PATTERN = /^(\d{14})_[a-z0-9_]+\.sql$/;
+const CLAIM_EVIDENCE_MIGRATION =
+  '20261004000000_business_claim_evidence_retention_foundation.sql';
+const CLAIM_EVIDENCE_BARRIER_CLASS_ID = 7_742_004;
+const CLAIM_EVIDENCE_BARRIER_OBJECT_ID = 1;
 
 export function orderedMigrationNames(names) {
   const sqlNames = names.filter((name) => name.endsWith('.sql'));
@@ -106,6 +110,237 @@ function run(command, args, options = {}) {
   return result.stdout?.trim() ?? '';
 }
 
+function runExpectingFailure(command, args, expectedPatterns, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd ?? PROJECT_ROOT,
+    encoding: 'utf8',
+    stdio: 'pipe',
+    timeout: options.timeout ?? 180_000,
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+  if (result.status === 0) {
+    throw new Error(`${command} ${args.join(' ')} unexpectedly succeeded.`);
+  }
+  for (const expected of expectedPatterns) {
+    if (!expected.test(output)) {
+      throw new Error(
+        `${command} ${args.join(' ')} failed without the required evidence ${expected}.\n${output}`,
+      );
+    }
+  }
+  return output;
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+function startCaptured(command, args, options = {}) {
+  const child = spawn(command, args, {
+    cwd: options.cwd ?? PROJECT_ROOT,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  let stdout = '';
+  let stderr = '';
+  let settled = false;
+  let exitError = null;
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  // A holder may exit between the settled check and a release write. Treat an
+  // EPIPE as process completion evidence instead of an unhandled stream error.
+  child.stdin.on('error', () => undefined);
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+
+  const timeout = setTimeout(() => {
+    child.kill('SIGKILL');
+  }, options.timeout ?? 30_000);
+  const completion = new Promise((resolve, reject) => {
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      settled = true;
+      exitError = error;
+      reject(error);
+    });
+    child.once('close', (code, signal) => {
+      clearTimeout(timeout);
+      settled = true;
+      if (code === 0) {
+        resolve(stdout.trim());
+        return;
+      }
+      exitError = new Error(
+        `${command} ${args.join(' ')} failed with exit code ${code ?? 'null'}`
+          + `${signal ? ` (${signal})` : ''}.\n${stdout}${stderr}`,
+      );
+      reject(exitError);
+    });
+  });
+  // The owner awaits completion after coordinating the second session. Attach
+  // a handler now so an early child failure cannot become an unhandled rejection.
+  void completion.catch(() => undefined);
+  return {
+    completion,
+    failure: () => exitError,
+    isSettled: () => settled,
+    sendLine: (value) => {
+      if (!settled && child.stdin.writable) child.stdin.write(`${value}\n`);
+    },
+    terminate: () => child.kill('SIGKILL'),
+    waitForCompletion: async (timeoutMs) => await withTimeout(
+      completion,
+      timeoutMs,
+      `${command} did not exit within ${timeoutMs}ms.`,
+    ),
+    waitForOutput: async (expected, timeoutMs) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (expected.test(`${stdout}${stderr}`)) return;
+        if (settled) {
+          throw exitError ?? new Error(`${command} exited before emitting ${expected}.`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(`${command} did not emit ${expected} within ${timeoutMs}ms.`);
+    },
+  };
+}
+
+export function psqlCommandArguments(containerName, sql) {
+  return [
+    'exec',
+    containerName,
+    'psql',
+    '-X',
+    '-v',
+    'ON_ERROR_STOP=1',
+    '-v',
+    'VERBOSITY=verbose',
+    '-At',
+    '-U',
+    'postgres',
+    '-d',
+    'postgres',
+    '-c',
+    sql,
+  ];
+}
+
+export function interactivePsqlFileArguments(containerName, containerPath) {
+  const args = psqlArguments(containerPath, false);
+  args[1] = containerName;
+  args.splice(1, 0, '-i');
+  return args;
+}
+
+function copySqlToContainer(sourcePath, containerName, containerPath) {
+  run('docker', ['cp', sourcePath, `${containerName}:${containerPath}`]);
+}
+
+function copyAndExpectSqlFailure({
+  sourcePath,
+  containerName,
+  containerPath,
+  expectedPatterns,
+  singleTransaction,
+}) {
+  copySqlToContainer(sourcePath, containerName, containerPath);
+  const args = psqlArguments(containerPath, singleTransaction);
+  args[1] = containerName;
+  runExpectingFailure('docker', args, expectedPatterns);
+}
+
+async function assertBarrierBlocks({
+  projectRoot,
+  containerName,
+  holderFile,
+  readyMarker,
+  waiterSql,
+}) {
+  const containerPath = `/tmp/${holderFile}`;
+  copySqlToContainer(
+    path.join(projectRoot, 'supabase', 'tests', holderFile),
+    containerName,
+    containerPath,
+  );
+  const holderArguments = interactivePsqlFileArguments(containerName, containerPath);
+  const holder = startCaptured('docker', holderArguments, { timeout: 30_000 });
+  let operationError = null;
+  try {
+    await holder.waitForOutput(new RegExp(readyMarker), 5_000);
+    runExpectingFailure(
+      'docker',
+      psqlCommandArguments(containerName, waiterSql),
+      [/55P03/, /lock timeout/i],
+      { timeout: 10_000 },
+    );
+    holder.sendLine('release');
+    await holder.waitForCompletion(5_000);
+  } catch (error) {
+    operationError = error;
+  } finally {
+    if (!holder.isSettled()) holder.sendLine('release');
+    try {
+      await holder.waitForCompletion(3_000);
+    } catch (error) {
+      if (!holder.isSettled()) holder.terminate();
+      try {
+        await holder.waitForCompletion(3_000);
+      } catch (terminationError) {
+        if (!operationError) operationError = terminationError ?? error;
+      }
+    }
+  }
+  if (operationError) throw operationError;
+}
+
+async function verifyBusinessClaimEvidenceStorageBarrier(projectRoot, containerName) {
+  process.stdout.write('Verifying business-claim evidence storage barrier across two sessions\n');
+  await assertBarrierBlocks({
+    projectRoot,
+    containerName,
+    holderFile: 'business_claim_evidence_shared_barrier_holder.sql',
+    readyMarker: 'SPOTTR_CLAIM_EVIDENCE_SHARED_BARRIER_READY',
+    waiterSql: [
+      'begin;',
+      "set local lock_timeout = '500ms';",
+      `select pg_catalog.pg_advisory_xact_lock(${CLAIM_EVIDENCE_BARRIER_CLASS_ID}, ${CLAIM_EVIDENCE_BARRIER_OBJECT_ID});`,
+      'rollback;',
+    ].join(' '),
+  });
+  await assertBarrierBlocks({
+    projectRoot,
+    containerName,
+    holderFile: 'business_claim_evidence_exclusive_barrier_holder.sql',
+    readyMarker: 'SPOTTR_CLAIM_EVIDENCE_EXCLUSIVE_BARRIER_READY',
+    waiterSql: [
+      'begin;',
+      "set local lock_timeout = '500ms';",
+      'select public.prepare_media_cleanup_batch();',
+      'rollback;',
+    ].join(' '),
+  });
+}
+
 function supabaseInvocation() {
   const globalProbe = spawnSync('supabase', ['--version'], {
     encoding: 'utf8',
@@ -201,6 +436,85 @@ export async function runDatabaseRuntimeGate(projectRoot = PROJECT_ROOT) {
           singleTransaction: true,
         });
       }
+      if (migrationName === CLAIM_EVIDENCE_MIGRATION) {
+        process.stdout.write('Proving claim-evidence migration conflict rollback\n');
+        await copyAndApplySql({
+          sourcePath: path.join(
+            projectRoot,
+            'supabase',
+            'tests',
+            'business_claim_evidence_migration_conflict_setup.sql',
+          ),
+          containerName,
+          containerPath: '/tmp/spottr-claim-evidence-conflict-setup.sql',
+          singleTransaction: true,
+        });
+        copyAndExpectSqlFailure({
+          sourcePath: path.join(migrationDirectory, migrationName),
+          containerName,
+          containerPath: `/tmp/${migrationName}`,
+          expectedPatterns: [/LEGACY_CLAIM_EVIDENCE_ACCOUNT_DELETION_CONFLICT/],
+          singleTransaction: true,
+        });
+        await copyAndApplySql({
+          sourcePath: path.join(
+            projectRoot,
+            'supabase',
+            'tests',
+            'business_claim_evidence_migration_conflict_assert_and_cleanup.sql',
+          ),
+          containerName,
+          containerPath: '/tmp/spottr-claim-evidence-conflict-assert.sql',
+          singleTransaction: true,
+        });
+        await copyAndApplySql({
+          sourcePath: path.join(
+            projectRoot,
+            'supabase',
+            'tests',
+            'business_claim_evidence_migration_mutation_rollback_setup.sql',
+          ),
+          containerName,
+          containerPath: '/tmp/spottr-claim-evidence-mutation-rollback-setup.sql',
+          singleTransaction: true,
+        });
+        const forcedRollbackMigrationPath = path.join(
+          temporaryRoot,
+          'spottr-claim-evidence-forced-rollback.sql',
+        );
+        const migrationSource = await readFile(
+          path.join(migrationDirectory, migrationName),
+          'utf8',
+        );
+        await writeFile(
+          forcedRollbackMigrationPath,
+          `${migrationSource.trimEnd()}\n\n`
+            + 'do $spottr_forced_claim_evidence_rollback$\n'
+            + 'begin\n'
+            + "  raise exception using errcode = '55000', message = 'CLAIM_EVIDENCE_FORCED_ROLLBACK';\n"
+            + 'end;\n'
+            + '$spottr_forced_claim_evidence_rollback$;\n',
+          'utf8',
+        );
+        copyAndExpectSqlFailure({
+          sourcePath: forcedRollbackMigrationPath,
+          containerName,
+          containerPath: '/tmp/spottr-claim-evidence-forced-rollback.sql',
+          expectedPatterns: [/CLAIM_EVIDENCE_FORCED_ROLLBACK/],
+          singleTransaction: true,
+        });
+        await copyAndApplySql({
+          sourcePath: path.join(
+            projectRoot,
+            'supabase',
+            'tests',
+            'business_claim_evidence_migration_mutation_rollback_assert_and_cleanup.sql',
+          ),
+          containerName,
+          containerPath: '/tmp/spottr-claim-evidence-mutation-rollback-assert.sql',
+          singleTransaction: true,
+        });
+      }
       process.stdout.write(`Applying ${migrationName}\n`);
       await copyAndApplySql({
         sourcePath: path.join(migrationDirectory, migrationName),
@@ -209,6 +523,8 @@ export async function runDatabaseRuntimeGate(projectRoot = PROJECT_ROOT) {
         singleTransaction: true,
       });
     }
+
+    await verifyBusinessClaimEvidenceStorageBarrier(projectRoot, containerName);
 
     await copyAndApplySql({
       sourcePath: path.join(projectRoot, 'supabase', 'tests', 'full_stack_security_runtime_test.sql'),

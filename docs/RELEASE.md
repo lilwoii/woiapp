@@ -216,6 +216,22 @@ are verified.
 The media functions may be deployed while their gates remain false; deployment
 does not authorize uploads.
 
+The Quality workflow's disposable Supabase database intentionally seeds an
+account-deletion conflict immediately before the claim-evidence retention
+migration. It requires the unchanged migration to abort with the documented
+preflight conflict and verifies that preceding private DDL rolled back while the
+legacy claim, deletion marker, and object remain unchanged. A second fixture
+appends a test-only terminal failure after the exact migration body, proving the
+completed backfill, public-path clear, retirement constraint, and private DDL all
+roll back under the release harness's single transaction. The migration is then
+applied normally. The same isolated run uses two database sessions with an
+explicit ready/release handshake to prove that cleanup's shared storage barrier
+blocks the migration's exclusive barrier and that the exclusive barrier blocks
+cleanup. This is repository-level concurrency evidence only. The first live
+rollout must still pause and drain cleanup and deletion workers because a legacy
+worker may already hold an external Storage request after its database
+transaction has ended.
+
 Keep `EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED=false` and
 `SPOTTR_ROUTING_ENABLED=false` until the server-only
 `MAPBOX_DIRECTIONS_TOKEN` is restricted to the Directions API, provider billing
