@@ -215,6 +215,8 @@ function ScopedDiscoverScreen() {
     const result = await fetchMapFoodFeatures(viewport, requestedMapCategories);
     if (!mounted.current || !mapInventoryRequest.current.isCurrent(requestToken)) return result;
     if (!result.ok) {
+      setMapInventoryFeatures([]);
+      setMapMarkersSuppressed(true);
       setMapInventoryError('Map places could not refresh. The verified list is still available.');
       return result;
     }
@@ -553,14 +555,15 @@ function ScopedDiscoverScreen() {
     if (!focused || !appForeground || !authoritativeMapInventory || !latestMapViewport.current) {
       return;
     }
-    const viewport = latestMapViewport.current;
     // Realtime can burst while an owner edits a stop. Debounce those events,
     // keep the current markers visible, and let the latest-request gate reject
     // any response for an older viewport.
-    const timer = setTimeout(
-      () => void loadMapInventory(viewport, { preserveCurrent: true }),
-      750,
-    );
+    const timer = setTimeout(() => {
+      const latestViewport = latestMapViewport.current;
+      if (latestViewport) {
+        void loadMapInventory(latestViewport, { preserveCurrent: true });
+      }
+    }, 750);
     return () => clearTimeout(timer);
   }, [
     appForeground,

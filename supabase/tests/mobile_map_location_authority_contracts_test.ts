@@ -96,7 +96,11 @@ Deno.test("mobile-stop events and expiry refresh the visible authoritative map",
   );
   assertMatch(
     discover,
-    /loadMapInventory\(viewport, \{ preserveCurrent: true \}\)[\s\S]+750/,
+    /const latestViewport = latestMapViewport\.current;[\s\S]+loadMapInventory\(latestViewport, \{ preserveCurrent: true \}\)/,
+  );
+  assertMatch(
+    discover,
+    /if \(!result\.ok\) \{\s+setMapInventoryFeatures\(\[\]\);\s+setMapMarkersSuppressed\(true\);/,
   );
   assertMatch(
     discover,
