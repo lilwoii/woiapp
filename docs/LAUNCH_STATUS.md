@@ -18,6 +18,16 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   produced the commit-bound Sites artifact after passing both the full
   PostgreSQL schema/migration/runtime replay and the independent shadow
   migration-order replay.
+- Backend hardening commit
+  `ba0c0cd8ec6bec8275a76528c83ffc0bb929c164` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33288076844) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33288076781) workflows.
+  Claim approval now rechecks licensed-provider eligibility behind an
+  authorization-first exclusive transaction barrier, while provider account,
+  source, and ingest mutations take its shared side. The cloud runtime proves
+  all three mutation paths block a concurrent approval barrier and proves an
+  unauthorized caller is rejected before it can wait on that barrier. Claim
+  submission and evidence intake remain fail-closed.
 - The Quality workflow replayed the full Supabase schema and migration chain,
   ran application and Edge Function type checks, lint, coverage-gated tests,
   Edge contracts, Expo alignment and Doctor, iOS and Android exports,
