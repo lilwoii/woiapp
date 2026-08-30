@@ -906,15 +906,22 @@ begin
       end if;
   end;
 
+end;
+$review_and_comment_null_decision_guard$;
+
+reset role;
+
+do $review_and_comment_null_decision_state$
+begin
   if not exists (
       select 1 from public.reviews review
-      where review.id = queued_review.target_id
+      where review.id = '75100000-0000-4000-8000-000000000007'
         and review.moderation = 'approved'
         and review.deleted_at is null
     )
     or not exists (
       select 1 from public.review_profile_comments comment
-      where comment.id = queued_comment.target_id
+      where comment.id = '75200000-0000-4000-8000-000000000007'
         and comment.moderation = 'approved'
         and comment.deleted_at is null
     )
@@ -922,8 +929,8 @@ begin
       select count(*)
       from public.content_reports report
       where (report.target_type, report.target_id) in (
-        ('review', queued_review.target_id),
-        ('review_comment', queued_comment.target_id)
+        ('review', '75100000-0000-4000-8000-000000000007'::uuid),
+        ('review_comment', '75200000-0000-4000-8000-000000000007'::uuid)
       )
         and report.state = 'open'
     ) <> 2
@@ -931,7 +938,14 @@ begin
     raise exception 'Null review decision changed content or report state';
   end if;
 end;
-$review_and_comment_null_decision_guard$;
+$review_and_comment_null_decision_state$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
 
 do $reported_review_moderation$
 declare
@@ -995,26 +1009,31 @@ begin
       end if;
   end;
 
+end;
+$business_post_null_decision_guard$;
+
+reset role;
+
+do $business_post_null_decision_state$
+begin
   if not exists (
       select 1
       from public.business_posts post
-      where post.id = queued.target_id
+      where post.id = '75400000-0000-4000-8000-000000000007'
         and post.deleted_at is null
     )
     or not exists (
       select 1
       from public.content_reports report
       where report.target_type = 'business_post'
-        and report.target_id = queued.target_id
+        and report.target_id = '75400000-0000-4000-8000-000000000007'
         and report.state = 'open'
     )
   then
     raise exception 'Null business-post decision changed post or report state';
   end if;
 end;
-$business_post_null_decision_guard$;
-
-reset role;
+$business_post_null_decision_state$;
 
 do $reported_review_report_state$
 begin
