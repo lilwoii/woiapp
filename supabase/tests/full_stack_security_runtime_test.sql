@@ -735,7 +735,8 @@ reset role;
 select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
 
 update private.provider_business_sources
-set source_status = 'stale'
+set source_status = 'stale',
+    missing_since = coalesce(missing_since, now())
 where provider_slug = 'runtime_provider'
   and provider_external_id = 'runtime-missing-listing';
 
@@ -788,7 +789,8 @@ reset role;
 select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
 
 update private.provider_business_sources
-set source_status = 'active'
+set source_status = 'active',
+    missing_since = null
 where provider_slug = 'runtime_provider'
   and provider_external_id = 'runtime-missing-listing';
 
