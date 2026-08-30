@@ -94,7 +94,9 @@ test('populated discovery renders real results and bounds a 1,200-feature map re
   } else {
     await expect(page.getByRole('button', { name: 'Use flat map view' })).toHaveCount(0);
   }
-  await expect(page.locator('.maplibregl-marker[tabindex="0"]')).toHaveCount(0);
+  const keyboardReachableMarkers = await page.locator('.maplibregl-marker[tabindex="0"]').count();
+  expect(keyboardReachableMarkers).toBeGreaterThan(0);
+  expect(keyboardReachableMarkers).toBeLessThan(80);
   await expect.poll(() => fixture?.realtimeConnections ?? 0).toBeGreaterThan(0);
   await expectNoSeriousAxeViolations(page);
 });
