@@ -554,6 +554,17 @@ export async function runDatabaseRuntimeGate(projectRoot = PROJECT_ROOT) {
       containerPath: '/tmp/spottr-provider-location-lifecycle-guard-runtime.sql',
       singleTransaction: false,
     });
+    await copyAndApplySql({
+      sourcePath: path.join(
+        projectRoot,
+        'supabase',
+        'tests',
+        'public_link_safety_runtime_test.sql',
+      ),
+      containerName,
+      containerPath: '/tmp/spottr-public-link-safety-runtime.sql',
+      singleTransaction: false,
+    });
     process.stdout.write(
       `Fresh Supabase runtime verified: baseline, ${migrationNames.length} migrations, and post-chain security contracts.\n`,
     );

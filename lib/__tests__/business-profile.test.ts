@@ -19,7 +19,7 @@ const values = {
   timezone: 'America/Los_Angeles',
   businessEmail: ' OWNER@EXAMPLE.COM ',
   businessPhone: '+1 (213) 555-0123',
-  websiteUrl: 'https://nightmarket.example/menu',
+  websiteUrl: 'https://nightmarket.example.com/menu',
   showPhonePublic: true,
   showWebsitePublic: true,
   logoAssetId: null,
@@ -45,7 +45,7 @@ describe('business profile contracts', () => {
       contacts: {
         business_email: 'owner@example.com',
         business_phone: '+1 (213) 555-0123',
-        website_url: 'https://nightmarket.example/menu',
+        website_url: 'https://nightmarket.example.com/menu',
         show_phone_public: true,
         show_website_public: true,
       },
@@ -56,6 +56,12 @@ describe('business profile contracts', () => {
     expect(() =>
       validateBusinessProfileValues({ ...values, websiteUrl: 'http://example.com' })
     ).toThrow('HTTPS');
+    expect(() =>
+      validateBusinessProfileValues({ ...values, websiteUrl: 'https://127.0.0.1/menu' })
+    ).toThrow('public HTTPS');
+    expect(() =>
+      validateBusinessProfileValues({ ...values, websiteUrl: 'https://kitchen.local/menu' })
+    ).toThrow('public HTTPS');
     expect(() =>
       validateBusinessProfileValues({ ...values, timezone: 'Mars/Olympus' })
     ).toThrow('IANA');

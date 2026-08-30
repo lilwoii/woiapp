@@ -35,7 +35,7 @@ import {
   isHomeKitchenBlocked,
   publicListingRouteUnavailableReason,
 } from '@/lib/features';
-import { phoneHref, placeShareUrl, safeHttpsUrl } from '@/lib/links';
+import { phoneHref, placeShareUrl, safePublicHttpsUrl } from '@/lib/links';
 import { isMarketplaceChatAvailable, startMarketplaceConversation } from '@/lib/marketplace-chat';
 import { externalDirectionsUrl } from '@/lib/navigation';
 import {
@@ -215,7 +215,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   const followed = followedIds.includes(place.id);
   const selectedSection = place.menu[activeMenuSection] ?? place.menu[0];
   const callablePhone = phoneHref(place.phone);
-  const safeWebsite = safeHttpsUrl(place.websiteUrl);
+  const safeWebsite = safePublicHttpsUrl(place.websiteUrl);
   const canOpenPublicDirections = place.category !== 'home_kitchen';
 
   const openDirections = () => {

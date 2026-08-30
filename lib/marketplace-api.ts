@@ -4,6 +4,7 @@ import {
   isHomeKitchenBlocked,
 } from '@/lib/features';
 import { mapLogoPaths } from '@/lib/map-inventory';
+import { safePublicHttpsUrl } from '@/lib/links';
 import { publicBadgeFromCode, type PublicBadge } from '@/lib/trust-badges';
 import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
 import {
@@ -329,19 +330,10 @@ function publicProfileLinks(value: unknown): PublicProfileLink[] {
     if (!candidate || typeof candidate !== 'object') return [];
     const row = candidate as Row;
     const label = stringValue(row.label).trim();
-    const url = stringValue(row.url).trim();
-    if (!label || !safeHttpsProfileLink(url)) return [];
+    const url = safePublicHttpsUrl(stringValue(row.url));
+    if (!label || !url) return [];
     return [{ label, url }];
   });
-}
-
-function safeHttpsProfileLink(candidate: string) {
-  try {
-    const url = new URL(candidate);
-    return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password;
-  } catch {
-    return false;
-  }
 }
 
 export async function fetchPublicProfile(

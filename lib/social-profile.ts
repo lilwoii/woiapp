@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { toActionError } from '@/lib/errors';
+import { safePublicHttpsUrl } from '@/lib/links';
 import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
 import { createAccountBoundSupabaseClient } from '@/lib/supabase';
 import type { ActionResult } from '@/types/marketplace';
@@ -44,9 +45,10 @@ function safeLinks(value: unknown): PublicProfileLink[] {
   return value.slice(0, 3).flatMap((candidate) => {
     if (!candidate || typeof candidate !== 'object') return [];
     const row = candidate as Row;
-    return typeof row.label === 'string' && typeof row.url === 'string'
-      ? [{ label: row.label, url: row.url }]
-      : [];
+    if (typeof row.label !== 'string' || typeof row.url !== 'string') return [];
+    const label = row.label.trim();
+    const url = safePublicHttpsUrl(row.url);
+    return label && url ? [{ label, url }] : [];
   });
 }
 
@@ -131,14 +133,22 @@ export async function updateOwnSocialProfile(
   input: SocialProfileUpdate,
   expectedUserId: string
 ): Promise<ActionResult> {
-  if (input.bio.trim().length > 240 || input.links.length > 3) {
+  const normalizedLinks = input.links.map((link) => ({
+    label: link.label.trim(),
+    url: safePublicHttpsUrl(link.url),
+  }));
+  if (
+    input.bio.trim().length > 240 ||
+    input.links.length > 3 ||
+    normalizedLinks.some((link) => !link.label || !link.url)
+  ) {
     return { ok: false, code: 'INVALID', reason: 'Check the profile bio and links.' };
   }
   try {
     const client = await clientFor(expectedUserId);
     const payload: Record<string, unknown> = {
       bio: input.bio.trim(),
-      links: input.links.map((link) => ({ label: link.label.trim(), url: link.url.trim() })),
+      links: normalizedLinks.map((link) => ({ label: link.label, url: link.url as string })),
       show_favorites: input.showFavorites,
       show_following: input.showFollowing,
     };

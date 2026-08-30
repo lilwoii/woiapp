@@ -10,6 +10,7 @@ import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { featureFlags } from '@/lib/features';
 import { checkProfessionalText } from '@/lib/moderation';
+import { safePublicHttpsUrl } from '@/lib/links';
 import { loadOwnSocialProfile, updateOwnSocialProfile, uploadProfileBanner, type SocialProfileWorkspace } from '@/lib/social-profile';
 import type { PublicProfileLink } from '@/types/social';
 
@@ -104,8 +105,8 @@ export default function ProfileEditScreen() {
     const normalizedLinks = links
       .map((link) => ({ label: link.label.trim(), url: link.url.trim() }))
       .filter((link) => link.label || link.url);
-    if (normalizedLinks.some((link) => !link.label || !/^https:\/\/[A-Za-z0-9]/.test(link.url))) {
-      setNotice({ tone: 'error', text: 'Each profile link needs a short label and a complete HTTPS address.' });
+    if (normalizedLinks.some((link) => !link.label || !safePublicHttpsUrl(link.url))) {
+      setNotice({ tone: 'error', text: 'Each profile link needs a short label and a public HTTPS address.' });
       return;
     }
     setSaving(true);

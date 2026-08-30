@@ -10,7 +10,7 @@ import { TrustBadgeStrip } from '@/components/trust-badge-strip';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
-import { profileShareUrl, safeHttpsUrl } from '@/lib/links';
+import { profileShareUrl, safeHttpsUrl, safePublicHttpsUrl } from '@/lib/links';
 import { addReviewProfileComment, deleteReviewProfileComment, fetchPublicProfile, setProfileFollow, setReviewReaction } from '@/lib/marketplace-api';
 import { showMessage } from '@/lib/platform-dialog';
 import type { PublicProfile } from '@/types/social';
@@ -306,6 +306,19 @@ function ScopedPublicProfile({ id, scopeKey }: { id?: string; scopeKey: string }
     }
   };
 
+  const openPublicProfileLink = async (value: string) => {
+    const url = safePublicHttpsUrl(value);
+    if (!url) {
+      showMessage('Link unavailable', 'This destination does not meet Spottr’s public-link safety requirements.');
+      return;
+    }
+    try {
+      await Linking.openURL(url);
+    } catch {
+      showMessage('Link unavailable', 'This destination could not be opened right now.');
+    }
+  };
+
   if (!profile && !currentError) {
     return (
       <FocusAwareScreen>
@@ -404,7 +417,7 @@ function ScopedPublicProfile({ id, scopeKey }: { id?: string; scopeKey: string }
             {profile.links.length ? (
               <View style={styles.links}>
                 {profile.links.map((link) => (
-                  <Pressable accessibilityRole="link" key={link.url} onPress={() => void Linking.openURL(link.url)} style={styles.link}>
+                  <Pressable accessibilityRole="link" key={link.url} onPress={() => void openPublicProfileLink(link.url)} style={styles.link}>
                     <FontAwesome6 color={palette.accentDeep} name="link" size={10} />
                     <Text numberOfLines={1} style={styles.linkText}>{link.label}</Text>
                   </Pressable>

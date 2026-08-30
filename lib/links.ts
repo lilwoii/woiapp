@@ -43,6 +43,67 @@ export function safeHttpsUrl(value: string | undefined | null) {
   }
 }
 
+const blockedPublicHostSuffixes = new Set([
+  'corp',
+  'example',
+  'home',
+  'internal',
+  'invalid',
+  'lan',
+  'local',
+  'localhost',
+  'onion',
+  'test',
+]);
+
+function publicHostnameIsSafe(hostname: string) {
+  const host = hostname.toLocaleLowerCase('en-US');
+  if (
+    !host.includes('.') ||
+    host.endsWith('.') ||
+    host.startsWith('[') ||
+    host.includes(':') ||
+    /^[0-9.]+$/u.test(host) ||
+    host.length > 253
+  ) {
+    return false;
+  }
+
+  const labels = host.split('.');
+  if (blockedPublicHostSuffixes.has(labels.at(-1) ?? '')) return false;
+  return labels.every(
+    (label) =>
+      label.length >= 1 &&
+      label.length <= 63 &&
+      /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label),
+  );
+}
+
+export function safePublicHttpsUrl(value: string | undefined | null) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 2048) return null;
+  try {
+    const authority = /^https:\/\/([^/?#]+)/iu.exec(trimmed)?.[1];
+    const url = new URL(trimmed);
+    if (
+      !authority ||
+      authority.includes(':') ||
+      !/^[a-z0-9.-]+$/iu.test(authority) ||
+      url.protocol !== 'https:' ||
+      url.username ||
+      url.password ||
+      url.port ||
+      !publicHostnameIsSafe(url.hostname)
+    ) {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function phoneHref(value: string | undefined | null) {
   if (!value) return null;
   const trimmed = value.trim();

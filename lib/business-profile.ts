@@ -1,4 +1,5 @@
 import { featureFlags } from '@/lib/features';
+import { safePublicHttpsUrl } from '@/lib/links';
 import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
 import { checkProfessionalText } from '@/lib/moderation';
 import {
@@ -441,29 +442,14 @@ export function validateBusinessProfileValues(
       'Enter a business phone using 7–40 digits and standard phone punctuation.'
     );
   }
-  const websiteUrl = input.websiteUrl.trim();
-  if (websiteUrl) {
-    if (websiteUrl.length > 2048 || !websiteUrl.startsWith('https://')) {
-      throw new BusinessProfileValidationError(
-        'Website must be a complete HTTPS address.'
-      );
-    }
-    try {
-      const parsed = new URL(websiteUrl);
-      if (
-        parsed.protocol !== 'https:' ||
-        !parsed.hostname ||
-        parsed.username ||
-        parsed.password
-      ) {
-        throw new Error('unsafe');
-      }
-    } catch {
-      throw new BusinessProfileValidationError(
-        'Website must be a complete HTTPS address.'
-      );
-    }
+  const websiteInput = input.websiteUrl.trim();
+  const normalizedWebsiteUrl = websiteInput ? safePublicHttpsUrl(websiteInput) : null;
+  if (websiteInput && !normalizedWebsiteUrl) {
+    throw new BusinessProfileValidationError(
+      'Website must be a public HTTPS address without credentials or a private-network host.'
+    );
   }
+  const websiteUrl = normalizedWebsiteUrl ?? '';
   if (input.showWebsitePublic && !websiteUrl) {
     throw new BusinessProfileValidationError(
       'Add an HTTPS website before showing it publicly.'
