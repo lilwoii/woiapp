@@ -157,6 +157,40 @@ begin
     raise exception 'A null-safe authority RPC has an unsafe effective ACL';
   end if;
 
+  if has_function_privilege(
+      'anon',
+      'public.set_user_block_by_public_id(uuid,boolean)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.set_user_block_by_public_id(uuid,boolean)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.set_user_block_by_public_id(uuid,boolean)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.set_profile_follow_by_public_id(uuid,boolean)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.set_profile_follow_by_public_id(uuid,boolean)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.set_profile_follow_by_public_id(uuid,boolean)',
+      'execute'
+    )
+  then
+    raise exception 'A null-safe social mutation RPC has an unsafe effective ACL';
+  end if;
+
   if not exists (
     select 1
     from pg_catalog.pg_class relation
@@ -687,6 +721,107 @@ where profile.user_id = '10000000-0000-4000-8000-000000000001';
 insert into public.profile_follows (follower_id, followed_id) values
   ('10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002'),
   ('61000000-0000-4000-8000-000000000006', '10000000-0000-4000-8000-000000000001');
+
+select pg_catalog.set_config(
+  'spottr.runtime.social_target_public_id',
+  (
+    select profile.public_id::text
+    from public.profiles profile
+    where profile.user_id = '20000000-0000-4000-8000-000000000002'
+  ),
+  true
+);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $profile_follow_null_intent$
+declare
+  target_public_id uuid;
+begin
+  target_public_id := pg_catalog.current_setting(
+    'spottr.runtime.social_target_public_id',
+    true
+  )::uuid;
+
+  begin
+    perform public.set_profile_follow_by_public_id(target_public_id, null);
+    raise exception 'Null profile follow intent bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid follow intent' then
+        raise;
+      end if;
+  end;
+end;
+$profile_follow_null_intent$;
+
+reset role;
+insert into public.user_blocks (blocker_id, blocked_id)
+values (
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002'
+);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $user_block_null_intent$
+declare
+  target_public_id uuid;
+begin
+  target_public_id := pg_catalog.current_setting(
+    'spottr.runtime.social_target_public_id',
+    true
+  )::uuid;
+
+  begin
+    perform public.set_user_block_by_public_id(target_public_id, null);
+    raise exception 'Null user block intent bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid block intent' then
+        raise;
+      end if;
+  end;
+end;
+$user_block_null_intent$;
+
+reset role;
+do $social_boolean_null_state$
+begin
+  if not exists (
+      select 1
+      from public.profile_follows follow
+      where follow.follower_id = '10000000-0000-4000-8000-000000000001'
+        and follow.followed_id = '20000000-0000-4000-8000-000000000002'
+    )
+  then
+    raise exception 'Null follow intent removed an existing follow';
+  end if;
+  if not exists (
+      select 1
+      from public.user_blocks block
+      where block.blocker_id = '10000000-0000-4000-8000-000000000001'
+        and block.blocked_id = '20000000-0000-4000-8000-000000000002'
+    )
+  then
+    raise exception 'Null block intent removed an existing safety block';
+  end if;
+end;
+$social_boolean_null_state$;
+
+delete from public.user_blocks
+where blocker_id = '10000000-0000-4000-8000-000000000001'
+  and blocked_id = '20000000-0000-4000-8000-000000000002';
 
 insert into public.review_reactions (review_id, user_id, reaction) values
   ('75100000-0000-4000-8000-000000000007', '10000000-0000-4000-8000-000000000001', 1),
