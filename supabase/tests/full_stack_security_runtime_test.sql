@@ -817,6 +817,34 @@ select public.submit_content_report(
   'spam',
   'Runtime report for the protected review queue.'
 );
+select public.submit_content_report(
+  'business_post',
+  '75400000-0000-4000-8000-000000000007',
+  'spam',
+  'Runtime report for the protected business post queue.'
+);
+select public.submit_content_report(
+  'review_comment',
+  '75200000-0000-4000-8000-000000000007',
+  'spam',
+  'Runtime report for the protected review comment queue.'
+);
+
+do $social_moderation_auth_before_validation$
+begin
+  begin
+    perform public.decide_reported_review(
+      '75100000-0000-4000-8000-000000000007',
+      null,
+      'Runtime authorization precedes decision validation.',
+      now()
+    );
+    raise exception 'AAL1 caller reached social moderation validation';
+  exception
+    when sqlstate '42501' then null;
+  end;
+end;
+$social_moderation_auth_before_validation$;
 reset role;
 
 insert into private.platform_roles (user_id, role, active)
@@ -828,6 +856,82 @@ select pg_catalog.set_config(
   '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
   true
 );
+
+do $review_and_comment_null_decision_guard$
+declare
+  queued_review record;
+  queued_comment record;
+begin
+  select * into queued_review
+  from public.list_pending_content_moderation(100, 0)
+  where target_type = 'review'
+    and target_id = '75100000-0000-4000-8000-000000000007';
+
+  select * into queued_comment
+  from public.list_pending_content_moderation(100, 0)
+  where target_type = 'review_comment'
+    and target_id = '75200000-0000-4000-8000-000000000007';
+
+  if queued_review.target_id is null or queued_comment.target_id is null then
+    raise exception 'Reported review or comment was absent from the moderation queue';
+  end if;
+
+  begin
+    perform public.decide_reported_review(
+      queued_review.target_id,
+      null,
+      'Runtime decision must be explicit.',
+      queued_review.updated_at
+    );
+    raise exception 'Null review decision bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid moderation decision' then
+        raise;
+      end if;
+  end;
+
+  begin
+    perform public.decide_reported_review_comment(
+      queued_comment.target_id,
+      null,
+      'Runtime decision must be explicit.',
+      queued_comment.updated_at
+    );
+    raise exception 'Null review-comment decision bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid moderation decision' then
+        raise;
+      end if;
+  end;
+
+  if not exists (
+      select 1 from public.reviews review
+      where review.id = queued_review.target_id
+        and review.moderation = 'approved'
+        and review.deleted_at is null
+    )
+    or not exists (
+      select 1 from public.review_profile_comments comment
+      where comment.id = queued_comment.target_id
+        and comment.moderation = 'approved'
+        and comment.deleted_at is null
+    )
+    or (
+      select count(*)
+      from public.content_reports report
+      where (report.target_type, report.target_id) in (
+        ('review', queued_review.target_id),
+        ('review_comment', queued_comment.target_id)
+      )
+        and report.state = 'open'
+    ) <> 2
+  then
+    raise exception 'Null review decision changed content or report state';
+  end if;
+end;
+$review_and_comment_null_decision_guard$;
 
 do $reported_review_moderation$
 declare
@@ -863,6 +967,52 @@ begin
   end if;
 end;
 $reported_review_moderation$;
+
+do $business_post_null_decision_guard$
+declare
+  queued record;
+begin
+  select * into queued
+  from public.list_reported_business_posts(100, 0)
+  where target_id = '75400000-0000-4000-8000-000000000007';
+
+  if queued.target_id is null then
+    raise exception 'Reported business post was absent from the moderation queue';
+  end if;
+
+  begin
+    perform public.decide_reported_business_post(
+      queued.target_id,
+      null,
+      'Runtime decision must be explicit.',
+      queued.updated_at
+    );
+    raise exception 'Null business-post decision bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid moderation decision' then
+        raise;
+      end if;
+  end;
+
+  if not exists (
+      select 1
+      from public.business_posts post
+      where post.id = queued.target_id
+        and post.deleted_at is null
+    )
+    or not exists (
+      select 1
+      from public.content_reports report
+      where report.target_type = 'business_post'
+        and report.target_id = queued.target_id
+        and report.state = 'open'
+    )
+  then
+    raise exception 'Null business-post decision changed post or report state';
+  end if;
+end;
+$business_post_null_decision_guard$;
 
 reset role;
 
