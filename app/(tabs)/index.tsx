@@ -1,5 +1,5 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { router, useIsFocused } from 'expo-router';
+import { router, useIsFocused, usePathname } from 'expo-router';
 import * as Location from 'expo-location';
 import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
@@ -115,6 +115,7 @@ export default function DiscoverScreen() {
 
 function ScopedDiscoverScreen() {
   const clientHydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
+  const pathname = usePathname();
   const {
     ensurePlace,
     followedIds,
@@ -959,7 +960,7 @@ function ScopedDiscoverScreen() {
           />
         ) : null}
 
-        {clientHydrated && focused ? (
+        {clientHydrated && focused && pathname === '/' ? (
           <View style={[styles.workspace, wide && styles.workspaceWide]}>
             <View style={[styles.mapColumn, wide && styles.mapColumnWide]}>
               <LiveMap
