@@ -67,7 +67,7 @@ export type QuietHoursUpdate = {
 };
 
 const DATABASE_TIME = /^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d(?:\.\d{1,6})?)?$/;
-const IANA_TIME_ZONE = /^(?:UTC|[A-Za-z][A-Za-z0-9._+-]*(?:\/[A-Za-z0-9._+-]+)+)$/;
+const FIXED_OFFSET_TIME_ZONE = /^[+-]/;
 
 function normalizeDatabaseTime(value: string | null): string | null {
   if (value === null) return null;
@@ -81,14 +81,18 @@ export function canonicalIanaTimeZone(value: unknown): string | null {
     || value.length < 1
     || value.length > 64
     || value.trim() !== value
-    || !IANA_TIME_ZONE.test(value)
+    || FIXED_OFFSET_TIME_ZONE.test(value)
   ) {
     return null;
   }
   try {
     const canonical = new Intl.DateTimeFormat('en-US', { timeZone: value })
       .resolvedOptions().timeZone;
-    return canonical && canonical.length <= 64 ? canonical : null;
+    return canonical
+      && canonical.length <= 64
+      && !FIXED_OFFSET_TIME_ZONE.test(canonical)
+      ? canonical
+      : null;
   } catch {
     return null;
   }

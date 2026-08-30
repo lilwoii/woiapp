@@ -26,9 +26,12 @@ describe('notification preferences', () => {
   it('accepts runtime-supported IANA zones and rejects offsets or malformed values', () => {
     expect(canonicalIanaTimeZone('America/Los_Angeles')).toBe('America/Los_Angeles');
     expect(canonicalIanaTimeZone('UTC')).toBe('UTC');
+    expect(canonicalIanaTimeZone('Etc/GMT+7')).toBe('Etc/GMT+7');
     expect(canonicalIanaTimeZone('PDT')).toBeNull();
     expect(canonicalIanaTimeZone('-07:00')).toBeNull();
     expect(canonicalIanaTimeZone('+05:30')).toBeNull();
+    expect(canonicalIanaTimeZone('-0700')).toBeNull();
+    expect(canonicalIanaTimeZone('+05')).toBeNull();
     expect(canonicalIanaTimeZone(' America/Los_Angeles')).toBeNull();
     expect(canonicalIanaTimeZone('Not/A_Zone')).toBeNull();
   });
@@ -39,6 +42,10 @@ describe('notification preferences', () => {
       data: { presetId: 'off', start: null, end: null, timeZone: null },
     });
     expect(quietHoursForPreset('night_22_07', null)).toEqual({
+      ok: false,
+      reason: 'Your current timezone could not be verified. Quiet hours were not changed.',
+    });
+    expect(quietHoursForPreset('night_22_07', '-07:00')).toEqual({
       ok: false,
       reason: 'Your current timezone could not be verified. Quiet hours were not changed.',
     });
