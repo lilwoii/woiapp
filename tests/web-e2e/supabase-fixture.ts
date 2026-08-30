@@ -293,6 +293,7 @@ function tableRows(table: string, role: 'anonymous' | 'customer' | 'business') {
         },
       ];
     case 'mobile_stops':
+    case 'public_business_mobile_service':
     case 'special_hours':
     case 'public_business_media':
     case 'public_business_badges':
@@ -380,7 +381,8 @@ function protectedTableAllowed(
   if (
     table === 'public_business_directory' || table === 'public_business_locations' ||
     table === 'mobile_stops' || table === 'public_business_updates' ||
-    table === 'public_business_live_status' || table === 'public_business_review_aggregates' ||
+    table === 'public_business_live_status' || table === 'public_business_mobile_service' ||
+    table === 'public_business_review_aggregates' ||
     table === 'public_business_contacts' || table === 'public_reviews' ||
     table === 'public_business_media'
   ) {
