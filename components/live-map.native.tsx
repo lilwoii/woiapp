@@ -12,6 +12,7 @@ import {
   viewportIsLiveInventoryEligible,
   zoomFromLongitudeDelta,
 } from '@/lib/map-clustering';
+import { regionForMapCoordinates } from '@/lib/map-camera';
 import { mapCategoryPresentation, mapClusterCategorySummary } from '@/lib/map-presentation';
 import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
@@ -30,12 +31,13 @@ type Props = {
   inventoryFeatures?: MapInventoryFeature[];
   inventoryError?: string | null;
   markersSuppressed?: boolean;
+  searchAreaKey?: string;
   userCoordinates?: { latitude: number; longitude: number } | null;
   routeCoordinates?: NavigationCoordinate[];
   navigationMode?: TravelMode;
 };
 
-const initialRegion = {
+const fallbackRegion = {
   latitude: 34.0722,
   longitude: -118.2737,
   latitudeDelta: 0.18,
@@ -168,21 +170,25 @@ export function LiveMap({
   inventoryFeatures,
   inventoryError = null,
   markersSuppressed = false,
+  searchAreaKey,
   userCoordinates,
   routeCoordinates = [],
   navigationMode,
 }: Props) {
   const mapRef = useRef<MapView | null>(null);
-  const [region, setRegion] = useState<Region>(
-    userCoordinates
-      ? { ...userCoordinates, latitudeDelta: 0.12, longitudeDelta: 0.12 }
-      : initialRegion
-  );
+  const [initialMapRegion] = useState<Region>(() => regionForMapCoordinates(
+    userCoordinates ? [userCoordinates] : places,
+    fallbackRegion,
+  ));
+  const [region, setRegion] = useState<Region>(initialMapRegion);
   const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
   const [inventoryViewportEligible, setInventoryViewportEligible] = useState(true);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [perspective, setPerspective] = useState(false);
   const userMovedMap = useRef(false);
+  const mapWasInteracted = useRef(false);
+  const hasCenteredOnUser = useRef(false);
+  const fittedSearchAreaKey = useRef<string | null>(null);
   const inventoryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authoritativeInventory = inventoryFeatures !== undefined;
   const clientFeatures = useMemo(
@@ -203,6 +209,9 @@ export function LiveMap({
     () => new Map(places.map((place) => [place.id, place])),
     [places]
   );
+  const selectedPlace = selectedId ? placesById.get(selectedId) : undefined;
+  const selectedLatitude = selectedPlace?.latitude;
+  const selectedLongitude = selectedPlace?.longitude;
 
   useEffect(() => {
     void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
@@ -215,20 +224,45 @@ export function LiveMap({
   }, []);
 
   useEffect(() => {
-    const selected = places.find((place) => place.id === selectedId);
-    if (!selected) return;
+    if (selectedLatitude === undefined || selectedLongitude === undefined) return;
     mapRef.current?.animateCamera(
-      { center: { latitude: selected.latitude, longitude: selected.longitude }, zoom: 14 },
+      { center: { latitude: selectedLatitude, longitude: selectedLongitude }, zoom: 14 },
       { duration: motionDuration(reduceMotion, 380) }
     );
-  }, [places, reduceMotion, selectedId]);
+  }, [reduceMotion, selectedLatitude, selectedLongitude]);
+
+  useEffect(() => {
+    if (!searchAreaKey || searchAreaKey === fittedSearchAreaKey.current || !places.length) return;
+    fittedSearchAreaKey.current = searchAreaKey;
+    userMovedMap.current = false;
+    if (places.length === 1) {
+      mapRef.current?.animateCamera(
+        { center: { latitude: places[0].latitude, longitude: places[0].longitude }, zoom: 13 },
+        { duration: motionDuration(reduceMotion, 420) },
+      );
+      return;
+    }
+    mapRef.current?.animateToRegion(
+      regionForMapCoordinates(places, fallbackRegion),
+      motionDuration(reduceMotion, 420),
+    );
+  }, [places, reduceMotion, searchAreaKey]);
+
+  useEffect(() => {
+    if (!userCoordinates || hasCenteredOnUser.current || mapWasInteracted.current) return;
+    hasCenteredOnUser.current = true;
+    mapRef.current?.animateCamera(
+      { center: userCoordinates, zoom: 13 },
+      { duration: motionDuration(reduceMotion, 380) },
+    );
+  }, [reduceMotion, userCoordinates]);
 
   useEffect(() => {
     if (routeCoordinates.length < 2) return;
-    mapRef.current?.fitToCoordinates(routeCoordinates, {
-      animated: !reduceMotion,
-      edgePadding: { top: 96, right: 48, bottom: 124, left: 48 },
-    });
+    mapRef.current?.animateToRegion(
+      regionForMapCoordinates(routeCoordinates, fallbackRegion),
+      motionDuration(reduceMotion, 450),
+    );
   }, [reduceMotion, routeCoordinates]);
 
   return (
@@ -236,18 +270,16 @@ export function LiveMap({
     <MapView
       accessibilityHint="Pan or zoom to explore food places. Use Search this area to refresh results."
       accessibilityLabel="Interactive map of nearby food"
-      initialRegion={
-        userCoordinates
-          ? { ...userCoordinates, latitudeDelta: 0.12, longitudeDelta: 0.12 }
-          : initialRegion
-      }
+      initialRegion={initialMapRegion}
       ref={mapRef}
       onPanDrag={() => {
         if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
+        mapWasInteracted.current = true;
         userMovedMap.current = true;
       }}
       onTouchStart={() => {
         if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
+        mapWasInteracted.current = true;
         userMovedMap.current = true;
       }}
       onRegionChangeComplete={(nextRegion) => {

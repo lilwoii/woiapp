@@ -12,6 +12,7 @@ import {
   shouldRenderMapInventory,
   viewportIsLiveInventoryEligible,
 } from '@/lib/map-clustering';
+import { boundsForMapCoordinates } from '@/lib/map-camera';
 import { categoryMarkerLabel, mapCategoryPresentation, mapClusterCategorySignature, mapClusterCategorySummary } from '@/lib/map-presentation';
 import { motionDuration } from '@/lib/motion';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
@@ -30,6 +31,7 @@ export type Props = {
   inventoryFeatures?: MapInventoryFeature[];
   inventoryError?: string | null;
   markersSuppressed?: boolean;
+  searchAreaKey?: string;
   userCoordinates?: { latitude: number; longitude: number } | null;
   routeCoordinates?: NavigationCoordinate[];
   navigationMode?: TravelMode;
@@ -256,6 +258,7 @@ export default function MapLibreMapView({
   inventoryFeatures,
   inventoryError = null,
   markersSuppressed = false,
+  searchAreaKey,
   userCoordinates,
   routeCoordinates = [],
   navigationMode,
@@ -508,11 +511,9 @@ export default function MapLibreMapView({
       });
     }
 
-    const placesKey = places
-      .map((place) => `${place.id}:${place.latitude}:${place.longitude}`)
-      .join('|');
-    if (placesKey !== fittedPlacesKey.current) {
-      fittedPlacesKey.current = placesKey;
+    const fitRequestKey = searchAreaKey || (!mapWasInteracted.current ? 'initial-results' : '');
+    if (fitRequestKey && fitRequestKey !== fittedPlacesKey.current && places.length) {
+      fittedPlacesKey.current = fitRequestKey;
       if (places.length === 1) {
         map.easeTo({
           center: [places[0].longitude, places[0].latitude],
@@ -520,12 +521,20 @@ export default function MapLibreMapView({
           zoom: 13,
         });
       } else if (places.length > 1) {
-        const bounds = new LngLatBounds();
-        places.forEach((place) => bounds.extend([place.longitude, place.latitude]));
+        const fitBounds = boundsForMapCoordinates(places, {
+          latitude: fallbackCenter[1],
+          longitude: fallbackCenter[0],
+          latitudeDelta: 0.18,
+          longitudeDelta: 0.17,
+        });
+        const bounds = new LngLatBounds(
+          [fitBounds.west, fitBounds.south],
+          [fitBounds.east, fitBounds.north],
+        );
         map.fitBounds(bounds, { duration: motionDuration(reduceMotion, 450), maxZoom: 14, padding: 70 });
       }
     }
-  }, [authoritativeInventory, inventoryViewportEligible, mapZoom, markersSuppressed, places, ready, reduceMotion, renderedInventoryFeatures, selectedId]);
+  }, [authoritativeInventory, inventoryViewportEligible, mapZoom, markersSuppressed, places, ready, reduceMotion, renderedInventoryFeatures, searchAreaKey, selectedId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -631,8 +640,16 @@ export default function MapLibreMapView({
     const key = `${routeCoordinates[0].latitude}:${routeCoordinates[0].longitude}:${routeCoordinates.at(-1)?.latitude}:${routeCoordinates.at(-1)?.longitude}`;
     if (key === fittedRouteKey.current) return;
     fittedRouteKey.current = key;
-    const bounds = new LngLatBounds();
-    routeCoordinates.forEach((point) => bounds.extend([point.longitude, point.latitude]));
+    const routeBounds = boundsForMapCoordinates(routeCoordinates, {
+      latitude: fallbackCenter[1],
+      longitude: fallbackCenter[0],
+      latitudeDelta: 0.18,
+      longitudeDelta: 0.17,
+    });
+    const bounds = new LngLatBounds(
+      [routeBounds.west, routeBounds.south],
+      [routeBounds.east, routeBounds.north],
+    );
     map.fitBounds(bounds, { duration: motionDuration(reduceMotion, 450), maxZoom: 17, padding: 84 });
   }, [ready, reduceMotion, routeCoordinates]);
 

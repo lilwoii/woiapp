@@ -142,13 +142,14 @@ function ScopedDiscoverScreen() {
   const [pickupOnly, setPickupOnly] = useState(false);
   const [hiddenSponsoredIds, setHiddenSponsoredIds] = useState<string[]>([]);
   const [openSponsorReasonId, setOpenSponsorReasonId] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState(publicPlaces[0]?.id);
+  const [selectedId, setSelectedId] = useState<string | undefined>(publicPlaces[0]?.id);
   const [locationLabel, setLocationLabel] = useState('Choose city, ZIP, or location');
   const [userCoordinates, setUserCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locating, setLocating] = useState(isSupabaseConfigured);
   const [locationPanelOpen, setLocationPanelOpen] = useState(isSupabaseConfigured);
   const [manualArea, setManualArea] = useState('');
   const [activeArea, setActiveArea] = useState('');
+  const [mapFocusKey, setMapFocusKey] = useState('');
   const [pagination, setPagination] = useState({ key: '', count: 24 });
   const [locationError, setLocationError] = useState<string | null>(null);
   const [mapInventoryFeatures, setMapInventoryFeatures] = useState<MapInventoryFeature[]>([]);
@@ -283,6 +284,8 @@ function ScopedDiscoverScreen() {
       }
       setLocationLabel('Near your current location');
       setActiveArea('');
+      setMapFocusKey(`near:${generation}:${latitude.toFixed(5)}:${longitude.toFixed(5)}`);
+      setSelectedId(undefined);
       setLocationPanelOpen(false);
       setSortMode('nearby');
       void loadMapInventory(viewportAroundPoint(latitude, longitude, 16_093));
@@ -343,6 +346,8 @@ function ScopedDiscoverScreen() {
       return;
     }
     setActiveArea(clean.toLocaleLowerCase('en-US'));
+    setMapFocusKey(`area:${generation}:${clean.toLocaleLowerCase('en-US')}`);
+    setSelectedId(undefined);
     setLocationLabel(clean);
     setUserCoordinates(null);
     setLocationPanelOpen(false);
@@ -370,6 +375,7 @@ function ScopedDiscoverScreen() {
       return;
     }
     setActiveArea('');
+    setSelectedId(undefined);
     setLocationLabel('Visible map area');
     setSortMode('nearby');
   }, [loadMapInventory, refresh]);
@@ -462,7 +468,8 @@ function ScopedDiscoverScreen() {
 
   const resultsKey = JSON.stringify(discoveryFilters);
   const visibleCount = pagination.key === resultsKey ? pagination.count : 24;
-  const selected = ranked.find((place) => place.id === selectedId) ?? ranked[0];
+  const explicitSelection = ranked.find((place) => place.id === selectedId);
+  const selected = explicitSelection ?? ranked[0];
   const visibleRanked = ranked.slice(0, visibleCount);
   const mappedPlaces = ranked;
   const permittedMapInventory = useMemo(
@@ -923,7 +930,8 @@ function ScopedDiscoverScreen() {
                 onViewportChange={authoritativeMapInventory ? (viewport) => void loadMapInventory(viewport) : undefined}
                 onViewportInvalidated={invalidateMapInventory}
                 places={mappedPlaces}
-                selectedId={selected?.id}
+                searchAreaKey={mapFocusKey || undefined}
+                selectedId={explicitSelection?.id}
                 userCoordinates={userCoordinates}
               />
               <View

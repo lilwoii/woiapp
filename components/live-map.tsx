@@ -19,6 +19,7 @@ type Props = {
   inventoryFeatures?: MapInventoryFeature[];
   inventoryError?: string | null;
   markersSuppressed?: boolean;
+  searchAreaKey?: string;
   userCoordinates?: { latitude: number; longitude: number } | null;
   routeCoordinates?: NavigationCoordinate[];
   navigationMode?: TravelMode;
