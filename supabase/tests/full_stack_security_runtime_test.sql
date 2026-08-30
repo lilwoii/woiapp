@@ -2194,10 +2194,10 @@ reset role;
 do $sponsored_selection$
 declare
   result jsonb;
-  decision_id uuid;
+  selected_decision_id uuid;
 begin
   select payload into result from runtime_sponsored_result;
-  decision_id := (result->>'placement_id')::uuid;
+  selected_decision_id := (result->>'placement_id')::uuid;
   if result->>'business_id' <> '70000000-0000-4000-8000-000000000007'
     or result->>'disclosure' <> 'Sponsored ad'
     or result->>'placement_token' !~ '^[0-9a-f-]{36}\.[0-9]{10}\.[0-9a-f]{64}$'
@@ -2206,11 +2206,11 @@ begin
   end if;
   if exists (
       select 1 from private.ad_events event
-      where event.decision_id = decision_id
+      where event.decision_id = selected_decision_id
     )
     or exists (
       select 1 from private.ad_budget_reservations reservation
-      where reservation.decision_id = decision_id
+      where reservation.decision_id = selected_decision_id
     )
   then
     raise exception 'Sponsored selection recorded an unseen impression or reservation';
@@ -2238,13 +2238,13 @@ set local role service_role;
 do $sponsored_location_revalidation$
 declare
   token text;
-  decision_id uuid;
+  selected_decision_id uuid;
   receipt jsonb;
 begin
   select
     payload->>'placement_token',
     (payload->>'placement_id')::uuid
-  into token, decision_id
+  into token, selected_decision_id
   from runtime_sponsored_stale_result;
   receipt := public.record_sponsored_interaction(
     token, 'impression', 'runtime:sponsor:stale-location', repeat('f', 64)
@@ -2252,14 +2252,14 @@ begin
   if receipt->>'accepted' <> 'false'
     or not exists (
       select 1 from private.ad_events event
-      where event.decision_id = decision_id
+      where event.decision_id = selected_decision_id
         and event.event_type = 'impression'
         and not event.valid
         and event.invalid_reason = 'location_ineligible'
     )
     or exists (
       select 1 from private.ad_budget_reservations reservation
-      where reservation.decision_id = decision_id
+      where reservation.decision_id = selected_decision_id
     )
   then
     raise exception 'Sponsored impression ignored a withdrawn public location';
