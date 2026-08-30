@@ -2,6 +2,12 @@ import type { PublicBadge } from '@/lib/trust-badges';
 
 export type FeedFilter = 'all' | 'business_post' | 'user_review';
 
+export type FeedCursor = {
+  createdAt: string;
+  feedType: Exclude<FeedFilter, 'all'>;
+  contentId: string;
+};
+
 export type FeedItem = {
   type: 'business_post' | 'user_review';
   id: string;

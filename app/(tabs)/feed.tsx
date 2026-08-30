@@ -10,7 +10,7 @@ import { TrustBadgeStrip } from '@/components/trust-badge-strip';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { fetchFollowedFeed } from '@/lib/social-feed';
-import type { FeedFilter, FeedItem } from '@/types/feed';
+import type { FeedCursor, FeedFilter, FeedItem } from '@/types/feed';
 
 const filters: { id: FeedFilter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -28,6 +28,7 @@ export default function FeedScreen() {
     generation: number;
     items: FeedItem[];
     hasMore: boolean;
+    nextCursor?: FeedCursor;
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -79,6 +80,7 @@ export default function FeedScreen() {
           generation,
           items: result.data.items,
           hasMore: result.data.hasMore,
+          nextCursor: result.data.nextCursor,
         });
       });
     }, 0);
@@ -86,7 +88,7 @@ export default function FeedScreen() {
   }, [accountId, filter, reloadKey]);
 
   const loadMore = async () => {
-    if (!accountId || !current || !current.hasMore || loadingMore) return;
+    if (!accountId || !current || !current.hasMore || !current.nextCursor || loadingMore) return;
     const requestedAccountId = accountId;
     const requestedFilter = filter;
     const generation = current.generation;
@@ -94,7 +96,7 @@ export default function FeedScreen() {
     setError(null);
     setLoadingMore(true);
     try {
-      const result = await fetchFollowedFeed(requestedFilter, requestedAccountId, current.items.length);
+      const result = await fetchFollowedFeed(requestedFilter, requestedAccountId, current.nextCursor);
       if (
         generation !== feedRequestGeneration.current ||
         loadMoreRequest !== loadMoreGeneration.current
@@ -118,7 +120,12 @@ export default function FeedScreen() {
         ) return existing;
         const byKey = new Map(existing.items.map((item) => [`${item.type}:${item.id}`, item]));
         for (const item of result.data?.items ?? []) byKey.set(`${item.type}:${item.id}`, item);
-        return { ...existing, items: [...byKey.values()], hasMore: result.data?.hasMore ?? false };
+        return {
+          ...existing,
+          items: [...byKey.values()],
+          hasMore: result.data?.hasMore ?? false,
+          nextCursor: result.data?.nextCursor,
+        };
       });
     } finally {
       if (loadMoreRequest === loadMoreGeneration.current) setLoadingMore(false);

@@ -666,6 +666,109 @@ insert into public.business_post_media (post_id, asset_id, sort_order) values (
   0
 );
 
+-- Cursor paging must remain complete when more than one page shares the exact
+-- same timestamp. These fixtures are removed immediately after the check.
+insert into public.follows (user_id, business_id) values (
+  '60000000-0000-4000-8000-000000000006',
+  '70000000-0000-4000-8000-000000000007'
+);
+insert into public.profile_follows (follower_id, followed_id) values (
+  '60000000-0000-4000-8000-000000000006',
+  '20000000-0000-4000-8000-000000000002'
+);
+insert into public.business_posts (
+  id, business_id, author_id, body, moderation, created_at, updated_at
+)
+select
+  ('75610000-0000-4000-8000-' || lpad(item::text, 12, '0'))::uuid,
+  '70000000-0000-4000-8000-000000000007'::uuid,
+  '60000000-0000-4000-8000-000000000006'::uuid,
+  'Runtime tied cursor post ' || item::text || '.',
+  'approved'::public.moderation_state,
+  '2026-01-01 12:00:00+00'::timestamptz,
+  '2026-01-01 12:00:00+00'::timestamptz
+from generate_series(1, 22) item;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"60000000-0000-4000-8000-000000000006","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $followed_feed_keyset_pagination$
+declare
+  first_ids uuid[];
+  second_ids uuid[];
+  cursor_time timestamptz;
+  cursor_type text;
+  cursor_id uuid;
+  first_has_more boolean;
+  second_has_more boolean;
+  user_review_count integer;
+  all_count integer;
+begin
+  select
+    array_agg(page.content_id order by page.created_at desc, page.feed_type desc, page.content_id desc),
+    bool_and(page.has_more)
+  into first_ids, first_has_more
+  from public.list_followed_feed('business_post', null, null, null, 100) page;
+
+  select page.created_at, page.feed_type, page.content_id
+  into cursor_time, cursor_type, cursor_id
+  from public.list_followed_feed('business_post', null, null, null, 100) page
+  order by page.created_at desc, page.feed_type desc, page.content_id desc
+  offset 19 limit 1;
+
+  select
+    array_agg(page.content_id order by page.created_at desc, page.feed_type desc, page.content_id desc),
+    bool_or(page.has_more)
+  into second_ids, second_has_more
+  from public.list_followed_feed(
+    'business_post', cursor_time, cursor_type, cursor_id, 20
+  ) page;
+
+  select count(*) into user_review_count
+  from public.list_followed_feed('user_review', null, null, null, 20);
+  select count(*) into all_count
+  from public.list_followed_feed('all', null, null, null, 20);
+
+  if cardinality(first_ids) <> 20
+    or first_has_more is distinct from true
+    or cardinality(second_ids) <> 4
+    or second_has_more is distinct from false
+    or exists (
+      select 1 from unnest(first_ids) as first_page(id)
+      join unnest(second_ids) as second_page(id) using (id)
+    )
+    or user_review_count <> 1
+    or all_count <> 20
+  then
+    raise exception 'Followed feed cursor skipped, repeated, or misfiltered tied rows';
+  end if;
+
+  begin
+    perform public.list_followed_feed('all', now(), null, null, 20);
+    raise exception 'Partial followed feed cursor bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid followed feed cursor' then
+        raise;
+      end if;
+  end;
+end;
+$followed_feed_keyset_pagination$;
+
+reset role;
+delete from public.business_posts
+where id::text like '75610000-0000-4000-8000-%';
+delete from public.profile_follows
+where follower_id = '60000000-0000-4000-8000-000000000006'
+  and followed_id = '20000000-0000-4000-8000-000000000002';
+delete from public.follows
+where user_id = '60000000-0000-4000-8000-000000000006'
+  and business_id = '70000000-0000-4000-8000-000000000007';
+
 insert into public.creator_invitations (
   id, public_id, business_id, sender_id, recipient_id, title, message,
   event_starts_at, event_ends_at, idempotency_key_hash, request_hash

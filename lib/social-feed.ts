@@ -4,7 +4,7 @@ import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
 import { createAccountBoundSupabaseClient, supabase } from '@/lib/supabase';
 import { publicBadgeFromCode, type PublicBadge } from '@/lib/trust-badges';
 import type { ActionResult } from '@/types/marketplace';
-import type { BusinessPostMediaCandidate, FeedFilter, FeedItem } from '@/types/feed';
+import type { BusinessPostMediaCandidate, FeedCursor, FeedFilter, FeedItem } from '@/types/feed';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Row = Record<string, unknown>;
@@ -46,6 +46,48 @@ function dateTimeLabel(value: unknown) {
 
 function configurationRequired<T>(): ActionResult<T> {
   return { ok: false, code: 'CONFIG_REQUIRED', reason: 'Live social services are not configured.' };
+}
+
+export function parseFollowedFeedPage(value: unknown): {
+  page: Row[];
+  hasMore: boolean;
+  nextCursor?: FeedCursor;
+} {
+  if (
+    !Array.isArray(value) ||
+    value.length > 20 ||
+    value.some((item) => !item || typeof item !== 'object' || Array.isArray(item))
+  ) {
+    throw new Error('INVALID_FEED_PAGE');
+  }
+  const page = value as Row[];
+  const hasMore = page[0]?.has_more;
+  if (
+    (page.length > 0 && typeof hasMore !== 'boolean') ||
+    page.some((row) => {
+      const rowType = text(row.feed_type);
+      const rowId = text(row.content_id);
+      const rowCreatedAt = text(row.created_at);
+      return !['business_post', 'user_review'].includes(rowType) ||
+        !uuidPattern.test(rowId) ||
+        !rowCreatedAt ||
+        !Number.isFinite(new Date(rowCreatedAt).getTime()) ||
+        typeof row.has_more !== 'boolean' ||
+        row.has_more !== hasMore;
+    })
+  ) {
+    throw new Error('INVALID_FEED_PAGE');
+  }
+  const last = page.at(-1);
+  return {
+    page,
+    hasMore: hasMore === true,
+    nextCursor: hasMore === true && last ? {
+      createdAt: text(last.created_at),
+      feedType: text(last.feed_type) as FeedCursor['feedType'],
+      contentId: text(last.content_id),
+    } : undefined,
+  };
 }
 
 async function accountClient(expectedUserId: string) {
@@ -142,15 +184,20 @@ export async function fetchBusinessBadges(businessId: string): Promise<ActionRes
 export async function fetchFollowedFeed(
   filter: FeedFilter,
   expectedUserId: string,
-  offset = 0
-): Promise<ActionResult<{ items: FeedItem[]; hasMore: boolean }>> {
+  cursor?: FeedCursor,
+): Promise<ActionResult<{ items: FeedItem[]; hasMore: boolean; nextCursor?: FeedCursor }>> {
   if (!supabase) return configurationRequired();
   if (
     !uuidPattern.test(expectedUserId) ||
     !['all', 'business_post', 'user_review'].includes(filter) ||
-    !Number.isInteger(offset) ||
-    offset < 0 ||
-    offset > 10_000
+    (cursor != null && (
+      !uuidPattern.test(cursor.contentId) ||
+      !['business_post', 'user_review'].includes(cursor.feedType) ||
+      !cursor.createdAt ||
+      cursor.createdAt.length > 64 ||
+      !Number.isFinite(new Date(cursor.createdAt).getTime()) ||
+      (filter !== 'all' && cursor.feedType !== filter)
+    ))
   ) {
     return { ok: false, code: 'INVALID', reason: 'This feed request is invalid.' };
   }
@@ -164,16 +211,21 @@ export async function fetchFollowedFeed(
         reason: 'The active account changed. Open the feed again from the current account.',
       };
     }
-    let query = client.from('public_followed_feed').select('*');
-    if (filter !== 'all') query = query.eq('feed_type', filter);
-    const { data, error } = await query.order('created_at', { ascending: false }).range(offset, offset + pageSize);
+    const { data, error } = await client.rpc('list_followed_feed', {
+      feed_filter: filter,
+      cursor_created_at: cursor?.createdAt ?? null,
+      cursor_feed_type: cursor?.feedType ?? null,
+      cursor_content_id: cursor?.contentId ?? null,
+      result_limit: pageSize,
+    });
     if (error) throw error;
-    const page = rows(data);
+    const parsedPage = parseFollowedFeedPage(data);
     return {
       ok: true,
       data: {
-        items: await hydrateFeedRows(page.slice(0, pageSize), client),
-        hasMore: page.length > pageSize,
+        items: await hydrateFeedRows(parsedPage.page, client),
+        hasMore: parsedPage.hasMore,
+        nextCursor: parsedPage.nextCursor,
       },
     };
   } catch (error) {
