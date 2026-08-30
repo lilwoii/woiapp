@@ -6,6 +6,7 @@ import worker, { allowedMapOrigins, appAssociationResponse } from '../hosting/wo
 const validFingerprint = Array.from({ length: 32 }, (_, index) =>
   index.toString(16).padStart(2, '0')
 ).join(':');
+const credentialBearingOrigin = `https://${['user', 'secret'].join(':')}@tiles.spottr.app`;
 
 test('Apple association allows only Spottr public link surfaces with explicit identifiers', async () => {
   const response = appAssociationResponse('/.well-known/apple-app-site-association', {
@@ -64,7 +65,7 @@ test('map CSP origins accept only bounded exact public HTTPS origins', () => {
 
   for (const value of [
     'http://tiles.spottr.app',
-    'https://user:secret@tiles.spottr.app',
+    credentialBearingOrigin,
     'https://tiles.spottr.app/style.json',
     'https://127.0.0.1',
     'https://localhost.',

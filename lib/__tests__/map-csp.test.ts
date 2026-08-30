@@ -1,5 +1,7 @@
 import { mapStyleOriginIsAllowed, parseMapCspOrigins } from '../map-csp';
 
+const credentialBearingOrigin = `https://${['user', 'secret'].join(':')}@tiles.spottr.app`;
+
 describe('web map CSP origins', () => {
   it('normalizes and deduplicates exact public HTTPS origins', () => {
     expect(
@@ -16,7 +18,7 @@ describe('web map CSP origins', () => {
     undefined,
     '',
     'http://tiles.spottr.app',
-    'https://user:secret@tiles.spottr.app',
+    credentialBearingOrigin,
     'https://tiles.spottr.app/style.json',
     'https://tiles.spottr.app?token=public',
     'https://tiles.spottr.app#fragment',

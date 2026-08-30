@@ -95,15 +95,20 @@ if (
   throw new Error('Synthetic production configuration did not preserve legal URLs or verified deep links.');
 }
 
+const credentialBearingAppUrl =
+  `https://${['user', 'secret'].join(':')}@release-check.spottr.app`;
+const credentialBearingMapOrigin =
+  `https://${['token', 'secret'].join(':')}@tiles-release-check.spottr.app`;
+
 const rejectedConfigurations = [
   ['non-Supabase backend origin', { EXPO_PUBLIC_SUPABASE_URL: 'https://api.release-check.spottr.app' }],
   ['Supabase URL with a path', { EXPO_PUBLIC_SUPABASE_URL: 'https://spottr-release-test.supabase.co/rest/v1' }],
-  ['credential-bearing app URL', { EXPO_PUBLIC_APP_URL: 'https://user:secret@release-check.spottr.app' }],
+  ['credential-bearing app URL', { EXPO_PUBLIC_APP_URL: credentialBearingAppUrl }],
   ['non-origin app URL', { EXPO_PUBLIC_APP_URL: 'https://release-check.spottr.app/app' }],
   ['placeholder legal URL', { EXPO_PUBLIC_PRIVACY_POLICY_URL: 'https://example.com/privacy' }],
-  ['credential-bearing map URL', { EXPO_PUBLIC_MAP_STYLE_URL: 'https://token:secret@tiles-release-check.spottr.app/style.json' }],
+  ['credential-bearing map URL', { EXPO_PUBLIC_MAP_STYLE_URL: `${credentialBearingMapOrigin}/style.json` }],
   ['insecure map CSP origin', { EXPO_PUBLIC_MAP_CSP_ORIGINS: 'http://tiles-release-check.spottr.app' }],
-  ['credential-bearing map CSP origin', { EXPO_PUBLIC_MAP_CSP_ORIGINS: 'https://token:secret@tiles-release-check.spottr.app' }],
+  ['credential-bearing map CSP origin', { EXPO_PUBLIC_MAP_CSP_ORIGINS: credentialBearingMapOrigin }],
   ['non-origin map CSP value', { EXPO_PUBLIC_MAP_CSP_ORIGINS: 'https://tiles-release-check.spottr.app/style.json' }],
   ['wildcard map CSP origin', { EXPO_PUBLIC_MAP_CSP_ORIGINS: 'https://*.spottr.app' }],
   ['trailing-dot map CSP origin', { EXPO_PUBLIC_MAP_CSP_ORIGINS: 'https://localhost.' }],

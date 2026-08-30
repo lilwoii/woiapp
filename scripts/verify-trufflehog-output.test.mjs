@@ -65,7 +65,7 @@ function approvedFindings() {
 function findingKey(record) {
   const git = record.SourceMetadata.Data.Git;
   const rawHash = createHash('sha256').update(record.RawV2, 'utf8').digest('hex');
-  return `${git.commit}:${git.file}:${git.line}:${rawHash}`;
+  return `${git.commit}:${git.file}:${git.line}:${record.DecoderName}:${rawHash}`;
 }
 
 function approvedFindingPolicy() {
@@ -76,9 +76,9 @@ function approvedFindingPolicy() {
   }));
 }
 
-test('pins the production policy to five exact findings across three required groups', () => {
-  assert.equal(REVIEWED_TRUFFLEHOG_FINDING_COUNT, 5);
-  assert.equal(REVIEWED_TRUFFLEHOG_REQUIRED_GROUP_COUNT, 3);
+test('pins the production policy to nine exact findings across six required groups', () => {
+  assert.equal(REVIEWED_TRUFFLEHOG_FINDING_COUNT, 9);
+  assert.equal(REVIEWED_TRUFFLEHOG_REQUIRED_GROUP_COUNT, 6);
   assert.ok(validateTruffleHogOutput({
     stdout: JSON.stringify(finding()),
     stderr: '',
@@ -108,6 +108,20 @@ test('rejects verified, changed, moved, duplicated, or differently decoded findi
     assert.ok(validate([record]).length > 0);
   }
   assert.ok(validate([finding(), finding()]).some((error) => error.includes('duplicate')));
+});
+
+test('binds an approved HTML-decoded fixture to its exact decoder', () => {
+  const htmlFinding = finding({ decoder: 'HTML' });
+  const findingGroups = new Map([[findingKey(htmlFinding), 'html-exact']]);
+  const validateExact = (record) => validateTruffleHogOutput({
+    stdout: JSON.stringify(record),
+    stderr: '',
+    exitCode: 183,
+    findingGroups,
+  });
+
+  assert.deepEqual(validateExact(htmlFinding), []);
+  assert.ok(validateExact(finding()).length > 0);
 });
 
 test('rejects malformed output, stderr, and mismatched scanner status', () => {
