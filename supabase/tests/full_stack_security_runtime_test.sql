@@ -2261,21 +2261,30 @@ where provider_slug = 'runtime_provider'
   and business_external_id = 'runtime-missing-listing'
   and location_external_id = 'runtime-primary-location';
 
+create temporary table runtime_sponsored_stale_receipt (payload jsonb not null);
+grant select, insert on runtime_sponsored_stale_receipt to service_role;
+
 set local role service_role;
+insert into runtime_sponsored_stale_receipt (payload)
+select public.record_sponsored_interaction(
+  stale.payload->>'placement_token',
+  'impression',
+  'runtime:sponsor:stale-location',
+  repeat('f', 64)
+)
+from runtime_sponsored_stale_result stale;
+reset role;
+
 do $sponsored_location_revalidation$
 declare
-  token text;
   selected_decision_id uuid;
   receipt jsonb;
 begin
   select
-    payload->>'placement_token',
     (payload->>'placement_id')::uuid
-  into token, selected_decision_id
+  into selected_decision_id
   from runtime_sponsored_stale_result;
-  receipt := public.record_sponsored_interaction(
-    token, 'impression', 'runtime:sponsor:stale-location', repeat('f', 64)
-  );
+  select payload into receipt from runtime_sponsored_stale_receipt;
   if receipt->>'accepted' <> 'false'
     or not exists (
       select 1 from private.ad_events event
@@ -2293,7 +2302,6 @@ begin
   end if;
 end;
 $sponsored_location_revalidation$;
-reset role;
 
 update private.provider_location_sources
 set source_status = 'active',
