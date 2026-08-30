@@ -1,6 +1,6 @@
 # Spottr launch status
 
-Last verified: 2026-08-29 (UTC)
+Last verified: 2026-08-30 (UTC)
 
 Spottr is not yet authorized for a public launch. The application code and
 release automation have reached a strong release-candidate baseline, but the
@@ -10,11 +10,11 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 ## Verified release-candidate evidence
 
 - Source and web publication commit
-  `5e0fed5f2e5de8e21f1bbebb0ce109f37a6c317d` passed the GitHub
-  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33260297079) and
-  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33260297151) workflows.
+  `e11bd21f46c2920548924a01a7a6812f735a5d13` passed the GitHub
+  [Quality](https://github.com/lilwoii/woiapp/actions/runs/33286111042) and
+  [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33286110976) workflows.
   A second, manually dispatched
-  [Quality run](https://github.com/lilwoii/woiapp/actions/runs/33277881881)
+  [Quality run](https://github.com/lilwoii/woiapp/actions/runs/33286418836)
   produced the commit-bound Sites artifact after passing both the full
   PostgreSQL schema/migration/runtime replay and the independent shadow
   migration-order replay.
@@ -32,6 +32,12 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
 - Sponsored authoring remains separate from organic ranking, owner/manager and
   AAL2 gated, server priced, idempotent, review gated, and unable to activate or
   charge itself. A released budget reservation cannot later create a debit.
+- User-published profile and business links now share a strict public-HTTPS
+  policy across iOS, Android, web, database constraints, staged revisions, and
+  public projections. Credential-bearing URLs, custom ports, IP literals,
+  numeric-address aliases, single-label hosts, and reserved/internal suffixes
+  fail closed. Licensed-provider URLs that do not qualify remain private rather
+  than rolling back an otherwise valid provider batch.
 - The push foundation's private tables, grants, consent/preference races,
   bounded outbox/delivery leases, fanout cursor, device-owner consistency,
   atomic provider handoff, delayed receipt checks, ambiguous-send handling,
@@ -51,8 +57,8 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   marker until local cleanup is proven. Dispatch and receipt Edge contracts use
   fixed Expo endpoints, generic lock-screen copy, bounded provider batches,
   versioned token keys, and independent fail-closed worker/provider switches.
-- Sites version 50 was built, saved, and privately deployed from exact verified
-  web commit `5e0fed5f2e5de8e21f1bbebb0ce109f37a6c317d` on 2026-08-29 UTC at
+- Sites version 52 was built, saved, and privately deployed from exact verified
+  web commit `e11bd21f46c2920548924a01a7a6812f735a5d13` on 2026-08-30 UTC at
   `https://noshatlas-live.lilwoi.chatgpt.site`. The access policy was rechecked
   immediately before deployment: the caller is the owner, custom access allows
   exactly one account user, and no workspace groups, tenant groups, or external
