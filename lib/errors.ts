@@ -55,7 +55,7 @@ export function toActionError(error: unknown, fallback = genericMessage): Action
     };
   }
 
-  if (status === 429 || message.includes('rate limit')) {
+  if (status === 429 || message.includes('rate limit') || message.includes('rate_limited')) {
     return {
       ok: false,
       code: 'RATE_LIMITED',

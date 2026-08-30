@@ -684,6 +684,136 @@ update public.businesses
 set state = 'published', verification = 'verified'
 where id = '70000000-0000-4000-8000-000000000007';
 
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $business_follow_authority$
+begin
+  begin
+    insert into public.follows (user_id, business_id) values (
+      '20000000-0000-4000-8000-000000000002',
+      '70000000-0000-4000-8000-000000000007'
+    );
+    raise exception 'Authenticated user bypassed the business follow RPC';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform public.set_business_follow(
+      '70000000-0000-4000-8000-000000000007', null
+    );
+    raise exception 'Null business follow intent bypassed validation';
+  exception
+    when invalid_parameter_value then
+      if sqlerrm <> 'INVALID_BUSINESS_FOLLOW_REQUEST' then raise; end if;
+  end;
+
+  if public.set_business_follow(
+      '70000000-0000-4000-8000-000000000007', true
+    ) is distinct from true
+    or public.set_business_follow(
+      '70000000-0000-4000-8000-000000000007', true
+    ) is distinct from true
+    or (
+      select count(*)
+      from public.follows follow
+      where follow.user_id = '20000000-0000-4000-8000-000000000002'
+        and follow.business_id = '70000000-0000-4000-8000-000000000007'
+    ) <> 1
+  then
+    raise exception 'Business follow was not idempotent';
+  end if;
+end;
+$business_follow_authority$;
+
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+update private.provider_business_sources
+set source_status = 'stale'
+where provider_slug = 'runtime_provider'
+  and provider_external_id = 'runtime-missing-listing';
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $business_unfollow_ineligible$
+declare
+  attempt integer;
+begin
+
+  if public.set_business_follow(
+      '70000000-0000-4000-8000-000000000007', false
+    ) is distinct from false
+    or public.set_business_follow(
+      '70000000-0000-4000-8000-000000000007', false
+    ) is distinct from false
+    or exists (
+      select 1
+      from public.follows follow
+      where follow.user_id = '20000000-0000-4000-8000-000000000002'
+        and follow.business_id = '70000000-0000-4000-8000-000000000007'
+    )
+  then
+    raise exception 'An ineligible saved business could not be unfollowed idempotently';
+  end if;
+
+  for attempt in 1..116 loop
+    perform public.set_business_follow(
+      '70000000-0000-4000-8000-000000000007', false
+    );
+  end loop;
+  begin
+    perform public.set_business_follow(
+      '70000000-0000-4000-8000-000000000007', false
+    );
+    raise exception 'Business follow mutation bypassed its rate limit';
+  exception
+    when sqlstate 'P0001' then
+      if sqlerrm <> 'RATE_LIMITED' then raise; end if;
+  end;
+end;
+$business_unfollow_ineligible$;
+
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+update private.provider_business_sources
+set source_status = 'active'
+where provider_slug = 'runtime_provider'
+  and provider_external_id = 'runtime-missing-listing';
+
+do $business_follow_audit$
+begin
+  if (
+      select count(*)
+      from public.audit_events event
+      where event.actor_id = '20000000-0000-4000-8000-000000000002'
+        and event.business_id = '70000000-0000-4000-8000-000000000007'
+        and event.event_type = 'business.followed'
+    ) <> 1
+    or (
+      select count(*)
+      from public.audit_events event
+      where event.actor_id = '20000000-0000-4000-8000-000000000002'
+        and event.business_id = '70000000-0000-4000-8000-000000000007'
+        and event.event_type = 'business.unfollowed'
+    ) <> 1
+  then
+    raise exception 'Business follow audit was not change-bound';
+  end if;
+end;
+$business_follow_audit$;
+
 -- Reports against already-approved reviews must be visible to staff and must
 -- have an audited, optimistic-locking keep/remove path.
 select pg_catalog.set_config(

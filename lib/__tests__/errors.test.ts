@@ -7,6 +7,7 @@ describe('safe error mapping', () => {
     [{ status: 401 }, 'AUTH_REQUIRED'],
     [{ status: 429 }, 'RATE_LIMITED'],
     [{ context: { status: 429 } }, 'RATE_LIMITED'],
+    [{ code: 'P0001', message: 'RATE_LIMITED' }, 'RATE_LIMITED'],
   ])('maps expected service errors without exposing internals', (error, code) => {
     const result = toActionError(error, 'Fallback');
     expect(result.ok).toBe(false);

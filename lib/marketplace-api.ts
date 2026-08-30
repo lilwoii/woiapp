@@ -1886,16 +1886,24 @@ export async function setFollow(
   if (!client) return expectedUserId ? accountChanged() : configurationRequired();
 
   try {
-    const query = following
-      ? client.from('follows').upsert(
-          { user_id: user.data, business_id: placeId },
-          { onConflict: 'user_id,business_id', ignoreDuplicates: true }
-        )
-      : client.from('follows').delete().eq('user_id', user.data).eq('business_id', placeId);
-    const { error } = await query;
+    if (!uuidPattern.test(placeId)) {
+      return { ok: false, code: 'INVALID', reason: 'This place is unavailable.' };
+    }
+    const { data, error } = await client.rpc('set_business_follow', {
+      target_business_id: placeId,
+      should_follow: following,
+    });
     if (error) throw error;
+    if (data !== following) throw new Error('INVALID_BUSINESS_FOLLOW_RECEIPT');
     return { ok: true };
   } catch (error) {
+    if ((error as { message?: string } | null)?.message?.includes('BUSINESS_FOLLOW_LIMIT_REACHED')) {
+      return {
+        ok: false,
+        code: 'INVALID',
+        reason: 'You can save up to 2,000 places. Remove one before saving another.',
+      };
+    }
     return toActionError(error, following ? 'This place could not be followed.' : 'This place could not be unfollowed.');
   }
 }
