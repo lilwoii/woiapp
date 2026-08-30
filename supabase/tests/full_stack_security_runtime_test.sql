@@ -2586,6 +2586,44 @@ values
     'draft',
     'community',
     '10000000-0000-4000-8000-000000000001'
+  ),
+  (
+    '70110000-0000-4000-8000-000000000004',
+    'restaurant',
+    'Runtime Invited Claim Guard',
+    'runtime-invited-claim-guard',
+    'archived',
+    'community',
+    '10000000-0000-4000-8000-000000000001'
+  ),
+  (
+    '70110000-0000-4000-8000-000000000005',
+    'restaurant',
+    'Runtime Revoked Claim Restore',
+    'runtime-revoked-claim-restore',
+    'archived',
+    'community',
+    '10000000-0000-4000-8000-000000000001'
+  );
+
+insert into public.business_members (
+  business_id, user_id, role, status, invited_by, revoked_at
+) values
+  (
+    '70110000-0000-4000-8000-000000000004',
+    '10000000-0000-4000-8000-000000000001',
+    'staff',
+    'invited',
+    'a1000000-0000-4000-8000-000000000001',
+    null
+  ),
+  (
+    '70110000-0000-4000-8000-000000000005',
+    '10000000-0000-4000-8000-000000000001',
+    'manager',
+    'revoked',
+    'a1000000-0000-4000-8000-000000000001',
+    now()
   );
 
 insert into public.business_claims (
@@ -2626,6 +2664,20 @@ values
     'a1000000-0000-4000-8000-000000000001',
     'listed_phone',
     'pending'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000009',
+    '70110000-0000-4000-8000-000000000004',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'pending'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000010',
+    '70110000-0000-4000-8000-000000000005',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'pending'
   );
 
 do $business_claim_partial_index_behavior$
@@ -2660,6 +2712,69 @@ $business_claim_partial_index_behavior$;
 alter table public.business_claims
   disable trigger require_business_claim_verification_receipt;
 
+do $business_claim_membership_escalation_behavior$
+begin
+  begin
+    update public.business_members membership
+    set status = 'active',
+        revoked_at = null,
+        accepted_at = now()
+    where membership.business_id = '70110000-0000-4000-8000-000000000005'
+      and membership.user_id = '10000000-0000-4000-8000-000000000001';
+    raise exception 'Pending ownership claim allowed a conflicting membership activation';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'BUSINESS_CLAIM_PENDING_FOR_MEMBER' then
+        raise;
+      end if;
+  end;
+
+  begin
+    update public.business_claims claim
+    set state = 'approved'
+    where claim.id = '80110000-0000-4000-8000-000000000009';
+    raise exception 'Invited membership was silently escalated by claim approval';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'CLAIMANT_ALREADY_BUSINESS_MEMBER' then
+        raise;
+      end if;
+  end;
+
+  if not exists (
+    select 1
+    from public.business_claims claim
+    join public.business_members membership
+      on membership.business_id = claim.business_id
+     and membership.user_id = claim.claimant_id
+    where claim.id = '80110000-0000-4000-8000-000000000009'
+      and claim.state = 'pending'
+      and membership.status = 'invited'
+      and membership.role = 'staff'
+  ) then
+    raise exception 'Invited membership conflict mutated claim or team authority';
+  end if;
+
+  update public.business_claims claim
+  set state = 'approved'
+  where claim.id = '80110000-0000-4000-8000-000000000010';
+
+  if not exists (
+    select 1
+    from public.business_claims claim
+    join public.business_members membership
+      on membership.business_id = claim.business_id
+     and membership.user_id = claim.claimant_id
+    where claim.id = '80110000-0000-4000-8000-000000000010'
+      and claim.state = 'approved'
+      and membership.status = 'revoked'
+      and membership.role = 'manager'
+  ) then
+    raise exception 'Revoked membership was incorrectly blocked from verified restoration';
+  end if;
+end;
+$business_claim_membership_escalation_behavior$;
+
 insert into public.business_claims (
   id, business_id, claimant_id, method, state
 ) values (
@@ -2669,6 +2784,46 @@ insert into public.business_claims (
   'listed_phone',
   'approved'
 );
+
+do $business_claim_identity_immutability$
+begin
+  begin
+    update public.business_claims claim
+    set id = '80110000-0000-4000-8000-000000000011'
+    where claim.id = '80110000-0000-4000-8000-000000000006';
+    raise exception 'Approved claim identifier was mutable';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'CLAIM_IDENTITY_IMMUTABLE' then
+        raise;
+      end if;
+  end;
+
+  begin
+    update public.business_claims claim
+    set claimant_id = 'a1000000-0000-4000-8000-000000000001'
+    where claim.id = '80110000-0000-4000-8000-000000000006';
+    raise exception 'Approved claim identity was mutable';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'CLAIM_IDENTITY_IMMUTABLE' then
+        raise;
+      end if;
+  end;
+
+  if not exists (
+    select 1
+    from public.business_claims claim
+    where claim.id = '80110000-0000-4000-8000-000000000006'
+      and claim.business_id = '70110000-0000-4000-8000-000000000002'
+      and claim.claimant_id = '10000000-0000-4000-8000-000000000001'
+      and claim.method = 'listed_phone'
+      and claim.state = 'approved'
+  ) then
+    raise exception 'Rejected claim identity rewrite changed persisted authority';
+  end if;
+end;
+$business_claim_identity_immutability$;
 
 do $business_claim_approved_index_behavior$
 begin
