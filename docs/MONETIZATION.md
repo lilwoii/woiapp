@@ -235,6 +235,17 @@ activates serving or creates a charge. Payment onboarding, real-money
 enablement, rollup/reconciliation jobs, and finance approval UI remain blocked
 by the external requirements below.
 
+Forward migrations `20261014000000_sponsored_public_location_boundary.sql` and
+`20261015000000_sponsored_viewability_accounting.sql` bind targeting to the
+same redacted public-location projection as organic discovery and separate
+candidate selection from viewability accounting. Selection creates only a
+short-lived signed decision. The filter-eligible sponsored lane acknowledges
+an impression through the trusted Edge gateway only after at least half of the
+placement has remained in the foreground viewport for one second; that gateway
+binds the token to an account/network digest and the database atomically
+revalidates the public location, campaign, and budget before creating a hold.
+Direct client execution of the interaction RPC is denied.
+
 This is a new migration program, not a patch to append blindly to
 `supabase/schema.sql`. Use integer minor units, ISO 4217 currency, UTC
 timestamps, explicit check constraints, RLS, stable public IDs, and append-only
@@ -264,8 +275,9 @@ rows are never hard-deleted; retention/anonymization must be legally approved.
 
 ### RLS and authority
 
-- Anonymous/authenticated clients read only a safe sponsored-placement RPC;
-  bids, budgets, targeting, decision features, and billing rows are not public.
+- Anonymous/authenticated clients receive only a safe sponsored projection
+  through the bounded Edge gateway; bids, budgets, targeting, decision
+  features, and billing rows are not public.
 - Active business owners/managers can read their campaigns and aggregates.
   Campaign activation, pricing acceptance, and payment changes require AAL2.
 - Clients never insert impressions, charges, entitlements, attribution, or
@@ -283,8 +295,12 @@ Consumer/public:
 - `get_sponsored_placements(context, organic_filter_hash, limit)` returns safe
   business projection, `placement_id`, exact `Sponsored ad` disclosure, reason
   categories, signed short-lived token, and no billing data.
-- `record_sponsored_interaction(token, event_type, idempotency_key)` validates
-  token, foreground eligibility, dedupe, campaign/budget state, and returns a
+- The public-discovery Edge gateway accepts an exact
+  `sponsored_interaction` envelope, derives the trusted subject digest, and
+  invokes the service-only
+  `record_sponsored_interaction(token, event_type, idempotency_key,
+  subject_hmac)` function. The function validates token binding, dedupe,
+  public-location eligibility, campaign/budget state, and returns a safe
   receipt. It never trusts client price or campaign ID.
 - Organic directory/search RPCs remain unchanged and campaign-table-free.
 
@@ -299,7 +315,9 @@ Merchant (AAL2 for mutations):
 
 Server/internal:
 
-- `select_sponsored_placement` performs eligibility and budget reservation;
+- `select_sponsored_placement` performs contextual eligibility and creates a
+  signed candidate decision without recording an impression or reserving
+  budget; the rendered-impression acknowledgement acquires the hold;
 - `finalize_ad_attribution` consumes order events;
 - `expire_budget_reservations`, `rollup_ad_metrics`, and
   `reconcile_ad_ledger` are restartable jobs with checkpoints;

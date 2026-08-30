@@ -1554,24 +1554,31 @@ export async function fetchMarketplacePlaceById(
 
 export async function recordSponsoredInteraction(
   placementToken: string,
-  interactionType: 'open' | 'menu_view' | 'directions' | 'hide' | 'report',
+  interactionType: 'impression' | 'open' | 'menu_view' | 'directions' | 'hide' | 'report',
 ): Promise<ActionResult<{ receiptId: string; accepted: boolean; duplicate: boolean; billed: boolean }>> {
   const client = supabase;
   if (!client || !featureFlags.sponsoredPlacements) return configurationRequired();
   if (
     !parseSponsoredPlacementToken(placementToken) ||
-    !['open', 'menu_view', 'directions', 'hide', 'report'].includes(interactionType)
+    !['impression', 'open', 'menu_view', 'directions', 'hide', 'report'].includes(interactionType)
   ) {
     return { ok: false, code: 'INVALID', reason: 'This sponsored placement is invalid.' };
   }
   try {
-    const { data, error } = await client.rpc('record_sponsored_interaction', {
-      placement_token: placementToken,
-      interaction_type: interactionType,
-      idempotency_key: createMarketplaceIdempotencyKey('sponsor'),
+    const { data, error } = await client.functions.invoke('public-discovery', {
+      body: {
+        operation: 'sponsored_interaction',
+        placement_token: placementToken,
+        interaction_type: interactionType,
+        idempotency_key: createMarketplaceIdempotencyKey('sponsor'),
+      },
     });
     if (error) throw error;
-    const result = data && typeof data === 'object' && !Array.isArray(data) ? data as Row : null;
+    const response = data && typeof data === 'object' && !Array.isArray(data) ? data as Row : null;
+    const result = response?.operation === 'sponsored_interaction' &&
+        response.receipt && typeof response.receipt === 'object' && !Array.isArray(response.receipt)
+      ? response.receipt as Row
+      : null;
     const receiptId = stringValue(result?.receipt_id);
     if (
       !result || !uuidPattern.test(receiptId) ||

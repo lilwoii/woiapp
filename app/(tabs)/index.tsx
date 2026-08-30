@@ -39,7 +39,7 @@ import { mapCategoryOrder, mapCategoryPresentation } from '@/lib/map-presentatio
 import { createLatestRequestGate } from '@/lib/latest-request';
 import { fetchMapFoodFeatures, recordSponsoredInteraction } from '@/lib/marketplace-api';
 import { isSupabaseConfigured } from '@/lib/supabase';
-import type { DietaryTag, PaymentMethod, Place } from '@/types/marketplace';
+import type { DietaryTag, PaymentMethod, Place, SponsoredPlace } from '@/types/marketplace';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 
 const categoryFilters: { id: DiscoveryCategory; label: string; icon: keyof typeof FontAwesome6.glyphMap }[] = [
@@ -141,7 +141,9 @@ function ScopedDiscoverScreen() {
   const [minimumRating, setMinimumRating] = useState(0);
   const [pickupOnly, setPickupOnly] = useState(false);
   const [hiddenSponsoredIds, setHiddenSponsoredIds] = useState<string[]>([]);
+  const [acknowledgedSponsoredId, setAcknowledgedSponsoredId] = useState<string | null>(null);
   const [openSponsorReasonId, setOpenSponsorReasonId] = useState<string | null>(null);
+  const sponsoredImpressionAttempt = useRef<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>(publicPlaces[0]?.id);
   const [locationLabel, setLocationLabel] = useState('Choose city, ZIP, or location');
   const [userCoordinates, setUserCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -465,6 +467,23 @@ function ScopedDiscoverScreen() {
       ? sponsoredProjection
       : undefined;
   }, [discoveryFilters, hiddenSponsoredIds, sponsoredProjection, userCoordinates]);
+  const recordVisibleSponsoredImpression = useCallback((place: SponsoredPlace) => {
+    const placement = place.sponsoredPlacement;
+    const attemptKey = `${placement.id}:${placement.token}`;
+    if (sponsoredImpressionAttempt.current === attemptKey) return;
+    sponsoredImpressionAttempt.current = attemptKey;
+    void recordSponsoredInteraction(placement.token, 'impression').then((result) => {
+      if (
+        !mounted.current ||
+        sponsoredImpressionAttempt.current !== attemptKey
+      ) return;
+      if (result.ok && result.data?.accepted) {
+        setAcknowledgedSponsoredId(placement.id);
+        return;
+      }
+      setHiddenSponsoredIds((hidden) => [...new Set([...hidden, placement.id])]);
+    });
+  }, []);
 
   const resultsKey = JSON.stringify(discoveryFilters);
   const visibleCount = pagination.key === resultsKey ? pagination.count : 24;
@@ -852,6 +871,8 @@ function ScopedDiscoverScreen() {
 
         {sponsoredPlace ? (
           <SponsoredLane
+            interactionReady={acknowledgedSponsoredId === sponsoredPlace.sponsoredPlacement.id}
+            onImpression={() => recordVisibleSponsoredImpression(sponsoredPlace)}
             onHide={() => {
               const placementId = sponsoredPlace.sponsoredPlacement?.id;
               const placementToken = sponsoredPlace.sponsoredPlacement?.token;
@@ -861,6 +882,7 @@ function ScopedDiscoverScreen() {
               if (placementToken) void recordSponsoredInteraction(placementToken, 'hide');
             }}
             onOpen={() => {
+              if (acknowledgedSponsoredId !== sponsoredPlace.sponsoredPlacement.id) return;
               const placementToken = sponsoredPlace.sponsoredPlacement?.token;
               if (placementToken) void recordSponsoredInteraction(placementToken, 'open');
               router.push(`/place/${sponsoredPlace.id}`);

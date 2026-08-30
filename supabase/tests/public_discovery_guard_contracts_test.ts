@@ -1,9 +1,4 @@
-import {
-  assert,
-  assertEquals,
-  assertMatch,
-  assertThrows,
-} from "jsr:@std/assert@1";
+import { assert, assertEquals, assertMatch, assertThrows } from "jsr:@std/assert@1";
 import {
   DiscoveryContractError,
   normalizePublicDiscoveryRows,
@@ -62,7 +57,10 @@ Deno.test("quotas and leases are atomic, bounded, and nonblocking", () => {
   assertMatch(migration, /target_operation = 'map' then 32 else 64/);
   assertMatch(migration, /interval '2 minutes'/);
   assertMatch(migration, /pg_try_advisory_xact_lock/);
-  assertMatch(migration, /on conflict \(operation, subject_kind, subject_hmac, bucket_started_at\)/);
+  assertMatch(
+    migration,
+    /on conflict \(operation, subject_kind, subject_hmac, bucket_started_at\)/,
+  );
   assertMatch(migration, /request_count < target_limit/);
   assertMatch(migration, /limit 10000/);
   assertMatch(
@@ -72,15 +70,17 @@ Deno.test("quotas and leases are atomic, bounded, and nonblocking", () => {
 });
 
 Deno.test("all discovery query and lifecycle RPC grants are fail-closed", () => {
-  for (const name of [
-    "public.acquire_public_discovery_lease",
-    "public.attach_public_discovery_account",
-    "public.release_public_discovery_lease",
-    "public.cleanup_public_discovery_leases",
-    "public.map_food_places",
-    "public.nearby_businesses",
-    "public.search_businesses",
-  ]) {
+  for (
+    const name of [
+      "public.acquire_public_discovery_lease",
+      "public.attach_public_discovery_account",
+      "public.release_public_discovery_lease",
+      "public.cleanup_public_discovery_leases",
+      "public.map_food_places",
+      "public.nearby_businesses",
+      "public.search_businesses",
+    ]
+  ) {
     assertMatch(
       migration,
       new RegExp(`revoke all on function ${name.replaceAll(".", "\\.")}`),
@@ -134,7 +134,7 @@ Deno.test("public discovery Edge boundary is anonymous-capable but fail-closed",
   assertMatch(edge, /SPOTTR_DISCOVERY_RATE_SECRET/);
   assertMatch(edge, /timingSafeEqual\(token, requiredEnvironment\("SUPABASE_ANON_KEY"\)\)/);
   assertMatch(edge, /fetch\(authUrl,[\s\S]+signal: controller\.signal/);
-  assertMatch(edge, /readJson\(request, PUBLIC_DISCOVERY_MAX_BYTES\)/);
+  assertMatch(edge, /readJson<unknown>\([\s\S]*?request,[\s\S]*?PUBLIC_DISCOVERY_MAX_BYTES/);
   assertMatch(
     edge,
     /finally \{\s+if \(leaseHmac && !retainLeaseUntilExpiry\) await releaseLease\(leaseHmac\)/,
@@ -214,10 +214,12 @@ Deno.test("public discovery response is whitelisted and rejects malformed rows",
     private_field: "must not cross the gateway",
   }]);
   assertEquals(Object.hasOwn(rows[0], "private_field"), false);
-  assertThrows(() => normalizePublicDiscoveryRows(request, [{
-    ...rows[0],
-    category_counts: { food_truck: 2 },
-  }]));
+  assertThrows(() =>
+    normalizePublicDiscoveryRows(request, [{
+      ...rows[0],
+      category_counts: { food_truck: 2 },
+    }])
+  );
 
   const tinyViewportRequest = validatePublicDiscoveryRequest({
     operation: "map",
@@ -250,46 +252,53 @@ Deno.test("public discovery response is whitelisted and rejects malformed rows",
     search_lat: 34.05,
     search_lng: -118.24,
   });
-  assertEquals(normalizePublicDiscoveryRows(nearbyRequest, [{
-    business_id: "11111111-1111-4111-8111-111111111111",
-    location_id: "22222222-2222-4222-8222-222222222222",
-    distance_meters: 1_250,
-    is_approximate: false,
-    has_more: false,
-    name: "must be stripped",
-  }]), [{
-    business_id: "11111111-1111-4111-8111-111111111111",
-    location_id: "22222222-2222-4222-8222-222222222222",
-    distance_meters: 1_250,
-    is_approximate: false,
-    has_more: false,
-  }]);
+  assertEquals(
+    normalizePublicDiscoveryRows(nearbyRequest, [{
+      business_id: "11111111-1111-4111-8111-111111111111",
+      location_id: "22222222-2222-4222-8222-222222222222",
+      distance_meters: 1_250,
+      is_approximate: false,
+      has_more: false,
+      name: "must be stripped",
+    }]),
+    [{
+      business_id: "11111111-1111-4111-8111-111111111111",
+      location_id: "22222222-2222-4222-8222-222222222222",
+      distance_meters: 1_250,
+      is_approximate: false,
+      has_more: false,
+    }],
+  );
 });
 
 Deno.test("sponsored response exposes only a signed short-lived safe projection", () => {
   const token = `11111111-1111-4111-8111-111111111111.1790000000.${"a".repeat(64)}`;
-  assertEquals(normalizeSponsoredPlacement({
-    business_id: "11111111-1111-4111-8111-111111111111",
-    placement_id: "22222222-2222-4222-8222-222222222222",
-    disclosure: "Sponsored ad",
-    reason: "Near your selected area",
-    placement_token: token,
-    expires_at: "2026-09-22T00:00:00.000Z",
-  }), {
-    business_id: "11111111-1111-4111-8111-111111111111",
-    placement_id: "22222222-2222-4222-8222-222222222222",
-    disclosure: "Sponsored ad",
-    reason: "Near your selected area",
-    placement_token: token,
-    expires_at: "2026-09-22T00:00:00.000Z",
-  });
-  assertThrows(() => normalizeSponsoredPlacement({
-    business_id: "11111111-1111-4111-8111-111111111111",
-    placement_id: "22222222-2222-4222-8222-222222222222",
-    disclosure: "Sponsored ad",
-    reason: "Near your selected area",
-    placement_token: token,
-    expires_at: "2026-09-22T00:00:00.000Z",
-    bid_cap_minor: 500,
-  }), DiscoveryContractError);
+  assertEquals(
+    normalizeSponsoredPlacement({
+      business_id: "11111111-1111-4111-8111-111111111111",
+      placement_id: "22222222-2222-4222-8222-222222222222",
+      disclosure: "Sponsored ad",
+      reason: "Near your selected area",
+      placement_token: token,
+      expires_at: "2026-09-22T00:00:00.000Z",
+    }),
+    {
+      business_id: "11111111-1111-4111-8111-111111111111",
+      placement_id: "22222222-2222-4222-8222-222222222222",
+      disclosure: "Sponsored ad",
+      reason: "Near your selected area",
+      placement_token: token,
+      expires_at: "2026-09-22T00:00:00.000Z",
+    },
+  );
+  assertThrows(() =>
+    normalizeSponsoredPlacement({
+      business_id: "11111111-1111-4111-8111-111111111111",
+      placement_id: "22222222-2222-4222-8222-222222222222",
+      disclosure: "Sponsored ad",
+      reason: "Near your selected area",
+      placement_token: token,
+      expires_at: "2026-09-22T00:00:00.000Z",
+      bid_cap_minor: 500,
+    }), DiscoveryContractError);
 });

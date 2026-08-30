@@ -6,6 +6,12 @@ const migration = await Deno.readTextFile(
     import.meta.url,
   ),
 );
+const viewabilityMigration = await Deno.readTextFile(
+  new URL(
+    "../migrations/20261015000000_sponsored_viewability_accounting.sql",
+    import.meta.url,
+  ),
+);
 const edge = await Deno.readTextFile(
   new URL("../functions/public-discovery/index.ts", import.meta.url),
 );
@@ -74,15 +80,27 @@ Deno.test("sponsored projection stays out of organic list, ranking, and paginati
   assertMatch(marketplace, /sponsoredInteractionTokenPattern/);
   assertMatch(marketplace, /parseSponsoredPlacementToken/);
   assertMatch(marketplace, /isValidSponsoredPlacementProjection/);
-  assertMatch(marketplace, /sponsoredRow = featureFlags\.sponsoredPlacements && resultOffset === 0/);
+  assertMatch(
+    marketplace,
+    /sponsoredRow = featureFlags\.sponsoredPlacements && resultOffset === 0/,
+  );
   assertMatch(marketplace, /const organicBusinessIds = new Set\(/);
-  assertMatch(marketplace, /const directoryIds = \[[\s\S]*organicBusinessIds[\s\S]*sponsoredBusinessId/);
-  assertMatch(marketplace, /!options\.origin && !options\.onlyIncludedBusinesses[\s\S]*organicBusinessIds\.add/);
+  assertMatch(
+    marketplace,
+    /const directoryIds = \[[\s\S]*organicBusinessIds[\s\S]*sponsoredBusinessId/,
+  );
+  assertMatch(
+    marketplace,
+    /!options\.origin && !options\.onlyIncludedBusinesses[\s\S]*organicBusinessIds\.add/,
+  );
   assertMatch(marketplace, /splitSponsoredPlaces\([\s\S]*organicBusinessIds/);
   assertMatch(edge, /operation === "nearby"[\s\S]*result_offset === 0/);
 
   const placesStart = marketplace.indexOf("const mappedPlaces = displayableBusinesses.map");
-  const sponsorStart = marketplace.indexOf("const { places, sponsoredPlace } = splitSponsoredPlaces", placesStart);
+  const sponsorStart = marketplace.indexOf(
+    "const { places, sponsoredPlace } = splitSponsoredPlaces",
+    placesStart,
+  );
   assert(placesStart >= 0 && sponsorStart > placesStart);
   assert(
     !marketplace.slice(placesStart, sponsorStart).includes("sponsoredPlacement"),
@@ -128,22 +146,30 @@ Deno.test("sponsored projection stays out of organic list, ranking, and paginati
 });
 
 Deno.test("interaction receipts are token-bound, idempotent, and never trust client price", () => {
-  assertMatch(migration, /create or replace function public\.record_sponsored_interaction/);
-  assertMatch(migration, /token_hash = private\.ad_sha256_hex\(placement_token\)/);
-  assertMatch(migration, /on conflict \(decision_id, event_type\) do nothing/);
-  assertMatch(migration, /decision\.reserved_minor/);
-  assert(!/record_sponsored_interaction[\s\S]*client_price/i.test(migration));
   assertMatch(
-    migration,
-    /grant execute on function public\.record_sponsored_interaction\(text, text, text\)[\s\S]*to anon, authenticated/,
+    viewabilityMigration,
+    /create or replace function public\.record_sponsored_interaction/,
   );
-  assertMatch(migration, /where decision_id = decision\.id and state = 'held'[\s\S]*returning id into reservation_id/);
-  assertMatch(migration, /reservation_unavailable/);
+  assertMatch(viewabilityMigration, /token_hash = private\.ad_sha256_hex\(placement_token\)/);
+  assertMatch(viewabilityMigration, /subject_hmac = interaction_subject_hmac/);
+  assertMatch(viewabilityMigration, /decision\.reserved_minor/);
+  assert(!/record_sponsored_interaction[\s\S]*client_price/i.test(viewabilityMigration));
+  assertMatch(
+    viewabilityMigration,
+    /revoke all on function public\.record_sponsored_interaction\(text, text, text, text\)[\s\S]*from public, anon, authenticated, service_role[\s\S]*grant execute on function public\.record_sponsored_interaction\(text, text, text, text\)[\s\S]*to service_role/,
+  );
+  assertMatch(
+    viewabilityMigration,
+    /where decision_id = decision\.id and state = 'held'[\s\S]*returning id into reservation_id/,
+  );
+  assertMatch(viewabilityMigration, /reservation_unavailable/);
   assert(
-    migration.indexOf("returning id into reservation_id") < migration.indexOf("'sponsored_open', event_id"),
+    viewabilityMigration.lastIndexOf("returning id into reservation_id") <
+      viewabilityMigration.indexOf("'sponsored_open', event_id"),
     "A real-money debit must only be inserted after consuming a held reservation",
   );
   assertMatch(marketplace, /recordSponsoredInteraction/);
+  assertMatch(marketplace, /client\.functions\.invoke\('public-discovery'/);
 });
 
 Deno.test("production keeps sponsorship fail-closed and maintenance drains reservations", () => {

@@ -12,10 +12,12 @@ import {
   discoveryKinds,
   isUuid,
   normalizePublicDiscoveryRows,
+  normalizeSponsoredInteractionReceipt,
   normalizeSponsoredPlacement,
   PUBLIC_DISCOVERY_MAX_BYTES,
   type PublicDiscoveryRequest,
   validatePublicDiscoveryRequest,
+  validateSponsoredInteractionRequest,
 } from "./contract.ts";
 
 const DATABASE_TIMEOUT_MS = 2_500;
@@ -57,9 +59,7 @@ function normalizeTrustedIp(value: string | null): string {
     const parts = candidate.split(".");
     if (
       parts.length !== 4 ||
-      parts.some((part) =>
-        !/^(0|[1-9][0-9]{0,2})$/.test(part) || Number(part) > 255
-      )
+      parts.some((part) => !/^(0|[1-9][0-9]{0,2})$/.test(part) || Number(part) > 255)
     ) {
       throw new HttpError(503, "DISCOVERY_GUARD_UNAVAILABLE");
     }
@@ -317,11 +317,72 @@ export async function handlePublicDiscovery(request: Request): Promise<Response>
       throw new HttpError(415, "JSON_CONTENT_TYPE_REQUIRED");
     }
 
+    const rawRequest = await readJson<unknown>(
+      request,
+      PUBLIC_DISCOVERY_MAX_BYTES,
+    );
+    const requestedOperation = rawRequest && typeof rawRequest === "object" &&
+        !Array.isArray(rawRequest)
+      ? (rawRequest as Record<string, unknown>).operation
+      : null;
+    const trustedIp = normalizeTrustedIp(request.headers.get("cf-connecting-ip"));
+    const ipHmac = await identityHmac("ip", trustedIp);
+
+    if (requestedOperation === "sponsored_interaction") {
+      if (
+        Deno.env.get("SPOTTR_SPONSORED_PLACEMENTS_ENABLED")?.trim() !==
+          "true"
+      ) {
+        throw new HttpError(503, "SPONSORED_INTERACTION_UNAVAILABLE");
+      }
+      let interactionRequest;
+      try {
+        interactionRequest = validateSponsoredInteractionRequest(rawRequest);
+      } catch (error) {
+        if (error instanceof DiscoveryContractError) {
+          throw new HttpError(400, error.code);
+        }
+        throw error;
+      }
+      const interactionAccountId = await authenticatedAccountId(request);
+      const interactionSubjectHmac = interactionAccountId === null
+        ? ipHmac
+        : await identityHmac("account", interactionAccountId);
+      const interaction = await databaseRpc("record_sponsored_interaction", {
+        placement_token: interactionRequest.placement_token,
+        interaction_type: interactionRequest.interaction_type,
+        idempotency_key: interactionRequest.idempotency_key,
+        interaction_subject_hmac: interactionSubjectHmac,
+      }, request.signal);
+      if (interaction.error) {
+        const signal = `${interaction.error.code ?? ""} ${interaction.error.message ?? ""}`;
+        if (signal.includes("SPONSORED_RATE_LIMITED")) {
+          throw new DiscoveryHttpError(429, "SPONSORED_RATE_LIMITED", 60);
+        }
+        if (
+          signal.includes("SPONSORED_TOKEN_EXPIRED") ||
+          signal.includes("INVALID_SPONSORED_INTERACTION")
+        ) {
+          throw new HttpError(400, "INVALID_SPONSORED_INTERACTION");
+        }
+        throw new HttpError(503, "SPONSORED_INTERACTION_UNAVAILABLE");
+      }
+      let receipt;
+      try {
+        receipt = normalizeSponsoredInteractionReceipt(interaction.data);
+      } catch {
+        throw new HttpError(503, "SPONSORED_INTERACTION_UNAVAILABLE");
+      }
+      return jsonResponse(
+        { operation: "sponsored_interaction", receipt },
+        200,
+        cors,
+      );
+    }
+
     let discoveryRequest: PublicDiscoveryRequest;
     try {
-      discoveryRequest = validatePublicDiscoveryRequest(
-        await readJson(request, PUBLIC_DISCOVERY_MAX_BYTES),
-      );
+      discoveryRequest = validatePublicDiscoveryRequest(rawRequest);
     } catch (error) {
       if (error instanceof DiscoveryContractError) {
         throw new HttpError(400, error.code);
@@ -329,9 +390,8 @@ export async function handlePublicDiscovery(request: Request): Promise<Response>
       throw error;
     }
 
-    const trustedIp = normalizeTrustedIp(request.headers.get("cf-connecting-ip"));
-    const ipHmac = await identityHmac("ip", trustedIp);
     let accountId: string | null = null;
+    let accountHmac: string | null = null;
 
     const acquisition = await databaseRpc("acquire_public_discovery_lease", {
       target_operation: discoveryRequest.operation,
@@ -339,7 +399,9 @@ export async function handlePublicDiscovery(request: Request): Promise<Response>
       target_account_hmac: null,
     }, request.signal);
     if (acquisition.error) guardFailure(acquisition.error);
-    if (!acquisition.data || typeof acquisition.data !== "object" || Array.isArray(acquisition.data)) {
+    if (
+      !acquisition.data || typeof acquisition.data !== "object" || Array.isArray(acquisition.data)
+    ) {
       throw new HttpError(503, "DISCOVERY_GUARD_UNAVAILABLE");
     }
     const lease = acquisition.data as Record<string, unknown>;
@@ -356,7 +418,7 @@ export async function handlePublicDiscovery(request: Request): Promise<Response>
     // admission, so random bearer tokens cannot bypass discovery quotas.
     accountId = await authenticatedAccountId(request);
     if (accountId !== null) {
-      const accountHmac = await identityHmac("account", accountId);
+      accountHmac = await identityHmac("account", accountId);
       const attachment = await databaseRpc("attach_public_discovery_account", {
         target_lease_hmac: leaseHmac,
         target_account_hmac: accountHmac,
@@ -410,7 +472,7 @@ export async function handlePublicDiscovery(request: Request): Promise<Response>
           search_radius_meters: discoveryRequest.radius_meters,
           requested_kinds: discoveryKinds,
           organic_filter_hash: filterHash,
-          subject_hmac: ipHmac,
+          subject_hmac: accountHmac ?? ipHmac,
           target_account_id: accountId,
         }, request.signal);
         if (!selection.error) {

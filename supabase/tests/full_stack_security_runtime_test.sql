@@ -82,6 +82,11 @@ begin
     )
     or has_function_privilege(
       'authenticated',
+      'public.record_sponsored_interaction(text,text,text,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
       'public.reconcile_sponsored_reservations(integer)',
       'execute'
     )
@@ -2187,33 +2192,122 @@ select public.select_sponsored_placement(
 reset role;
 
 do $sponsored_selection$
-declare result jsonb;
+declare
+  result jsonb;
+  decision_id uuid;
 begin
   select payload into result from runtime_sponsored_result;
+  decision_id := (result->>'placement_id')::uuid;
   if result->>'business_id' <> '70000000-0000-4000-8000-000000000007'
     or result->>'disclosure' <> 'Sponsored ad'
     or result->>'placement_token' !~ '^[0-9a-f-]{36}\.[0-9]{10}\.[0-9a-f]{64}$'
   then
     raise exception 'Sponsored selector returned an invalid public projection';
   end if;
+  if exists (
+      select 1 from private.ad_events event
+      where event.decision_id = decision_id
+    )
+    or exists (
+      select 1 from private.ad_budget_reservations reservation
+      where reservation.decision_id = decision_id
+    )
+  then
+    raise exception 'Sponsored selection recorded an unseen impression or reservation';
+  end if;
 end;
 $sponsored_selection$;
 
-set local role anon;
+create temporary table runtime_sponsored_stale_result (payload jsonb not null);
+grant select, insert on runtime_sponsored_stale_result to service_role;
+
+set local role service_role;
+insert into runtime_sponsored_stale_result (payload)
+select public.select_sponsored_placement(
+  'discover', 34.05, -118.24, 16093,
+  array['restaurant']::public.business_kind[],
+  repeat('e', 64), repeat('f', 64), null
+);
+reset role;
+
+update public.business_locations
+set publication_state = 'private'
+where id = '73000000-0000-4000-8000-000000000007';
+
+set local role service_role;
+do $sponsored_location_revalidation$
+declare
+  token text;
+  decision_id uuid;
+  receipt jsonb;
+begin
+  select
+    payload->>'placement_token',
+    (payload->>'placement_id')::uuid
+  into token, decision_id
+  from runtime_sponsored_stale_result;
+  receipt := public.record_sponsored_interaction(
+    token, 'impression', 'runtime:sponsor:stale-location', repeat('f', 64)
+  );
+  if receipt->>'accepted' <> 'false'
+    or not exists (
+      select 1 from private.ad_events event
+      where event.decision_id = decision_id
+        and event.event_type = 'impression'
+        and not event.valid
+        and event.invalid_reason = 'location_ineligible'
+    )
+    or exists (
+      select 1 from private.ad_budget_reservations reservation
+      where reservation.decision_id = decision_id
+    )
+  then
+    raise exception 'Sponsored impression ignored a withdrawn public location';
+  end if;
+end;
+$sponsored_location_revalidation$;
+reset role;
+
+update public.business_locations
+set publication_state = 'published'
+where id = '73000000-0000-4000-8000-000000000007';
+
+set local role service_role;
 do $sponsored_public_boundary$
 declare
   token text;
+  impression_receipt jsonb;
+  duplicate_impression_receipt jsonb;
   first_receipt jsonb;
   duplicate_receipt jsonb;
 begin
   select payload->>'placement_token' into token from runtime_sponsored_result;
+  begin
+    perform public.record_sponsored_interaction(
+      token, 'impression', 'runtime:sponsor:subject-mismatch', repeat('e', 64)
+    );
+    raise exception 'Sponsored interaction accepted a different subject digest';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'SPONSORED_TOKEN_EXPIRED' then raise; end if;
+  end;
+  impression_receipt := public.record_sponsored_interaction(
+    token, 'impression', 'runtime:sponsor:impression:0001', repeat('b', 64)
+  );
+  duplicate_impression_receipt := public.record_sponsored_interaction(
+    token, 'impression', 'runtime:sponsor:impression:0002', repeat('b', 64)
+  );
   first_receipt := public.record_sponsored_interaction(
-    token, 'open', 'runtime:sponsor:open:0001'
+    token, 'open', 'runtime:sponsor:open:0001', repeat('b', 64)
   );
   duplicate_receipt := public.record_sponsored_interaction(
-    token, 'open', 'runtime:sponsor:open:0002'
+    token, 'open', 'runtime:sponsor:open:0002', repeat('b', 64)
   );
-  if first_receipt->>'accepted' <> 'true'
+  if impression_receipt->>'accepted' <> 'true'
+    or impression_receipt->>'duplicate' <> 'false'
+    or duplicate_impression_receipt->>'accepted' <> 'true'
+    or duplicate_impression_receipt->>'duplicate' <> 'true'
+    or first_receipt->>'accepted' <> 'true'
     or first_receipt->>'billed' <> 'false'
     or first_receipt->>'duplicate' <> 'false'
     or duplicate_receipt->>'duplicate' <> 'true'
@@ -2221,6 +2315,25 @@ begin
   then
     raise exception 'Shadow sponsored interaction was not safely idempotent';
   end if;
+end;
+$sponsored_public_boundary$;
+reset role;
+
+set local role anon;
+do $sponsored_direct_rpc_denial$
+declare
+  token text;
+begin
+  select payload->>'placement_token' into token from runtime_sponsored_result;
+
+  begin
+    perform public.record_sponsored_interaction(
+      token, 'impression', 'runtime:sponsor:direct-denial', repeat('b', 64)
+    );
+    raise exception 'Anonymous role unexpectedly recorded a sponsored interaction';
+  exception
+    when insufficient_privilege then null;
+  end;
 
   begin
     perform public.select_sponsored_placement(
@@ -2240,7 +2353,7 @@ begin
     when insufficient_privilege then null;
   end;
 end;
-$sponsored_public_boundary$;
+$sponsored_direct_rpc_denial$;
 reset role;
 
 do $sponsored_financial_state$

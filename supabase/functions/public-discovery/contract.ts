@@ -21,11 +21,19 @@ export const discoveryKinds = [
 ] as const;
 export type DiscoveryKind = typeof discoveryKinds[number];
 
-const SPONSORED_TOKEN_PATTERN =
-  /^[0-9a-f-]{36}\.[0-9]{10}\.[0-9a-f]{64}$/;
+export const sponsoredInteractionTypes = [
+  "impression",
+  "open",
+  "menu_view",
+  "directions",
+  "hide",
+  "report",
+] as const;
+export type SponsoredInteractionType = typeof sponsoredInteractionTypes[number];
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SPONSORED_TOKEN_PATTERN = /^[0-9a-f-]{36}\.[0-9]{10}\.[0-9a-f]{64}$/;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_TEXT_PATTERN = /^[^\u0000-\u001f\u007f]*$/u;
 
 export class DiscoveryContractError extends Error {
@@ -145,6 +153,13 @@ export type PublicDiscoveryRequest =
     result_offset: number;
   };
 
+export type SponsoredInteractionRequest = {
+  operation: "sponsored_interaction";
+  placement_token: string;
+  interaction_type: SponsoredInteractionType;
+  idempotency_key: string;
+};
+
 function validateMapRequest(object: Record<string, unknown>): PublicDiscoveryRequest {
   exactKeys(
     object,
@@ -158,9 +173,17 @@ function validateMapRequest(object: Record<string, unknown>): PublicDiscoveryReq
     ["map_zoom", "requested_kinds", "max_features"],
   );
   const west = numberInRange(object.west_longitude, -180, 180);
-  const south = numberInRange(object.south_latitude, PUBLIC_DISCOVERY_MIN_LATITUDE, PUBLIC_DISCOVERY_MAX_LATITUDE);
+  const south = numberInRange(
+    object.south_latitude,
+    PUBLIC_DISCOVERY_MIN_LATITUDE,
+    PUBLIC_DISCOVERY_MAX_LATITUDE,
+  );
   const east = numberInRange(object.east_longitude, -180, 180);
-  const north = numberInRange(object.north_latitude, PUBLIC_DISCOVERY_MIN_LATITUDE, PUBLIC_DISCOVERY_MAX_LATITUDE);
+  const north = numberInRange(
+    object.north_latitude,
+    PUBLIC_DISCOVERY_MIN_LATITUDE,
+    PUBLIC_DISCOVERY_MAX_LATITUDE,
+  );
   if (
     south >= north ||
     north - south > PUBLIC_DISCOVERY_MAX_VIEWPORT_DEGREES ||
@@ -168,9 +191,7 @@ function validateMapRequest(object: Record<string, unknown>): PublicDiscoveryReq
   ) {
     fail("INVALID_REQUEST");
   }
-  const zoom = object.map_zoom === undefined
-    ? 11
-    : integerInRange(object.map_zoom, 2, 18);
+  const zoom = object.map_zoom === undefined ? 11 : integerInRange(object.map_zoom, 2, 18);
   const kinds = mapKinds(object.requested_kinds);
   const maxFeatures = object.max_features === undefined
     ? PUBLIC_DISCOVERY_MAX_MAP_FEATURES
@@ -197,13 +218,11 @@ function validateNearbyRequest(object: Record<string, unknown>): PublicDiscovery
     operation: "nearby",
     search_lat: numberInRange(object.search_lat, -90, 90),
     search_lng: numberInRange(object.search_lng, -180, 180),
-    radius_meters: object.radius_meters === undefined
-      ? 16_093
-      : integerInRange(
-        object.radius_meters,
-        PUBLIC_DISCOVERY_MIN_RADIUS_METERS,
-        PUBLIC_DISCOVERY_MAX_RADIUS_METERS,
-      ),
+    radius_meters: object.radius_meters === undefined ? 16_093 : integerInRange(
+      object.radius_meters,
+      PUBLIC_DISCOVERY_MIN_RADIUS_METERS,
+      PUBLIC_DISCOVERY_MAX_RADIUS_METERS,
+    ),
     result_limit: object.result_limit === undefined
       ? PUBLIC_DISCOVERY_MAX_PAGE_SIZE
       : integerInRange(object.result_limit, 1, PUBLIC_DISCOVERY_MAX_PAGE_SIZE),
@@ -239,6 +258,55 @@ export function validatePublicDiscoveryRequest(value: unknown): PublicDiscoveryR
   if (requestedOperation === "map") return validateMapRequest(object);
   if (requestedOperation === "nearby") return validateNearbyRequest(object);
   return validateSearchRequest(object);
+}
+
+export function validateSponsoredInteractionRequest(
+  value: unknown,
+): SponsoredInteractionRequest {
+  const object = asObject(value);
+  exactKeys(object, [
+    "operation",
+    "placement_token",
+    "interaction_type",
+    "idempotency_key",
+  ]);
+  if (
+    object.operation !== "sponsored_interaction" ||
+    typeof object.placement_token !== "string" ||
+    !SPONSORED_TOKEN_PATTERN.test(object.placement_token) ||
+    !sponsoredInteractionTypes.includes(
+      object.interaction_type as SponsoredInteractionType,
+    ) ||
+    typeof object.idempotency_key !== "string" ||
+    !/^[A-Za-z0-9._:-]{16,128}$/.test(object.idempotency_key)
+  ) {
+    fail("INVALID_REQUEST");
+  }
+  return {
+    operation: "sponsored_interaction",
+    placement_token: object.placement_token,
+    interaction_type: object.interaction_type as SponsoredInteractionType,
+    idempotency_key: object.idempotency_key,
+  };
+}
+
+export function normalizeSponsoredInteractionReceipt(value: unknown) {
+  const row = asObject(value);
+  exactKeys(row, ["receipt_id", "accepted", "duplicate", "billed"]);
+  if (
+    !isUuid(row.receipt_id) ||
+    typeof row.accepted !== "boolean" ||
+    typeof row.duplicate !== "boolean" ||
+    typeof row.billed !== "boolean"
+  ) {
+    fail("INVALID_SPONSORED_RESPONSE");
+  }
+  return {
+    receipt_id: row.receipt_id,
+    accepted: row.accepted,
+    duplicate: row.duplicate,
+    billed: row.billed,
+  };
 }
 
 export function isUuid(value: unknown): value is string {
@@ -467,12 +535,8 @@ export function normalizePublicDiscoveryRows(
   value: unknown,
 ): Record<string, unknown>[] {
   if (request.operation === "map") {
-    return resultRows(value, request.max_features).map((row) =>
-      mapResponseRow(row, request)
-    );
+    return resultRows(value, request.max_features).map((row) => mapResponseRow(row, request));
   }
   const pageRows = resultRows(value, request.result_limit);
-  return request.operation === "nearby"
-    ? pageRows.map(nearbyPageRow)
-    : pageRows.map(searchPageRow);
+  return request.operation === "nearby" ? pageRows.map(nearbyPageRow) : pageRows.map(searchPageRow);
 }
