@@ -2106,6 +2106,13 @@ end;
 $professional_content$;
 
 do $business_claim_verification_guard$
+declare
+  claim_review_wrapper_definition text := pg_catalog.pg_get_functiondef(
+    'public.review_business_claim(uuid,text,text)'::regprocedure
+  );
+  claim_review_core_definition text := pg_catalog.pg_get_functiondef(
+    'private.review_business_claim_provider_serialized_core(uuid,text,text)'::regprocedure
+  );
 begin
   if pg_catalog.pg_get_functiondef(
     'public.submit_business_claim(uuid,text,text)'::regprocedure
@@ -2149,18 +2156,76 @@ begin
     or not pg_catalog.has_function_privilege(
       'authenticated', 'public.review_business_claim(uuid,text,text)', 'execute'
     )
-    or pg_catalog.pg_get_functiondef(
-      'public.review_business_claim(uuid,text,text)'::regprocedure
-    ) not like '%if decision is null%'
-    or pg_catalog.pg_get_functiondef(
-      'public.review_business_claim(uuid,text,text)'::regprocedure
-    ) not like '%for update of b%'
-    or pg_catalog.pg_get_functiondef(
-      'public.review_business_claim(uuid,text,text)'::regprocedure
-    ) not like '%CLAIM_ALREADY_DECIDED%'
-    or pg_catalog.pg_get_functiondef(
-      'public.review_business_claim(uuid,text,text)'::regprocedure
-    ) not like '%CLAIMANT_ALREADY_BUSINESS_MEMBER%'
+    or pg_catalog.strpos(
+      claim_review_wrapper_definition,
+      'private.require_aal2()'
+    ) = 0
+    or pg_catalog.strpos(
+      claim_review_wrapper_definition,
+      'private.is_platform_staff('
+    ) <= pg_catalog.strpos(
+      claim_review_wrapper_definition,
+      'private.require_aal2()'
+    )
+    or pg_catalog.strpos(
+      claim_review_wrapper_definition,
+      'pg_advisory_xact_lock('
+    ) <= pg_catalog.strpos(
+      claim_review_wrapper_definition,
+      'private.is_platform_staff('
+    )
+    or claim_review_wrapper_definition not like '%if decision = ''approved'' then%'
+    or claim_review_wrapper_definition not like '%spottr:provider-lifecycle%'
+    or claim_review_wrapper_definition not like '%review_business_claim_provider_serialized_core%'
+    or claim_review_core_definition not like '%if decision is null%'
+    or claim_review_core_definition not like '%for update of b%'
+    or claim_review_core_definition not like '%CLAIM_ALREADY_DECIDED%'
+    or claim_review_core_definition not like '%CLAIMANT_ALREADY_BUSINESS_MEMBER%'
+    or pg_catalog.has_function_privilege(
+      'anon',
+      'private.review_business_claim_provider_serialized_core(uuid,text,text)',
+      'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'authenticated',
+      'private.review_business_claim_provider_serialized_core(uuid,text,text)',
+      'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'service_role',
+      'private.review_business_claim_provider_serialized_core(uuid,text,text)',
+      'execute'
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_trigger trigger_row
+      join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
+      join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
+      where schema_row.nspname = 'private'
+        and table_row.relname = 'provider_accounts'
+        and trigger_row.tgname = 'provider_accounts_mutation_barrier'
+        and not trigger_row.tgisinternal
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_trigger trigger_row
+      join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
+      join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
+      where schema_row.nspname = 'private'
+        and table_row.relname = 'provider_business_sources'
+        and trigger_row.tgname = 'provider_sources_mutation_barrier'
+        and not trigger_row.tgisinternal
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_trigger trigger_row
+      join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
+      join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
+      where schema_row.nspname = 'private'
+        and table_row.relname = 'provider_rate_limit_buckets'
+        and trigger_row.tgname = 'provider_ingest_mutation_barrier'
+        and not trigger_row.tgisinternal
+    )
     or not exists (
       select 1
       from pg_catalog.pg_trigger trigger_row

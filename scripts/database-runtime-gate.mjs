@@ -275,6 +275,7 @@ async function assertBarrierBlocks({
   holderFile,
   readyMarker,
   waiterSql,
+  expectedPatterns = [/55P03/, /lock timeout/i],
 }) {
   const containerPath = `/tmp/${holderFile}`;
   copySqlToContainer(
@@ -290,7 +291,7 @@ async function assertBarrierBlocks({
     runExpectingFailure(
       'docker',
       psqlCommandArguments(containerName, waiterSql),
-      [/55P03/, /lock timeout/i],
+      expectedPatterns,
       { timeout: 10_000 },
     );
     holder.sendLine('release');
@@ -311,6 +312,49 @@ async function assertBarrierBlocks({
     }
   }
   if (operationError) throw operationError;
+}
+
+async function verifyProviderClaimSerializationBarrier(projectRoot, containerName) {
+  process.stdout.write('Verifying provider/claim serialization barrier across two sessions\n');
+  const holders = [
+    ['provider_mutation_shared_barrier_holder.sql', 'SPOTTR_PROVIDER_MUTATION_SHARED_BARRIER_READY'],
+    ['provider_source_shared_barrier_holder.sql', 'SPOTTR_PROVIDER_SOURCE_SHARED_BARRIER_READY'],
+    ['provider_ingest_shared_barrier_holder.sql', 'SPOTTR_PROVIDER_INGEST_SHARED_BARRIER_READY'],
+  ];
+
+  for (const [holderFile, readyMarker] of holders) {
+    await assertBarrierBlocks({
+      projectRoot,
+      containerName,
+      holderFile,
+      readyMarker,
+      waiterSql: [
+        'begin;',
+        "set local lock_timeout = '500ms';",
+        "select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('spottr:provider-lifecycle', 0));",
+        'rollback;',
+      ].join(' '),
+    });
+  }
+
+  // An untrusted AAL2 caller must be rejected before the exclusive approval
+  // barrier is attempted. Holding the shared barrier turns incorrect ordering
+  // into a lock-timeout SQLSTATE instead of the expected authorization error.
+  await assertBarrierBlocks({
+    projectRoot,
+    containerName,
+    holderFile: holders[0][0],
+    readyMarker: holders[0][1],
+    waiterSql: [
+      'begin;',
+      "set local role authenticated;",
+      "select pg_catalog.set_config('request.jwt.claims', '{\"sub\":\"90000000-0000-4000-8000-000000000009\",\"role\":\"authenticated\",\"aal\":\"aal2\"}', true);",
+      "set local lock_timeout = '500ms';",
+      "select public.review_business_claim('90000000-0000-4000-8000-000000000099', 'approved', 'runtime authorization ordering');",
+      'rollback;',
+    ].join(' '),
+    expectedPatterns: [/42501/, /Platform administrator role required/],
+  });
 }
 
 async function verifyBusinessClaimEvidenceStorageBarrier(projectRoot, containerName) {
@@ -525,6 +569,7 @@ export async function runDatabaseRuntimeGate(projectRoot = PROJECT_ROOT) {
     }
 
     await verifyBusinessClaimEvidenceStorageBarrier(projectRoot, containerName);
+    await verifyProviderClaimSerializationBarrier(projectRoot, containerName);
 
     await copyAndApplySql({
       sourcePath: path.join(projectRoot, 'supabase', 'tests', 'full_stack_security_runtime_test.sql'),
