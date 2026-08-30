@@ -758,22 +758,29 @@ select pg_catalog.set_config(
 do $business_unfollow_ineligible$
 declare
   attempt integer;
+  first_result boolean;
+  second_result boolean;
+  still_saved boolean;
 begin
+  first_result := public.set_business_follow(
+    '70000000-0000-4000-8000-000000000007', false
+  );
+  second_result := public.set_business_follow(
+    '70000000-0000-4000-8000-000000000007', false
+  );
+  select exists (
+    select 1
+    from public.follows follow
+    where follow.user_id = '20000000-0000-4000-8000-000000000002'
+      and follow.business_id = '70000000-0000-4000-8000-000000000007'
+  ) into still_saved;
 
-  if public.set_business_follow(
-      '70000000-0000-4000-8000-000000000007', false
-    ) is distinct from false
-    or public.set_business_follow(
-      '70000000-0000-4000-8000-000000000007', false
-    ) is distinct from false
-    or exists (
-      select 1
-      from public.follows follow
-      where follow.user_id = '20000000-0000-4000-8000-000000000002'
-        and follow.business_id = '70000000-0000-4000-8000-000000000007'
-    )
+  if first_result is distinct from false
+    or second_result is distinct from false
+    or still_saved
   then
-    raise exception 'An ineligible saved business could not be unfollowed idempotently';
+    raise exception 'An ineligible saved business could not be unfollowed idempotently (first %, second %, still saved %)',
+      first_result, second_result, still_saved;
   end if;
 
   for attempt in 1..116 loop
