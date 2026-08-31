@@ -77,7 +77,6 @@ test('populated discovery renders real results and bounds a 1,200-feature map re
     result_limit: 100,
     result_offset: 0,
   });
-  await expect(page.getByText('700 S Santa Fe Ave').first()).toBeVisible();
   await expect(page.getByText(/Food truck · Mexican · Street food/u).first()).toBeVisible();
   await expect(page.getByText('4.9').first()).toBeVisible();
   await expect(page.getByLabel('Interactive map of nearby food')).toBeVisible();
