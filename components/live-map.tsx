@@ -10,6 +10,7 @@ import type { NavigationCoordinate, TravelMode } from '@/types/navigation';
 type Props = {
   places: Place[];
   selectedId?: string;
+  selectedLocationId?: string;
   onSelect?: (place: Place) => void;
   onSelectBusinessId?: (businessId: string, locationId?: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;

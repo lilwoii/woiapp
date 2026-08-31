@@ -67,6 +67,7 @@ describe('discovery filters', () => {
       distanceMiles: 2,
       sponsoredPlacement: {
         id: '31000000-0000-4000-8000-000000000003',
+        locationId: '32000000-0000-4000-8000-000000000003',
         disclosure: 'Sponsored ad' as const,
         reason: 'Near your selected area',
         token: `${'32000000-0000-4000-8000-000000000003'}.${'1790000000'}.${'a'.repeat(64)}`,

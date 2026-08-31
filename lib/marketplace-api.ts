@@ -1,4 +1,5 @@
 import { toActionError } from '@/lib/errors';
+import { distanceMiles as coordinateDistanceMiles } from '@/lib/discovery-filters';
 import {
   featureFlags,
   isHomeKitchenBlocked,
@@ -6,6 +7,7 @@ import {
 import { mapLogoPaths } from '@/lib/map-inventory';
 import { safePublicHttpsUrl } from '@/lib/links';
 import { movingServiceFromPublicRow } from '@/lib/mobile-service';
+import { normalizePublicUuid } from '@/lib/public-uuid';
 import {
   quietHoursForPreset,
   summarizeFollowAlertPreferences,
@@ -83,14 +85,16 @@ export function splitSponsoredPlaces(
   mappedPlaces: Place[],
   organicBusinessIds: ReadonlySet<string>,
   sponsoredBusinessId: string,
+  sponsoredLocationPlace: Place | undefined,
   sponsoredPlacement?: SponsoredPlace['sponsoredPlacement'],
 ): Pick<MarketplacePage, 'places' | 'sponsoredPlace'> {
   const places = mappedPlaces.filter((place) => organicBusinessIds.has(place.id));
-  const sponsoredBase = sponsoredPlacement
-    ? mappedPlaces.find((place) => place.id === sponsoredBusinessId)
-    : undefined;
-  const sponsoredPlace: SponsoredPlace | undefined = sponsoredBase && sponsoredPlacement
-    ? { ...sponsoredBase, sponsoredPlacement }
+  const sponsoredPlace: SponsoredPlace | undefined =
+    sponsoredLocationPlace &&
+    sponsoredPlacement &&
+    sponsoredLocationPlace.id === sponsoredBusinessId &&
+    sponsoredLocationPlace.locationId === sponsoredPlacement.locationId
+    ? { ...sponsoredLocationPlace, sponsoredPlacement }
     : undefined;
   return { places, sponsoredPlace };
 }
@@ -772,6 +776,42 @@ function locationCoordinates(location?: Row) {
   return null;
 }
 
+function projectPlaceAtPublicLocation(
+  place: Place | undefined,
+  location: Row | undefined,
+  origin?: { latitude: number; longitude: number },
+): Place | undefined {
+  const coordinates = locationCoordinates(location);
+  const locationId = normalizePublicUuid(locationIdOf(location));
+  if (
+    !place ||
+    !location ||
+    !coordinates ||
+    !locationId ||
+    stringValue(location.business_id) !== place.id
+  ) return undefined;
+
+  const isPrivateLocation =
+    place.category === 'home_kitchen' || location.address_line == null;
+  const city = stringValue(location.city, 'Local area');
+  return {
+    ...place,
+    locationId,
+    address: isPrivateLocation
+      ? `Approximate service area · ${city}`
+      : stringValue(location.address_line, stringValue(location.label, city)),
+    city,
+    region: stringValue(location.region),
+    postalCode: isPrivateLocation ? '' : stringValue(location.postal_code),
+    latitude: coordinates.latitude,
+    longitude: coordinates.longitude,
+    distanceMiles: origin
+      ? coordinateDistanceMiles(origin, coordinates)
+      : place.distanceMiles,
+    ...(place.category === 'home_kitchen' ? { serviceArea: city } : {}),
+  };
+}
+
 function buildMenus(sections: Row[], items: Row[], businessId: string): MenuSection[] {
   return sections
     .filter((section) => section.business_id === businessId)
@@ -988,7 +1028,7 @@ export async function fetchMapFoodFeatures(
       if (!visibleDominantCategory) continue;
       const logoPath = stringValue(entry.logo_path);
       const businessId = stringValue(entry.business_id);
-      const locationId = stringValue(entry.location_id);
+      const locationId = normalizePublicUuid(stringValue(entry.location_id));
       const rawSourceLabel = stringValue(entry.source_label);
       const rawMobilityState = stringValue(entry.mobility_state);
       features.push({
@@ -1000,7 +1040,7 @@ export async function fetchMapFoodFeatures(
         categoryCounts,
         dominantCategory: visibleDominantCategory,
         ...(uuidPattern.test(businessId) ? { businessId } : {}),
-        ...(uuidPattern.test(locationId) ? { locationId } : {}),
+        ...(locationId ? { locationId } : {}),
         ...(stringValue(entry.business_name) ? { name: stringValue(entry.business_name) } : {}),
         ...(logoUrls.get(logoPath) ? { logoUrl: logoUrls.get(logoPath) } : {}),
         ...(
@@ -1325,6 +1365,7 @@ export async function fetchMarketplacePlaces(
     );
 
     const sponsoredPlacementId = stringValue(sponsoredRow?.placement_id);
+    const sponsoredLocationId = normalizePublicUuid(stringValue(sponsoredRow?.location_id));
     const sponsoredToken = stringValue(sponsoredRow?.placement_token);
     const sponsoredExpiry = stringValue(sponsoredRow?.expires_at);
     const sponsoredDisclosure = stringValue(sponsoredRow?.disclosure);
@@ -1332,6 +1373,7 @@ export async function fetchMarketplacePlaces(
     const sponsoredPlacement: SponsoredPlace['sponsoredPlacement'] | undefined =
       sponsoredBusinessId &&
       uuidPattern.test(sponsoredBusinessId) &&
+      sponsoredLocationId &&
       uuidPattern.test(sponsoredPlacementId) &&
       sponsoredDisclosure === 'Sponsored ad' &&
       sponsoredReason.length > 0 &&
@@ -1343,6 +1385,7 @@ export async function fetchMarketplacePlaces(
       )
         ? {
             id: sponsoredPlacementId,
+            locationId: sponsoredLocationId,
             disclosure: 'Sponsored ad' as const,
             reason: sponsoredReason,
             token: sponsoredToken,
@@ -1379,11 +1422,12 @@ export async function fetchMarketplacePlaces(
       const nearbyLocationId = stringValue(
         nearbyRows.find((entry) => entry.business_id === id)?.location_id
       );
+      const preferredLocationId = normalizePublicUuid(options.preferredLocationId ?? '');
       const selectedLocationId =
         mobility?.nextStop.locationId ||
-        (uuidPattern.test(options.preferredLocationId ?? '')
-          && businessLocations.some((entry) => locationIdOf(entry) === options.preferredLocationId)
-          ? options.preferredLocationId
+        (preferredLocationId
+          && businessLocations.some((entry) => locationIdOf(entry) === preferredLocationId)
+          ? preferredLocationId
           : '') ||
         nearbyLocationId ||
         stringValue(activeStop?.location_id) ||
@@ -1554,10 +1598,27 @@ export async function fetchMarketplacePlaces(
       };
     });
 
+    const sponsoredBasePlace = sponsoredPlacement
+      ? mappedPlaces.find((place) => place.id === sponsoredBusinessId)
+      : undefined;
+    const sponsoredPublicLocation = sponsoredPlacement
+      ? rows(locationsResult.data).find(
+          (location) =>
+            stringValue(location.business_id) === sponsoredBusinessId &&
+            locationIdOf(location) === sponsoredPlacement.locationId
+        )
+      : undefined;
+    const sponsoredLocationPlace = projectPlaceAtPublicLocation(
+      sponsoredBasePlace,
+      sponsoredPublicLocation,
+      options.origin,
+    );
+
     const { places, sponsoredPlace } = splitSponsoredPlaces(
       mappedPlaces,
       organicBusinessIds,
       sponsoredBusinessId,
+      sponsoredLocationPlace,
       sponsoredPlacement,
     );
 
@@ -1583,19 +1644,44 @@ export async function fetchMarketplacePlaceById(
   if (!uuidPattern.test(businessId)) {
     return { ok: false, code: 'INVALID', reason: 'This listing link is invalid.' };
   }
+  let normalizedPreferredLocationId: string | undefined;
+  if (preferredLocationId !== undefined) {
+    const parsedLocationId = normalizePublicUuid(preferredLocationId);
+    if (!parsedLocationId) {
+      return { ok: false, code: 'INVALID', reason: 'This location link is invalid.' };
+    }
+    normalizedPreferredLocationId = parsedLocationId;
+  }
 
   const result = await fetchMarketplacePlaces({
     expectedUserId,
     includeDetails: true,
     includeBusinessIds: [businessId],
     onlyIncludedBusinesses: true,
-    preferredLocationId,
+    preferredLocationId: normalizedPreferredLocationId,
   });
   if (!result.ok) return result;
-  const place = result.data?.places.find((entry) => entry.id === businessId);
+  const place = findExactMarketplacePlace(
+    result.data?.places ?? [],
+    businessId,
+    normalizedPreferredLocationId,
+  );
   return place
     ? { ok: true, data: place }
     : { ok: false, code: 'NOT_FOUND', reason: 'This listing is unavailable or no longer public.' };
+}
+
+export function findExactMarketplacePlace<
+  T extends Pick<Place, 'id' | 'locationId'>,
+>(places: readonly T[], businessId: string, preferredLocationId?: string): T | undefined {
+  const normalizedLocationId = preferredLocationId === undefined
+    ? undefined
+    : normalizePublicUuid(preferredLocationId);
+  if (preferredLocationId !== undefined && !normalizedLocationId) return undefined;
+  return places.find((entry) =>
+    entry.id === businessId &&
+    (!normalizedLocationId || entry.locationId?.toLocaleLowerCase('en-US') === normalizedLocationId)
+  );
 }
 
 export async function recordSponsoredInteraction(

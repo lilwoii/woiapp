@@ -35,7 +35,13 @@ import {
   isHomeKitchenBlocked,
   publicListingRouteUnavailableReason,
 } from '@/lib/features';
-import { phoneHref, placeShareUrl, safePublicHttpsUrl } from '@/lib/links';
+import {
+  parsePublicLocationRouteParam,
+  phoneHref,
+  placeLocationRouteParams,
+  placeShareUrl,
+  safePublicHttpsUrl,
+} from '@/lib/links';
 import { isMarketplaceChatAvailable, startMarketplaceConversation } from '@/lib/marketplace-chat';
 import { externalDirectionsUrl } from '@/lib/navigation';
 import {
@@ -58,12 +64,32 @@ const currency = new Intl.NumberFormat('en-US', {
 });
 
 export default function PlaceDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{
+    id?: string | string[];
+    location?: string | string[];
+  }>();
+  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const parsedLocationId = parsePublicLocationRouteParam(params.location);
+  const locationId = parsedLocationId ?? undefined;
+  const locationParamInvalid = parsedLocationId === null;
   const { scopeKey } = useMarketplaceStore();
-  return <ScopedPlaceDetailScreen id={id} key={`${scopeKey}:place:${id ?? ''}`} />;
+  return <ScopedPlaceDetailScreen
+    id={id}
+    key={`${scopeKey}:place:${id ?? ''}:${locationId ?? ''}:${locationParamInvalid}`}
+    locationId={locationId}
+    locationParamInvalid={locationParamInvalid}
+  />;
 }
 
-function ScopedPlaceDetailScreen({ id }: { id?: string }) {
+function ScopedPlaceDetailScreen({
+  id,
+  locationId,
+  locationParamInvalid,
+}: {
+  id?: string;
+  locationId?: string;
+  locationParamInvalid: boolean;
+}) {
   const auth = useAuth();
   const {
     addReview,
@@ -78,8 +104,12 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   // Detail routes may resolve a deep-link-only place kept in the account/
   // detail cache. Public discovery remains filtered by provenance in the
   // marketplace store, while this route still has the loaded record.
-  const loadedPlace = places.find((entry) => entry.id === id);
-  const placeBlockedReason = publicListingRouteUnavailableReason(loadedPlace);
+  const loadedPlace = places.find((entry) =>
+    entry.id === id && (!locationId || entry.locationId === locationId)
+  );
+  const placeBlockedReason = locationParamInvalid
+    ? 'This location link is invalid.'
+    : publicListingRouteUnavailableReason(loadedPlace);
   const placeBlocked = Boolean(placeBlockedReason);
   // A managed home-kitchen record may remain in the account-scoped store for
   // Studio. Never let that private cache become a public detail route.
@@ -122,7 +152,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
     const ready = Boolean(place && (!auth.isConfigured || place.detailsLoaded));
     const timer = setTimeout(() => {
       if (!active) return;
-      if (placeBlocked) {
+      if (placeBlocked || locationParamInvalid) {
         setListingLoading(false);
         setListingError(placeBlockedReason);
         return;
@@ -133,7 +163,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
       }
       setListingLoading(true);
       setListingError(null);
-      void ensurePlace(id).then((result) => {
+      void ensurePlace(id, locationId).then((result) => {
         if (!active) return;
         setListingLoading(false);
         if (!result.ok) setListingError(result.reason);
@@ -143,7 +173,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
       active = false;
       clearTimeout(timer);
     };
-  }, [auth.isConfigured, ensurePlace, id, place, placeBlocked, placeBlockedReason]);
+  }, [auth.isConfigured, ensurePlace, id, locationId, locationParamInvalid, place, placeBlocked, placeBlockedReason]);
 
   useEffect(() => {
     let active = true;
@@ -173,7 +203,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
       ['meta[name="description"]', `${place.name}: ${place.description}`],
       ['meta[property="og:title"]', `${place.name} | Spottr`],
       ['meta[property="og:description"]', place.description],
-      ['meta[property="og:url"]', placeShareUrl(place.id)],
+      ['meta[property="og:url"]', placeShareUrl(place.id, place.locationId)],
     ] as const;
     const previous = values.map(([selector, value]) => {
       const element = document.querySelector<HTMLMetaElement>(selector);
@@ -230,11 +260,14 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
   };
 
   const openSpottrNavigation = () => {
-    router.push({ pathname: '/navigation/[id]', params: { id: place.id } } as Href);
+    router.push({
+      pathname: '/navigation/[id]',
+      params: placeLocationRouteParams(place.id, place.locationId),
+    } as Href);
   };
 
   const shareListing = async () => {
-    const url = placeShareUrl(place.id);
+    const url = placeShareUrl(place.id, place.locationId);
     try {
       await Share.share({
         message: `${place.name} on Spottr — ${place.todayHours}\n${url}`,
@@ -551,7 +584,7 @@ function ScopedPlaceDetailScreen({ id }: { id?: string }) {
                 router.push(
                   {
                     pathname: '/order/[id]',
-                    params: { id: place.id },
+                    params: placeLocationRouteParams(place.id, place.locationId),
                   } as unknown as Href
                 )
               }

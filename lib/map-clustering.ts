@@ -24,6 +24,14 @@ export type MapFeature = PlaceMapFeature | ClusterMapFeature;
 const tileSize = 512;
 const maxMercatorLatitude = 85.05112878;
 
+export function mapPlaceIdentity(businessId: string, locationId?: string) {
+  return locationId ? `${businessId}:${locationId}` : businessId;
+}
+
+function mapPlaceFeatureId(place: Pick<Place, 'id' | 'locationId'>) {
+  return `place:${mapPlaceIdentity(place.id, place.locationId)}`;
+}
+
 export function normalizeLongitude(longitude: number) {
   if (!Number.isFinite(longitude)) return 0;
   return ((((longitude + 180) % 360) + 360) % 360) - 180;
@@ -79,7 +87,7 @@ export function clusterPlaces(
   if ((zoom >= 16 && places.length <= renderedLimit) || places.length < 2) {
     return places.map((place) => ({
       kind: 'place',
-      id: `place:${place.id}`,
+      id: mapPlaceFeatureId(place),
       latitude: place.latitude,
       longitude: place.longitude,
       place,
@@ -104,7 +112,7 @@ export function clusterPlaces(
         const place = bucket[0];
         return {
           kind: 'place' as const,
-          id: `place:${place.id}`,
+          id: mapPlaceFeatureId(place),
           latitude: place.latitude,
           longitude: place.longitude,
           place,
@@ -144,20 +152,27 @@ export function clusterPlacesWithSelection(
   places: Place[],
   zoom: number,
   selectedId: string | undefined,
+  selectedLocationId: string | undefined,
   maximumRenderedFeatures: number,
   radiusPixels = 58,
 ): MapFeature[] {
-  const selected = selectedId ? places.find((place) => place.id === selectedId) : undefined;
+  const selected = selectedId
+    ? places.find((place) =>
+        place.id === selectedId && (!selectedLocationId || place.locationId === selectedLocationId)
+      )
+    : undefined;
   const renderedLimit = Math.max(2, Math.floor(maximumRenderedFeatures));
   const clustered = clusterPlaces(
-    selected ? places.filter((place) => place.id !== selected.id) : places,
+    selected
+      ? places.filter((place) => mapPlaceFeatureId(place) !== mapPlaceFeatureId(selected))
+      : places,
     zoom,
     radiusPixels,
     selected ? renderedLimit - 1 : renderedLimit,
   );
   return selected ? [...clustered, {
     kind: 'place',
-    id: `place:${selected.id}`,
+    id: mapPlaceFeatureId(selected),
     latitude: selected.latitude,
     longitude: selected.longitude,
     place: selected,

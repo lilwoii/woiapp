@@ -95,12 +95,26 @@ describe('map clustering', () => {
       latitude: -60 + (index % 400) * 0.3,
       longitude: -170 + Math.floor(index / 400) * 13.5,
     }));
-    const rendered = clusterPlacesWithSelection(places, 18, 'dense-9', 300);
+    const rendered = clusterPlacesWithSelection(places, 18, 'dense-9', undefined, 300);
     expect(rendered.length).toBeLessThanOrEqual(300);
     expect(rendered.reduce(
       (count, feature) => count + (feature.kind === 'cluster' ? feature.count : 1),
       0,
     )).toBe(10_000);
     expect(rendered.some((feature) => feature.kind === 'place' && feature.place.id === 'dense-9')).toBe(true);
+  });
+
+  it('keeps branches of the same business distinct and selects the requested location', () => {
+    const branches = [
+      { ...seedPlaces[0], id: 'chain', locationId: 'north', latitude: 34.05, longitude: -118.25 },
+      { ...seedPlaces[0], id: 'chain', locationId: 'south', latitude: 34.01, longitude: -118.28 },
+    ];
+
+    const rendered = clusterPlacesWithSelection(branches, 18, 'chain', 'south', 20);
+    expect(rendered).toHaveLength(2);
+    expect(rendered.map((feature) => feature.id)).toEqual(
+      expect.arrayContaining(['place:chain:north', 'place:chain:south']),
+    );
+    expect(rendered.at(-1)).toMatchObject({ kind: 'place', place: { locationId: 'south' } });
   });
 });

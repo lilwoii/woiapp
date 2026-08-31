@@ -65,6 +65,7 @@ Deno.test("quiet-hours UI is account-scoped, portable, and push stays fail-close
   assert(saved.includes("QUIET_HOURS_PRESETS.map"));
   assert(saved.includes('accessibilityRole="radiogroup"'));
   assert(saved.includes('accessibilityRole="radio"'));
+  assert(saved.includes("aria-checked={selected}"));
   assert(saved.includes("do not request background location or opt you into marketing"));
   assert(!saved.includes("expo-location"));
   assert(!saved.includes("DateTimePicker"));

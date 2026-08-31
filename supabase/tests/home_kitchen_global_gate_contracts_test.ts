@@ -242,7 +242,7 @@ Deno.test("pickup writers share the gate lock before row locks and legacy writer
 Deno.test("client filtering remains presentation-only while deep links use server data", () => {
   assertMatch(discoveryRoute, /featureFlags\.homeKitchens/);
   assertMatch(marketplaceApi, /fetchMarketplacePlaceById/);
-  assertMatch(placeRoute, /ensurePlace\(id\)/);
+  assertMatch(placeRoute, /ensurePlace\(id, locationId\)/);
   assertMatch(placeRoute, /startMarketplaceConversation/);
   assertMatch(orderRoute, /const \{ ensurePlace, places \} = useMarketplaceStore\(\)/);
   assertMatch(orderRoute, /publicListingRouteUnavailableReason\(loadedPlace\)/);

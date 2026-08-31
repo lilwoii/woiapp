@@ -25,9 +25,10 @@ Venue types:
 
 The universal client currently supports:
 
-- foreground-location and city/ZIP/business/cuisine discovery, with
+- foreground-location and city/ZIP/business/cuisine discovery over currently
+  published inventory, with
   diacritic-safe token relevance over already-public names, cuisines, features,
-  and loaded menu fields;
+  and loaded menu fields; an independent licensed geocoder is not active;
 - map/list results with visually distinct truck markers;
 - open-only, venue, cuisine, dietary, payment, price, distance, rating, pickup,
   Nearby, Popular, Trending, and Top rated controls;

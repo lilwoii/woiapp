@@ -25,7 +25,8 @@ import {
   publicListingRouteUnavailableReason,
 } from '@/lib/features';
 import {
-  advanceRouteStepIndex,
+  advanceRouteProgress,
+  createRouteLiveProgress,
   externalDirectionsProviderUrl,
   externalDirectionsUrl,
   formatRouteArrivalTime,
@@ -34,9 +35,11 @@ import {
   inferTravelMode,
   navigationDistanceMeters,
   requestRoutePlan,
+  routeProgressMetrics,
   shouldRequestAutomaticReroute,
 } from '@/lib/navigation';
-import type { ExternalMapProvider } from '@/lib/navigation';
+import { parsePublicLocationRouteParam, placeLocationRoutePath } from '@/lib/links';
+import type { ExternalMapProvider, RouteLiveProgress } from '@/lib/navigation';
 import type { NavigationCoordinate, RoutePlan, TravelMode } from '@/types/navigation';
 
 type TravelModeChoice = TravelMode | 'auto';
@@ -78,17 +81,40 @@ async function currentPositionWithTimeout() {
 }
 
 export default function NavigationScreen() {
-  const params = useLocalSearchParams<{ id?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    id?: string | string[];
+    location?: string | string[];
+  }>();
   const placeId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const parsedLocationId = parsePublicLocationRouteParam(params.location);
+  const locationId = parsedLocationId ?? undefined;
+  const locationParamInvalid = parsedLocationId === null;
   const { scopeKey } = useMarketplaceStore();
-  return <ScopedNavigationScreen key={`${scopeKey}:navigation:${placeId ?? ''}`} placeId={placeId} />;
+  return <ScopedNavigationScreen
+    key={`${scopeKey}:navigation:${placeId ?? ''}:${locationId ?? ''}:${locationParamInvalid}`}
+    locationId={locationId}
+    locationParamInvalid={locationParamInvalid}
+    placeId={placeId}
+  />;
 }
 
-function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
+function ScopedNavigationScreen({
+  placeId,
+  locationId,
+  locationParamInvalid,
+}: {
+  placeId?: string;
+  locationId?: string;
+  locationParamInvalid: boolean;
+}) {
   const auth = useAuth();
   const { ensurePlace, places } = useMarketplaceStore();
-  const loadedPlace = places.find((entry) => entry.id === placeId);
-  const placeBlockedReason = publicListingRouteUnavailableReason(loadedPlace);
+  const loadedPlace = places.find((entry) =>
+    entry.id === placeId && (!locationId || entry.locationId === locationId)
+  );
+  const placeBlockedReason = locationParamInvalid
+    ? 'This destination link is invalid.'
+    : publicListingRouteUnavailableReason(loadedPlace);
   const placeBlocked = Boolean(placeBlockedReason);
   const place = placeBlocked ? undefined : loadedPlace;
   const [placeRequestPending, setPlaceRequestPending] = useState(Boolean(placeId && !place && !placeBlocked));
@@ -97,6 +123,8 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   const [routedDestinationKey, setRoutedDestinationKey] = useState<string | null>(null);
   const [routeVisible, setRouteVisible] = useState(true);
   const [routeStepIndex, setRouteStepIndex] = useState(0);
+  const [routeLiveProgress, setRouteLiveProgress] = useState<RouteLiveProgress | null>(null);
+  const [routeGuidanceNeedsRefresh, setRouteGuidanceNeedsRefresh] = useState(false);
   const [mode, setMode] = useState<TravelMode | null>(null);
   const [modeChoice, setModeChoice] = useState<TravelModeChoice | null>(null);
   const [location, setLocation] = useState<NavigationCoordinate | null>(null);
@@ -106,6 +134,8 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const watcher = useRef<Location.LocationSubscription | null>(null);
   const routeRef = useRef<RoutePlan | null>(null);
+  const routeLiveProgressRef = useRef<RouteLiveProgress | null>(null);
+  const boundedRecoveryPending = useRef(false);
   const routeDestinationKey = useRef<string | null>(null);
   const destinationRef = useRef<NavigationCoordinate | null>(null);
   const trackingWanted = useRef(false);
@@ -115,6 +145,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   const routeRequestSequence = useRef(0);
   const activeRouteRequest = useRef<number | null>(null);
   const automaticReroutingRef = useRef(false);
+  const navigationOperationActive = useRef(false);
   const appStateRef = useRef(AppState.currentState);
   const watcherGeneration = useRef(0);
   const navigationOperationGeneration = useRef(0);
@@ -126,10 +157,13 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     navigationOperationGeneration.current += 1;
     routeRequestSequence.current += 1;
     activeRouteRequest.current = null;
+    navigationOperationActive.current = false;
     watcher.current?.remove();
     watcher.current = null;
     modeRef.current = null;
     routeRef.current = null;
+    routeLiveProgressRef.current = null;
+    boundedRecoveryPending.current = false;
     routeDestinationKey.current = null;
     routeRequestOrigin.current = null;
     lastRouteRequestAt.current = 0;
@@ -140,6 +174,8 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     setRoute(null);
     setRouteVisible(true);
     setRouteStepIndex(0);
+    setRouteLiveProgress(null);
+    setRouteGuidanceNeedsRefresh(false);
     setLocation(null);
     setAutomaticRerouting(false);
     setBusy(false);
@@ -156,21 +192,22 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
       navigationOperationGeneration.current += 1;
       routeRequestSequence.current += 1;
       activeRouteRequest.current = null;
+      navigationOperationActive.current = false;
       watcher.current?.remove();
       watcher.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (!placeId || place || placeBlocked) return;
+    if (!placeId || place || placeBlocked || locationParamInvalid) return;
     let active = true;
-    void ensurePlace(placeId).then((result) => {
+    void ensurePlace(placeId, locationId).then((result) => {
       if (!active) return;
       setPlaceRequestPending(false);
       if (!result.ok) setMessage(result.reason);
     });
     return () => { active = false; };
-  }, [ensurePlace, place, placeBlocked, placeId]);
+  }, [ensurePlace, locationId, locationParamInvalid, place, placeBlocked, placeId]);
 
   const destination = useMemo(() => place ? {
     latitude: place.latitude,
@@ -179,7 +216,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
   const currentDestinationKey = destinationKey(destination);
   const routeMatchesDestination = !route || routedDestinationKey === currentDestinationKey;
   const routeIsFresh = !route || Date.parse(route.expiresAt) > routeClock;
-  const visibleRoute = routeMatchesDestination && routeIsFresh ? route : null;
+  const visibleRoute = route;
   const hasTrackableDestination = Boolean(
     place &&
     destination &&
@@ -201,9 +238,8 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
 
   useEffect(() => {
     if (!route) return;
-    const remaining = Math.max(0, Date.parse(route.expiresAt) - Date.now());
-    const timer = setTimeout(() => setRouteClock(Date.now()), remaining + 50);
-    return () => clearTimeout(timer);
+    const timer = setInterval(() => setRouteClock(Date.now()), 30_000);
+    return () => clearInterval(timer);
   }, [route]);
 
   useEffect(() => {
@@ -212,7 +248,12 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
 
   const refreshRoute = useCallback(async (origin: NavigationCoordinate, selectedMode: TravelMode) => {
     const requestedDestination = destinationRef.current;
-    if (!mounted.current || !requestedDestination || activeRouteRequest.current !== null) return false;
+    if (
+      !mounted.current ||
+      appStateRef.current !== 'active' ||
+      !requestedDestination ||
+      activeRouteRequest.current !== null
+    ) return false;
     const requestedDestinationKey = destinationKey(requestedDestination);
     const requestId = routeRequestSequence.current + 1;
     routeRequestSequence.current = requestId;
@@ -228,7 +269,12 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
       }
       return false;
     }
-    if (!mounted.current || activeRouteRequest.current !== requestId || routeRequestSequence.current !== requestId) return false;
+    if (
+      !mounted.current ||
+      appStateRef.current !== 'active' ||
+      activeRouteRequest.current !== requestId ||
+      routeRequestSequence.current !== requestId
+    ) return false;
     activeRouteRequest.current = null;
     if (destinationKey(destinationRef.current) !== requestedDestinationKey) {
       setMessage('This destination moved while the route was loading. Try the route again.');
@@ -240,9 +286,15 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     }
     routeRequestOrigin.current = origin;
     routeRef.current = result.data;
+    const initialProgress = createRouteLiveProgress(result.data);
+    routeLiveProgressRef.current = initialProgress;
+    boundedRecoveryPending.current = false;
     routeDestinationKey.current = requestedDestinationKey;
+    setRouteClock(Date.now());
     setRoutedDestinationKey(requestedDestinationKey);
     setRouteStepIndex(0);
+    setRouteLiveProgress(initialProgress);
+    setRouteGuidanceNeedsRefresh(false);
     setRoute(result.data);
     setRouteVisible(true);
     setMessage(null);
@@ -269,11 +321,22 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
         setLocation(next);
         const activeRoute = routeRef.current;
         if (activeRoute && routeDestinationKey.current === destinationKey(destinationRef.current)) {
-          setRouteStepIndex((current) => advanceRouteStepIndex(activeRoute, next, current));
+          const allowBoundedRecovery = boundedRecoveryPending.current;
+          boundedRecoveryPending.current = false;
+          const nextProgress = advanceRouteProgress(
+            activeRoute,
+            next,
+            routeLiveProgressRef.current,
+            { allowBoundedRecovery },
+          );
+          routeLiveProgressRef.current = nextProgress;
+          setRouteLiveProgress(nextProgress);
+          setRouteStepIndex(nextProgress.stepIndex);
+          setRouteGuidanceNeedsRefresh(!nextProgress.matched);
         }
         const selectedMode = modeRef.current;
         const priorOrigin = routeRequestOrigin.current;
-        if (selectedMode && shouldRequestAutomaticReroute({
+        if (!navigationOperationActive.current && selectedMode && shouldRequestAutomaticReroute({
           enabled: automaticReroutingRef.current,
           previousOrigin: priorOrigin,
           currentOrigin: next,
@@ -297,10 +360,18 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     const subscription = AppState.addEventListener('change', (state) => {
       appStateRef.current = state;
       if (state !== 'active') {
+        navigationOperationGeneration.current += 1;
+        navigationOperationActive.current = false;
+        routeRequestSequence.current += 1;
+        activeRouteRequest.current = null;
         watcherGeneration.current += 1;
         watcher.current?.remove();
         watcher.current = null;
+        boundedRecoveryPending.current = false;
+        setBusy(false);
+        setPendingMode(null);
       } else if (trackingWanted.current && !watcher.current) {
+        boundedRecoveryPending.current = true;
         void beginWatching().catch(() => {
           if (mounted.current && trackingWanted.current && appStateRef.current === 'active') {
             setMessage('Live tracking could not resume. Check location services and try again.');
@@ -321,25 +392,37 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
 
   const startNavigation = async (selectedChoice: TravelModeChoice) => {
     if (auth.status !== 'authenticated') {
-      router.push({ pathname: '/auth', params: { next: `/navigation/${placeId ?? ''}` } } as Href);
+      router.push({
+        pathname: '/auth',
+        params: { next: placeLocationRoutePath('navigation', placeId ?? '', locationId) },
+      } as Href);
       return;
     }
     if (!place || !destination || isHomeKitchenBlocked(place.category) || place.category === 'home_kitchen') return;
     const navigationGeneration = ++navigationOperationGeneration.current;
     routeRequestSequence.current += 1;
     activeRouteRequest.current = null;
+    navigationOperationActive.current = true;
     setBusy(true);
     setPendingMode(selectedChoice);
     setMessage(null);
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
-      if (!mounted.current || navigationOperationGeneration.current !== navigationGeneration) return;
+      if (
+        !mounted.current ||
+        appStateRef.current !== 'active' ||
+        navigationOperationGeneration.current !== navigationGeneration
+      ) return;
       if (permission.status !== Location.PermissionStatus.GRANTED) {
         setMessage('Allow foreground location access to start live navigation. Spottr does not request background tracking.');
         return;
       }
       const current = await currentPositionWithTimeout();
-      if (!mounted.current || navigationOperationGeneration.current !== navigationGeneration) return;
+      if (
+        !mounted.current ||
+        appStateRef.current !== 'active' ||
+        navigationOperationGeneration.current !== navigationGeneration
+      ) return;
       const origin = { latitude: current.coords.latitude, longitude: current.coords.longitude };
       const selectedMode = selectedChoice === 'auto'
         ? inferTravelMode({
@@ -351,17 +434,17 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
       setLocation(origin);
       automaticReroutingRef.current = false;
       setAutomaticRerouting(false);
+      if (appStateRef.current !== 'active') return;
+      const routed = await refreshRoute(origin, selectedMode);
+      if (
+        !mounted.current ||
+        appStateRef.current !== 'active' ||
+        navigationOperationGeneration.current !== navigationGeneration
+      ) return;
+      if (!routed) return;
+      modeRef.current = selectedMode;
       setMode(selectedMode);
       setModeChoice(selectedChoice);
-      modeRef.current = selectedMode;
-      const routed = await refreshRoute(origin, selectedMode);
-      if (!mounted.current || navigationOperationGeneration.current !== navigationGeneration) return;
-      if (!routed) {
-        modeRef.current = null;
-        setMode(null);
-        setModeChoice(null);
-        return;
-      }
       trackingWanted.current = true;
       await beginWatching();
       if (selectedChoice === 'auto' && mounted.current) {
@@ -373,6 +456,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
       }
     } finally {
       if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        navigationOperationActive.current = false;
         setBusy(false);
         setPendingMode(null);
       }
@@ -388,6 +472,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     const navigationGeneration = ++navigationOperationGeneration.current;
     routeRequestSequence.current += 1;
     activeRouteRequest.current = null;
+    navigationOperationActive.current = true;
     setBusy(true);
     setPendingMode(selectedChoice);
     setMessage(null);
@@ -400,7 +485,11 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
         : selectedChoice;
       if (selectedChoice === 'auto') {
         const current = await currentPositionWithTimeout();
-        if (!mounted.current || navigationOperationGeneration.current !== navigationGeneration) return;
+        if (
+          !mounted.current ||
+          appStateRef.current !== 'active' ||
+          navigationOperationGeneration.current !== navigationGeneration
+        ) return;
         routeOrigin = { latitude: current.coords.latitude, longitude: current.coords.longitude };
         setLocation(routeOrigin);
         selectedMode = inferTravelMode({
@@ -411,8 +500,13 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
             : Number.POSITIVE_INFINITY,
         });
       }
+      if (appStateRef.current !== 'active') return;
       const routed = await refreshRoute(routeOrigin, selectedMode);
-      if (!mounted.current || navigationOperationGeneration.current !== navigationGeneration) return;
+      if (
+        !mounted.current ||
+        appStateRef.current !== 'active' ||
+        navigationOperationGeneration.current !== navigationGeneration
+      ) return;
       if (!routed) return;
       modeRef.current = selectedMode;
       setMode(selectedMode);
@@ -426,6 +520,45 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
       }
     } finally {
       if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        navigationOperationActive.current = false;
+        setBusy(false);
+        setPendingMode(null);
+      }
+    }
+  };
+
+  const refreshActiveRoute = async () => {
+    if (!mode || !location || busy) return;
+    if (activeRouteRequest.current !== null) {
+      setMessage('A route refresh is already in progress.');
+      return;
+    }
+    const navigationGeneration = ++navigationOperationGeneration.current;
+    navigationOperationActive.current = true;
+    setBusy(true);
+    setPendingMode(modeChoice ?? mode);
+    setMessage(null);
+    try {
+      const current = await currentPositionWithTimeout();
+      if (
+        !mounted.current ||
+        appStateRef.current !== 'active' ||
+        navigationOperationGeneration.current !== navigationGeneration
+      ) return;
+      const routeOrigin = {
+        latitude: current.coords.latitude,
+        longitude: current.coords.longitude,
+      };
+      setLocation(routeOrigin);
+      if (appStateRef.current !== 'active') return;
+      await refreshRoute(routeOrigin, mode);
+    } catch {
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        setMessage('Your route could not be refreshed. Check your connection and try again.');
+      }
+    } finally {
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        navigationOperationActive.current = false;
         setBusy(false);
         setPendingMode(null);
       }
@@ -499,7 +632,10 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
         <Text style={styles.centerText}>Live foreground location and provider route requests require your Spottr account.</Text>
         <Pressable
           accessibilityRole="button"
-          onPress={() => router.push({ pathname: '/auth', params: { next: `/navigation/${place.id}` } } as Href)}
+          onPress={() => router.push({
+            pathname: '/auth',
+            params: { next: placeLocationRoutePath('navigation', place.id, place.locationId) },
+          } as Href)}
           style={styles.darkButton}>
           <Text style={styles.darkButtonText}>Sign in securely</Text>
         </Pressable>
@@ -517,11 +653,38 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
     );
   }
 
-  const nextStep = visibleRoute?.steps[routeStepIndex] ?? null;
+  const actionableGuidance = Boolean(
+    visibleRoute && routeMatchesDestination && routeIsFresh && !routeGuidanceNeedsRefresh,
+  );
+  const nextStep = actionableGuidance
+    ? visibleRoute?.steps[routeStepIndex] ?? null
+    : null;
+  const routeProgress = visibleRoute
+    ? routeProgressMetrics(visibleRoute, routeStepIndex, location, routeLiveProgress)
+    : null;
+  const guidanceDurationSeconds = visibleRoute
+    ? actionableGuidance
+      ? routeProgress?.durationSeconds ?? visibleRoute.durationSeconds
+      : visibleRoute.durationSeconds
+    : 0;
+  const guidanceDistanceMeters = visibleRoute
+    ? actionableGuidance
+      ? routeProgress?.distanceMeters ?? visibleRoute.distanceMeters
+      : visibleRoute.distanceMeters
+    : 0;
+  const guidanceInstruction = !routeMatchesDestination
+    ? 'Destination changed — refresh route'
+    : !routeIsFresh
+      ? 'Route expired — refresh for current turns'
+      : routeGuidanceNeedsRefresh
+        ? 'Location changed — refresh route guidance'
+        : nextStep?.instruction ?? 'Continue toward your destination';
   const routeStatusMessage = message ?? (route && !routeMatchesDestination
     ? 'This destination moved. Select your current travel mode to refresh the route.'
     : route && !routeIsFresh
-      ? 'This route estimate expired. Select your current travel mode to refresh it.'
+      ? 'This is the original route estimate. Refresh to update traffic, route conditions, and ETA.'
+      : routeGuidanceNeedsRefresh
+        ? 'Your location could not be matched safely to this route. The route remains as a reference; refresh to resume turn guidance.'
       : null);
   const travelModePrivacyNotice = mode
     ? 'Changing travel mode sends your current precise location, this public destination, and the selected route mode to Mapbox. Auto estimates walking or driving on your device from current speed and trip distance before requesting a route.'
@@ -543,11 +706,24 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
 
       <ScrollView contentContainerStyle={styles.content}>
         {visibleRoute ? (
-          <View accessibilityLiveRegion="polite" style={styles.guidanceStrip}>
-            <FontAwesome6 color="#FFFFFF" name="diamond-turn-right" size={20} />
+          <View style={styles.guidanceStrip}>
+            <FontAwesome6
+              color="#FFFFFF"
+              name={actionableGuidance ? 'diamond-turn-right' : 'rotate'}
+              size={20}
+            />
             <View style={styles.guidanceCopy}>
-              <Text numberOfLines={2} style={styles.guidanceInstruction}>{nextStep?.instruction ?? 'Continue toward your destination'}</Text>
-              <Text style={styles.guidanceMeta}>ETA {formatRouteArrivalTime(visibleRoute)} · {formatRouteDuration(visibleRoute.durationSeconds)} · {formatRouteDistance(visibleRoute.distanceMeters)}</Text>
+              <Text accessibilityLiveRegion="polite" numberOfLines={2} style={styles.guidanceInstruction}>{guidanceInstruction}</Text>
+              <Text style={styles.guidanceMeta}>{!actionableGuidance
+                ? 'Original estimate'
+                : routeProgress?.distanceMeters === 0
+                ? 'Arriving'
+                : `ETA ${formatRouteArrivalTime(
+                      visibleRoute,
+                      undefined,
+                      guidanceDurationSeconds,
+                      routeClock,
+                    )}`} · About {formatRouteDuration(guidanceDurationSeconds)} · {formatRouteDistance(guidanceDistanceMeters)}</Text>
             </View>
           </View>
         ) : null}
@@ -558,6 +734,7 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
             places={[place]}
             routeCoordinates={routeVisible ? visibleRoute?.coordinates : []}
             selectedId={place.id}
+            selectedLocationId={place.locationId}
             userCoordinates={location}
           />
         </View>
@@ -612,6 +789,19 @@ function ScopedNavigationScreen({ placeId }: { placeId?: string }) {
                 </Pressable>
               </View>
               <View style={styles.activeControls}>
+                {visibleRoute && (
+                  !routeMatchesDestination || !routeIsFresh || routeGuidanceNeedsRefresh
+                ) ? (
+                  <Pressable
+                    accessibilityHint="Sends your current precise foreground location and this public destination to Mapbox for a new route."
+                    accessibilityRole="button"
+                    disabled={busy}
+                    onPress={() => void refreshActiveRoute()}
+                    style={styles.secondaryButton}>
+                    <FontAwesome6 color={palette.ink} name="rotate" size={13} />
+                    <Text style={styles.secondaryButtonText}>Refresh route</Text>
+                  </Pressable>
+                ) : null}
                 {visibleRoute ? (
                   <Pressable accessibilityRole="button" onPress={() => setRouteVisible((value) => !value)} style={styles.secondaryButton}>
                     <FontAwesome6 color={palette.ink} name={routeVisible ? 'route' : 'eye'} size={13} />

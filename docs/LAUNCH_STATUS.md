@@ -41,8 +41,8 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   `aad85320db62e7131f6f6aad653c27e1e85131d8` passed the GitHub
   [Quality](https://github.com/lilwoii/woiapp/actions/runs/33290028588) and
   [CodeQL](https://github.com/lilwoii/woiapp/actions/runs/33290028574) workflows.
-  Native maps now initialize and deliberately refocus from actual worldwide
-  results or foreground location instead of a fixed-city camera, without
+  Native maps now initialize and deliberately refocus from actual returned
+  result coordinates or foreground location instead of a fixed-city camera, without
   overriding manual exploration. Native and web place and route fitting share
   latitude-safe shortest-arc geometry for high-latitude and international-date-
   line cases, and stale selections cannot override a new city or ZIP fit.
@@ -110,11 +110,13 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   states without inventing a city, bounds dense fallback rendering while
   preserving represented counts and the selected listing, cancels stale area
   searches, and refuses oversized live-inventory viewports. Native driving
-  mode exposes the platform traffic layer. Route requests abort on timeout,
-  preserve the selected travel mode when opening Apple or Google Maps, and
+  mode requests the device platform's traffic layer, with coverage still subject
+  to signed-device/provider acceptance. Route requests abort on timeout,
+  preserve supported travel modes when opening Apple or Google Maps, and
   discard guidance if a mobile destination moves. Web controls advertise 3D
-  only when the loaded licensed style actually contains building extrusion
-  data, and rendered markers remain keyboard reachable. Foreground native
+  only when the loaded style declares a `fill-extrusion` layer; provider
+  licensing, layer visibility, and regional building coverage remain release
+  evidence. Rendered markers remain keyboard reachable. Foreground native
   notification presentation and strictly parsed notification-tap routes are
   also covered while every production push gate remains false. The rendered
   desktop/mobile suite exercised 100 accessibility and functional cases,
@@ -127,8 +129,10 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   never claim to show a vehicle's live position; stale detail state cannot
   override authoritative inventory, and clients batch an authoritative refresh
   when the stop boundary arrives. Navigation now offers conservative on-device
-  Auto estimation, traffic-aware drive/walk/bike route requests, absolute ETA,
-  route expiry, explicit Apple/Google handoff, and immediate foreground watcher
+  Auto estimation, traffic-aware driving plus walking and biking routes,
+  provider-estimated arrival time for a fresh route, persistent stale guidance
+  labelled as an original estimate, explicit refresh and Apple/Google handoff,
+  and immediate foreground watcher
   cancellation if a destination disappears or becomes privacy-blocked. Search
   is diacritic-safe and token-aware over public food data, with exact business,
   cuisine, and loaded-menu matches ahead of incidental text.
@@ -212,6 +216,10 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   and tile capacity with correct attribution, building/road coverage, key or
   URL restrictions, quotas, billing alerts, and representative geography/load
   tests. The unlicensed public OSM raster fallback is for development only.
+- In-app production routing is hard disabled in the client, release workflows,
+  native verifier, and server environment. Activation requires a reviewed
+  code/config/workflow policy change plus restricted provider credentials,
+  billing controls, privacy acceptance, and signed-device route testing.
 
 ### iOS and Android
 

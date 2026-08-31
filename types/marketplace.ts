@@ -141,6 +141,7 @@ export type Place = {
 export type SponsoredPlace = Place & {
   sponsoredPlacement: {
     id: string;
+    locationId: string;
     disclosure: 'Sponsored ad';
     reason: string;
     token: string;

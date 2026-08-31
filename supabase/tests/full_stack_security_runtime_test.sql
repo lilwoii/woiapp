@@ -3083,6 +3083,10 @@ do $mobile_map_location_authority$
 declare
   visible_count integer;
   visible_location_id uuid;
+  sponsored_result jsonb;
+  sponsored_impression jsonb;
+  sponsored_open jsonb;
+  sponsored_decision_id uuid;
 begin
   update public.businesses
   set kind = 'food_truck'
@@ -3155,9 +3159,72 @@ begin
     raise exception 'Mobile map ignored the current active stop';
   end if;
 
+  -- sponsored_mobile_location_authority: the paid projection must select the
+  -- same active branch as nearby/map discovery, never a historical branch.
+  update public.ad_targets
+  set business_kinds = array['food_truck']::public.business_kind[]
+  where campaign_id = '77000000-0000-4000-8000-000000000007';
+
+  sponsored_result := public.select_sponsored_placement(
+    'discover', 34.05, -118.24, 16093,
+    array['food_truck']::public.business_kind[],
+    repeat('7', 64), repeat('8', 64), null
+  );
+  sponsored_decision_id := (sponsored_result->>'placement_id')::uuid;
+  if sponsored_result->>'location_id' <> '73100000-0000-4000-8000-000000000007' then
+    raise exception 'Sponsored selector ignored the current mobile branch';
+  end if;
+
+  sponsored_impression := public.record_sponsored_interaction(
+    sponsored_result->>'placement_token',
+    'impression',
+    'runtime:sponsor:mobile:impression',
+    repeat('8', 64)
+  );
+  if sponsored_impression->>'accepted' <> 'true' then
+    raise exception 'Sponsored mobile impression was not accepted at the active branch';
+  end if;
+
   update public.mobile_stops
   set state = 'completed'
   where id = '76000000-0000-4000-8000-000000000003';
+
+  sponsored_open := public.record_sponsored_interaction(
+    sponsored_result->>'placement_token',
+    'open',
+    'runtime:sponsor:mobile:open',
+    repeat('8', 64)
+  );
+  if sponsored_open->>'accepted' <> 'false'
+    or sponsored_open->>'billed' <> 'false'
+    or not exists (
+      select 1
+      from private.ad_events event
+      where event.decision_id = sponsored_decision_id
+        and event.event_type = 'open'
+        and not event.valid
+        and event.invalid_reason = 'location_ineligible'
+    )
+    or not exists (
+      select 1
+      from private.ad_budget_reservations reservation
+      where reservation.decision_id = sponsored_decision_id
+        and reservation.state = 'released'
+    )
+    or exists (
+      select 1
+      from private.billing_ledger ledger
+      join private.ad_events event on event.id = ledger.source_id
+      where ledger.source_type = 'sponsored_open'
+        and event.decision_id = sponsored_decision_id
+    )
+  then
+    raise exception 'Sponsored open ignored an impression-to-open location change';
+  end if;
+
+  update public.ad_targets
+  set business_kinds = array['restaurant']::public.business_kind[]
+  where campaign_id = '77000000-0000-4000-8000-000000000007';
 
   select count(*)::integer, min(place.location_id::text)::uuid
   into visible_count, visible_location_id

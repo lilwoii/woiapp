@@ -8,6 +8,7 @@ import { palette, radii } from '@/constants/theme';
 import {
   clusterInventoryFeatures,
   clusterPlacesWithSelection,
+  mapPlaceIdentity,
   normalizeLongitude,
   shouldRenderMapInventory,
   viewportIsLiveInventoryEligible,
@@ -28,6 +29,7 @@ import { MOVING_TO_NEXT_LOCATION_LABEL, Place } from '@/types/marketplace';
 export type Props = {
   places: Place[];
   selectedId?: string;
+  selectedLocationId?: string;
   onSelect?: (place: Place) => void;
   onSelectBusinessId?: (businessId: string, locationId?: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
@@ -281,6 +283,7 @@ const categoryLabels: Record<Place['category'], string> = {
 export default function MapLibreMapView({
   places,
   selectedId,
+  selectedLocationId,
   onSelect,
   onSelectBusinessId,
   onSearchArea,
@@ -298,9 +301,11 @@ export default function MapLibreMapView({
   const containerRef = useRef<View | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markerRefs = useRef(
-    new Map<string, { marker: Marker; element: HTMLButtonElement; businessId?: string; signature?: string }>()
+    new Map<string, { marker: Marker; element: HTMLButtonElement; businessId?: string; locationId?: string; signature?: string }>()
   );
-  const currentPlaces = useRef(new Map(places.map((place) => [place.id, place])));
+  const currentPlaces = useRef(new Map(
+    places.map((place) => [mapPlaceIdentity(place.id, place.locationId), place]),
+  ));
   const onSelectRef = useRef(onSelect);
   const onSelectBusinessIdRef = useRef(onSelectBusinessId);
   const onSearchAreaRef = useRef(onSearchArea);
@@ -310,10 +315,17 @@ export default function MapLibreMapView({
   const userMarkerRef = useRef<Marker | null>(null);
   const fittedRouteKey = useRef('');
   const initialPlaces = useRef(places);
+  const retryCamera = useRef<{
+    bearing: number;
+    center: [number, number];
+    pitch: number;
+    zoom: number;
+  } | null>(null);
   const mapWasInteracted = useRef(false);
   const hasCenteredOnUser = useRef(false);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [mapRevision, setMapRevision] = useState(0);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [perspective, setPerspective] = useState(false);
   const [supports3D, setSupports3D] = useState(false);
@@ -361,24 +373,42 @@ export default function MapLibreMapView({
     const markers = markerRefs.current;
     let failureTimer: ReturnType<typeof setTimeout> | null = null;
     let inventoryTimer: ReturnType<typeof setTimeout> | null = null;
+    let tileFailureCount = 0;
+    let tileFailureWindowStartedAt = 0;
 
     try {
       const first = initialPlaces.current[0];
+      const restoredCamera = retryCamera.current;
       const map = new maplibregl.Map({
         attributionControl: false,
-        center: first ? [first.longitude, first.latitude] : fallbackCenter,
+        bearing: restoredCamera?.bearing ?? 0,
+        center: restoredCamera?.center ?? (first ? [first.longitude, first.latitude] : fallbackCenter),
         container: element,
         cooperativeGestures: true,
         maxPitch: 60,
         maxZoom: 20,
         minZoom: 2,
+        pitch: restoredCamera?.pitch ?? 0,
         pitchWithRotate: true,
         style: createMapStyle(),
-        zoom: first ? 11.5 : 2.35,
+        zoom: restoredCamera?.zoom ?? (first ? 11.5 : 2.35),
       });
       mapRef.current = map;
+      failureTimer = setTimeout(() => setFailed(true), 12_000);
       map.on('load', () => {
-        setSupports3D(Boolean(map.getStyle().layers?.some((layer) => layer.type === 'fill-extrusion')));
+        if (failureTimer) {
+          clearTimeout(failureTimer);
+          failureTimer = null;
+        }
+        const styleSupports3D = Boolean(
+          map.getStyle().layers?.some((layer) => layer.type === 'fill-extrusion'),
+        );
+        setSupports3D(styleSupports3D);
+        setPerspective(styleSupports3D && map.getPitch() > 0);
+        setMapZoom(map.getZoom());
+        setInventoryViewportEligible(
+          viewportIsLiveInventoryEligible(viewportFromMap(map).bounds),
+        );
         setReady(true);
         map.resize();
       });
@@ -396,11 +426,12 @@ export default function MapLibreMapView({
       });
       map.on('moveend', () => {
         setMapZoom(map.getZoom());
+        const viewport = viewportFromMap(map);
+        const eligible = viewportIsLiveInventoryEligible(viewport.bounds);
+        setInventoryViewportEligible(eligible);
+        if (!eligible) setPendingViewport(null);
         if (userMovedMap.current) {
-          const viewport = viewportFromMap(map);
-          const eligible = viewportIsLiveInventoryEligible(viewport.bounds);
           setPendingViewport(eligible && onSearchAreaRef.current ? viewport : null);
-          setInventoryViewportEligible(eligible);
           onViewportInvalidatedRef.current?.(viewport);
           if (!eligible) {
             if (inventoryTimer) clearTimeout(inventoryTimer);
@@ -410,11 +441,26 @@ export default function MapLibreMapView({
               void onViewportChangeRef.current?.(viewport);
             }, 220);
           }
+        } else {
+          // Programmatic fits and recentering invalidate a prior gesture's
+          // Search this area target, but must not trigger a discovery fetch.
+          setPendingViewport(null);
         }
         userMovedMap.current = false;
       });
       map.on('error', (event) => {
-        if (!event.error?.message?.includes('tile')) setFailed(true);
+        const message = String(event.error?.message ?? '').toLocaleLowerCase('en-US');
+        if (!message.includes('tile')) {
+          setFailed(true);
+          return;
+        }
+        const now = Date.now();
+        if (!tileFailureWindowStartedAt || now - tileFailureWindowStartedAt > 10_000) {
+          tileFailureWindowStartedAt = now;
+          tileFailureCount = 0;
+        }
+        tileFailureCount += 1;
+        if (tileFailureCount >= 12) setFailed(true);
       });
     } catch {
       failureTimer = setTimeout(() => setFailed(true), 0);
@@ -430,20 +476,22 @@ export default function MapLibreMapView({
       userMarkerRef.current = null;
       mapRef.current = null;
     };
-  }, []);
+  }, [mapRevision]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
 
-    currentPlaces.current = new Map(places.map((place) => [place.id, place]));
+    currentPlaces.current = new Map(
+      places.map((place) => [mapPlaceIdentity(place.id, place.locationId), place]),
+    );
     const markersVisible = shouldRenderMapInventory({
       viewportEligible: inventoryViewportEligible,
       inventorySuppressed: markersSuppressed,
     });
     const visibleInventoryFeatures = markersVisible ? renderedInventoryFeatures : [];
     const features = markersVisible && !authoritativeInventory
-      ? clusterPlacesWithSelection(places, mapZoom, selectedId, 300)
+      ? clusterPlacesWithSelection(places, mapZoom, selectedId, selectedLocationId, 300)
       : [];
     const renderedIds = visibleInventoryFeatures.length
       ? visibleInventoryFeatures.map((feature) => feature.id)
@@ -469,7 +517,12 @@ export default function MapLibreMapView({
         markerRefs.current.delete(inventoryFeature.id);
       }
       const loadedPlace = inventoryFeature.businessId
-        ? currentPlaces.current.get(inventoryFeature.businessId)
+        ? currentPlaces.current.get(mapPlaceIdentity(
+            inventoryFeature.businessId,
+            inventoryFeature.locationId,
+          )) ?? (!inventoryFeature.locationId
+            ? places.find((candidate) => candidate.id === inventoryFeature.businessId)
+            : undefined)
         : undefined;
       const element = inventoryFeature.type === 'cluster'
         ? clusterElement({ count: inventoryFeature.count, categories: inventoryFeature.categoryCounts })
@@ -481,21 +534,32 @@ export default function MapLibreMapView({
               distanceMiles: null,
               logoUrl: inventoryFeature.logoUrl ?? '',
             },
-            inventoryFeature.businessId === selectedId,
+            inventoryFeature.businessId === selectedId &&
+              (!selectedLocationId || inventoryFeature.locationId === selectedLocationId),
             inventoryFeature.mobilityState === 'moving_to_next_location',
           );
       element.addEventListener('click', () => {
         if (inventoryFeature.type === 'cluster') {
+          const currentCenter = markerRefs.current
+            .get(inventoryFeature.id)
+            ?.marker.getLngLat();
           userMovedMap.current = true;
           map.easeTo({
-            center: [inventoryFeature.longitude, inventoryFeature.latitude],
+            center: currentCenter
+              ? [currentCenter.lng, currentCenter.lat]
+              : [inventoryFeature.longitude, inventoryFeature.latitude],
             duration: motionDuration(reduceMotion, 380),
             zoom: Math.min(18, map.getZoom() + 2),
           });
           return;
         }
         const selectedPlace = inventoryFeature.businessId
-          ? currentPlaces.current.get(inventoryFeature.businessId)
+          ? currentPlaces.current.get(mapPlaceIdentity(
+              inventoryFeature.businessId,
+              inventoryFeature.locationId,
+            )) ?? (!inventoryFeature.locationId
+              ? places.find((candidate) => candidate.id === inventoryFeature.businessId)
+              : undefined)
           : undefined;
         if (selectedPlace && (!inventoryFeature.locationId || selectedPlace.locationId === inventoryFeature.locationId)) {
           onSelectRef.current?.(selectedPlace);
@@ -510,6 +574,7 @@ export default function MapLibreMapView({
         marker,
         element,
         businessId: inventoryFeature.businessId,
+        locationId: inventoryFeature.locationId,
         signature,
       });
     }
@@ -532,15 +597,22 @@ export default function MapLibreMapView({
         : markerElement(feature.place, false, Boolean(feature.place.mobility));
       element.addEventListener('click', () => {
         if (feature.kind === 'cluster') {
+          const currentCenter = markerRefs.current
+            .get(feature.id)
+            ?.marker.getLngLat();
           userMovedMap.current = true;
           map.easeTo({
-            center: [feature.longitude, feature.latitude],
+            center: currentCenter
+              ? [currentCenter.lng, currentCenter.lat]
+              : [feature.longitude, feature.latitude],
             duration: motionDuration(reduceMotion, 380),
             zoom: Math.min(18, map.getZoom() + 2),
           });
           return;
         }
-        const selectedPlace = currentPlaces.current.get(feature.place.id);
+        const selectedPlace = currentPlaces.current.get(
+          mapPlaceIdentity(feature.place.id, feature.place.locationId),
+        );
         if (selectedPlace) onSelectRef.current?.(selectedPlace);
       });
       const marker = new maplibregl.Marker({ anchor: 'bottom', element })
@@ -550,6 +622,7 @@ export default function MapLibreMapView({
         marker,
         element,
         businessId: feature.kind === 'place' ? feature.place.id : undefined,
+        locationId: feature.kind === 'place' ? feature.place.locationId : undefined,
         signature,
       });
     }
@@ -577,13 +650,20 @@ export default function MapLibreMapView({
         map.fitBounds(bounds, { duration: motionDuration(reduceMotion, 450), maxZoom: 14, padding: 70 });
       }
     }
-  }, [authoritativeInventory, inventoryViewportEligible, mapZoom, markersSuppressed, places, ready, reduceMotion, renderedInventoryFeatures, searchAreaKey, selectedId]);
+  }, [authoritativeInventory, inventoryViewportEligible, mapZoom, markersSuppressed, places, ready, reduceMotion, renderedInventoryFeatures, searchAreaKey, selectedId, selectedLocationId]);
 
   useEffect(() => {
     const map = mapRef.current;
-    const selected = places.find((place) => place.id === selectedId);
-    markerRefs.current.forEach(({ element, businessId }) => {
-      if (businessId) updateMarkerSelection(element, businessId === selectedId);
+    const selected = places.find((place) =>
+      place.id === selectedId && (!selectedLocationId || place.locationId === selectedLocationId)
+    );
+    markerRefs.current.forEach(({ element, businessId, locationId }) => {
+      if (businessId) {
+        updateMarkerSelection(
+          element,
+          businessId === selectedId && (!selectedLocationId || locationId === selectedLocationId),
+        );
+      }
     });
     if (!map || !selected || !ready) return;
     map.easeTo({
@@ -591,7 +671,7 @@ export default function MapLibreMapView({
       duration: motionDuration(reduceMotion, 380),
       zoom: Math.max(map.getZoom(), 13),
     });
-  }, [places, ready, reduceMotion, selectedId]);
+  }, [places, ready, reduceMotion, selectedId, selectedLocationId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -701,7 +781,39 @@ export default function MapLibreMapView({
       <View accessibilityRole="alert" style={styles.fallback}>
         <FontAwesome6 color={palette.accentDeep} name="map-location-dot" size={22} />
         <Text style={styles.fallbackTitle}>The map is temporarily unavailable.</Text>
-        <Text style={styles.fallbackBody}>Use the verified list to browse every result and open directions.</Text>
+        <Text style={styles.fallbackBody}>Use the verified list to browse the current results and open directions.</Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            const map = mapRef.current;
+            if (map) {
+              try {
+                const center = map.getCenter();
+                retryCamera.current = {
+                  bearing: map.getBearing(),
+                  center: [center.lng, center.lat],
+                  pitch: map.getPitch(),
+                  zoom: map.getZoom(),
+                };
+              } catch {
+                retryCamera.current = null;
+              }
+            }
+            initialPlaces.current = places;
+            fittedPlacesKey.current = '';
+            fittedRouteKey.current = '';
+            mapWasInteracted.current = false;
+            hasCenteredOnUser.current = false;
+            userMovedMap.current = false;
+            setFailed(false);
+            setReady(false);
+            setSupports3D(false);
+            setPendingViewport(null);
+            setMapRevision((current) => current + 1);
+          }}
+          style={styles.fallbackAction}>
+          <Text style={styles.fallbackActionText}>Retry map</Text>
+        </Pressable>
       </View>
     );
   }
@@ -736,6 +848,22 @@ export default function MapLibreMapView({
           style={styles.controlButton}>
           <FontAwesome6 color={palette.ink} name="minus" size={13} />
         </Pressable>
+        {navigationMode && userCoordinates ? (
+          <Pressable
+            accessibilityLabel="Recenter map on your live position"
+            accessibilityRole="button"
+            onPress={() => {
+              mapWasInteracted.current = true;
+              mapRef.current?.easeTo({
+                center: [userCoordinates.longitude, userCoordinates.latitude],
+                duration: motionDuration(reduceMotion, 280),
+                zoom: Math.max(mapRef.current?.getZoom() ?? 0, 16),
+              });
+            }}
+            style={styles.controlButton}>
+            <FontAwesome6 color={palette.ink} name="location-crosshairs" size={12} />
+          </Pressable>
+        ) : null}
         {supports3D ? (
           <Pressable
             accessibilityLabel={perspective ? 'Use flat map view' : 'Use 3D map perspective'}
@@ -958,5 +1086,20 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     maxWidth: 360,
     textAlign: 'center',
+  },
+  fallbackAction: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    justifyContent: 'center',
+    marginTop: 4,
+    minHeight: 44,
+    paddingHorizontal: 16,
+  },
+  fallbackActionText: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
   },
 });

@@ -26,6 +26,7 @@ import {
   HOME_KITCHEN_UNAVAILABLE_REASON,
   publicListingRouteUnavailableReason,
 } from '@/lib/features';
+import { parsePublicLocationRouteParam } from '@/lib/links';
 import {
   cancelShadowOrder,
   loadShadowOrderableMenu,
@@ -159,36 +160,56 @@ function GateScreen({
 
 type PickupOrderSessionProps = {
   auth: ReturnType<typeof useAuth>;
+  locationId?: string;
+  locationParamInvalid: boolean;
   placeId?: string;
   secureSession: boolean;
 };
 
 export default function PickupOrderScreen() {
-  const params = useLocalSearchParams<{ id?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    id?: string | string[];
+    location?: string | string[];
+  }>();
   const placeId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const parsedLocationId = parsePublicLocationRouteParam(params.location);
+  const locationId = parsedLocationId ?? undefined;
+  const locationParamInvalid = parsedLocationId === null;
   const auth = useAuth();
 
   const secureSession =
     auth.status === 'authenticated' &&
     auth.securityStatus === 'ready' &&
     auth.assuranceLevel === 'aal2';
-  const sessionKey = `${auth.account?.id ?? 'anonymous'}:${placeId ?? 'missing'}:${secureSession ? 'secure' : 'unverified'}`;
+  const sessionKey = `${auth.account?.id ?? 'anonymous'}:${placeId ?? 'missing'}:${locationId ?? ''}:${locationParamInvalid}:${secureSession ? 'secure' : 'unverified'}`;
 
   return (
     <PickupOrderSession
       key={sessionKey}
       auth={auth}
+      locationId={locationId}
+      locationParamInvalid={locationParamInvalid}
       placeId={placeId}
       secureSession={secureSession}
     />
   );
 }
 
-function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSessionProps) {
+function PickupOrderSession({
+  auth,
+  locationId,
+  locationParamInvalid,
+  placeId,
+  secureSession,
+}: PickupOrderSessionProps) {
   const insets = useSafeAreaInsets();
   const { ensurePlace, places } = useMarketplaceStore();
-  const loadedPlace = places.find((candidate) => candidate.id === placeId);
-  const placeBlockedReason = publicListingRouteUnavailableReason(loadedPlace);
+  const loadedPlace = places.find((candidate) =>
+    candidate.id === placeId && (!locationId || candidate.locationId === locationId)
+  );
+  const placeBlockedReason = locationParamInvalid
+    ? 'This pickup location link is invalid.'
+    : publicListingRouteUnavailableReason(loadedPlace);
   const placeBlocked = Boolean(placeBlockedReason);
   const place = placeBlocked ? undefined : loadedPlace;
   const [placeResolving, setPlaceResolving] = useState(!place);
@@ -225,7 +246,7 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
 
   useEffect(() => {
     let active = true;
-    if (placeBlocked) {
+    if (placeBlocked || locationParamInvalid) {
       const timer = setTimeout(() => {
         if (!active) return;
         setPlaceResolving(false);
@@ -262,7 +283,7 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
       if (!active) return;
       setPlaceResolving(true);
       setPlaceUnavailableReason(null);
-      void ensurePlace(placeId).then((result) => {
+      void ensurePlace(placeId, locationId).then((result) => {
         if (!active) return;
         setPlaceResolving(false);
         if (!result.ok) {
@@ -282,7 +303,7 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
       active = false;
       clearTimeout(timer);
     };
-  }, [ensurePlace, place, placeBlocked, placeBlockedReason, placeId, placeProbeNonce]);
+  }, [ensurePlace, locationId, locationParamInvalid, place, placeBlocked, placeBlockedReason, placeId, placeProbeNonce]);
 
   useEffect(() => {
     let active = true;
@@ -319,13 +340,21 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
       });
       return;
     }
-    setMenu(result.data);
+    const scopedMenu = locationId
+      ? {
+          ...result.data,
+          pickupWindows: result.data.pickupWindows.filter(
+            (window) => window.locationId === locationId,
+          ),
+        }
+      : result.data;
+    setMenu(scopedMenu);
     setSelectedWindowId((current) =>
-      result.data?.pickupWindows.some((window) => window.capacitySlotId === current)
+      scopedMenu.pickupWindows.some((window) => window.capacitySlotId === current)
         ? current
-        : result.data?.pickupWindows[0]?.capacitySlotId ?? ''
+        : scopedMenu.pickupWindows[0]?.capacitySlotId ?? ''
     );
-  }, [auth.account?.id, place, placeBlocked, placeId, secureSession]);
+  }, [auth.account?.id, locationId, place, placeBlocked, placeId, secureSession]);
 
   useEffect(() => {
     const timer = setTimeout(() => void loadMenu(), 0);
@@ -1035,7 +1064,9 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
                   </View>
                   <Text style={styles.sectionHint}>Live capacity</Text>
                 </View>
-                <View accessibilityRole="radiogroup">
+                <View
+                  accessibilityLabel="Pickup window"
+                  accessibilityRole="radiogroup">
                   <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
@@ -1047,6 +1078,7 @@ function PickupOrderSession({ auth, placeId, secureSession }: PickupOrderSession
                           accessibilityHint="Select this live pickup window"
                           accessibilityLabel={`${pickupTime(window.startsAt, window.endsAt)}, ${window.remainingCapacity} remaining`}
                           accessibilityRole="radio"
+                          aria-checked={active}
                           accessibilityState={{ checked: active, disabled: Boolean(busy) }}
                           disabled={Boolean(busy)}
                           key={window.capacitySlotId}

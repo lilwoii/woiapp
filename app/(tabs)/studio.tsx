@@ -877,6 +877,7 @@ export default function StudioScreen() {
         {managedPlaces.length > 1 ? (
           <ScrollView
             accessibilityLabel="Choose a managed business"
+            accessibilityRole="radiogroup"
             contentContainerStyle={styles.businessSwitcher}
             horizontal
             showsHorizontalScrollIndicator={false}>
@@ -1051,6 +1052,8 @@ export default function StudioScreen() {
               />
 
               <ScrollView
+                accessibilityLabel="Owner update type"
+                accessibilityRole="radiogroup"
                 contentContainerStyle={styles.typeRow}
                 horizontal
                 showsHorizontalScrollIndicator={false}>

@@ -331,6 +331,7 @@ export function normalizeSponsoredPlacement(value: unknown) {
   const row = asObject(value);
   exactKeys(row, [
     "business_id",
+    "location_id",
     "placement_id",
     "disclosure",
     "reason",
@@ -339,6 +340,7 @@ export function normalizeSponsoredPlacement(value: unknown) {
   ]);
   if (
     !isUuid(row.business_id) ||
+    !isUuid(row.location_id) ||
     !isUuid(row.placement_id) ||
     row.disclosure !== "Sponsored ad" ||
     !isSafeText(row.reason, 120) ||
@@ -351,6 +353,7 @@ export function normalizeSponsoredPlacement(value: unknown) {
   }
   return {
     business_id: row.business_id,
+    location_id: row.location_id,
     placement_id: row.placement_id,
     disclosure: "Sponsored ad" as const,
     reason: row.reason,

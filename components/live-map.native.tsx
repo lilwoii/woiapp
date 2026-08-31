@@ -7,6 +7,7 @@ import { palette, radii } from '@/constants/theme';
 import {
   clusterInventoryFeatures,
   clusterPlacesWithSelection,
+  mapPlaceIdentity,
   normalizeLongitude,
   shouldRenderMapInventory,
   viewportIsLiveInventoryEligible,
@@ -22,6 +23,7 @@ import { MOVING_TO_NEXT_LOCATION_LABEL, Place } from '@/types/marketplace';
 type Props = {
   places: Place[];
   selectedId?: string;
+  selectedLocationId?: string;
   onSelect?: (place: Place) => void;
   onSelectBusinessId?: (businessId: string, locationId?: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
@@ -171,6 +173,7 @@ function viewportFromRegion(region: Region): MapViewport {
 export function LiveMap({
   places,
   selectedId,
+  selectedLocationId,
   onSelect,
   onSelectBusinessId,
   onSearchArea,
@@ -192,7 +195,9 @@ export function LiveMap({
   ));
   const [region, setRegion] = useState<Region>(initialMapRegion);
   const [pendingViewport, setPendingViewport] = useState<MapViewport | null>(null);
-  const [inventoryViewportEligible, setInventoryViewportEligible] = useState(true);
+  const [inventoryViewportEligible, setInventoryViewportEligible] = useState(() =>
+    viewportIsLiveInventoryEligible(viewportFromRegion(initialMapRegion).bounds)
+  );
   const [reduceMotion, setReduceMotion] = useState(false);
   const [perspective, setPerspective] = useState(false);
   const userMovedMap = useRef(false);
@@ -202,8 +207,14 @@ export function LiveMap({
   const inventoryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authoritativeInventory = inventoryFeatures !== undefined;
   const clientFeatures = useMemo(
-    () => clusterPlacesWithSelection(places, zoomFromLongitudeDelta(region.longitudeDelta), selectedId, 120),
-    [places, region.longitudeDelta, selectedId]
+    () => clusterPlacesWithSelection(
+      places,
+      zoomFromLongitudeDelta(region.longitudeDelta),
+      selectedId,
+      selectedLocationId,
+      120,
+    ),
+    [places, region.longitudeDelta, selectedId, selectedLocationId]
   );
   const renderedInventoryFeatures = useMemo(
     () => clusterInventoryFeatures(inventoryFeatures ?? [], zoomFromLongitudeDelta(region.longitudeDelta), 120),
@@ -215,11 +226,15 @@ export function LiveMap({
   });
   const visibleInventoryFeatures = markersVisible ? renderedInventoryFeatures : [];
   const visibleClientFeatures = markersVisible && !authoritativeInventory ? clientFeatures : [];
-  const placesById = useMemo(
-    () => new Map(places.map((place) => [place.id, place])),
+  const placesByIdentity = useMemo(
+    () => new Map(places.map((place) => [mapPlaceIdentity(place.id, place.locationId), place])),
     [places]
   );
-  const selectedPlace = selectedId ? placesById.get(selectedId) : undefined;
+  const selectedPlace = selectedId
+    ? places.find((place) =>
+        place.id === selectedId && (!selectedLocationId || place.locationId === selectedLocationId)
+      )
+    : undefined;
   const selectedLatitude = selectedPlace?.latitude;
   const selectedLongitude = selectedPlace?.longitude;
 
@@ -294,20 +309,28 @@ export function LiveMap({
       }}
       onRegionChangeComplete={(nextRegion) => {
         setRegion(nextRegion);
+        const viewport = viewportFromRegion(nextRegion);
+        const eligible = viewportIsLiveInventoryEligible(viewport.bounds);
+        setInventoryViewportEligible(eligible);
+        if (!eligible) {
+          setPendingViewport(null);
+          if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
+        }
         if (userMovedMap.current) {
-          const viewport = viewportFromRegion(nextRegion);
-          const eligible = viewportIsLiveInventoryEligible(viewport.bounds);
           setPendingViewport(eligible && onSearchArea ? viewport : null);
-          setInventoryViewportEligible(eligible);
           onViewportInvalidated?.(viewport);
-          if (!eligible) {
-            if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
-          } else if (onViewportChange) {
+          if (eligible && onViewportChange) {
             if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
             inventoryTimer.current = setTimeout(() => {
               void onViewportChange(viewport);
             }, 280);
           }
+        } else {
+          // A result fit, selection, or recenter can move the camera after a
+          // prior gesture exposed Search this area. Never let that control
+          // submit bounds that are no longer visible, and do not treat the
+          // programmatic camera move as a new inventory request.
+          setPendingViewport(null);
         }
         userMovedMap.current = false;
       }}
@@ -374,7 +397,12 @@ export function LiveMap({
             </Marker>
           );
         }
-        const place = feature.businessId ? placesById.get(feature.businessId) : undefined;
+        const place = feature.businessId
+          ? placesByIdentity.get(mapPlaceIdentity(feature.businessId, feature.locationId)) ??
+            (!feature.locationId
+              ? places.find((candidate) => candidate.id === feature.businessId)
+              : undefined)
+          : undefined;
         const moving = feature.mobilityState === 'moving_to_next_location';
         return (
           <VenueMapMarker
@@ -383,14 +411,14 @@ export function LiveMap({
             description={moving
               ? `${MOVING_TO_NEXT_LOCATION_LABEL}. Scheduled next-stop destination; no live vehicle location.`
               : place?.todayHours ?? feature.sourceLabel}
-            key={`${feature.id}:${feature.logoUrl ?? ''}:${moving}:${feature.businessId === selectedId}`}
+            key={`${feature.id}:${feature.logoUrl ?? ''}:${moving}:${feature.businessId === selectedId && (!selectedLocationId || feature.locationId === selectedLocationId)}`}
             logoUrl={feature.logoUrl}
             moving={moving}
             onPress={() => {
               if (place && (!feature.locationId || place.locationId === feature.locationId)) onSelect?.(place);
               else if (feature.businessId) onSelectBusinessId?.(feature.businessId, feature.locationId);
             }}
-            selected={feature.businessId === selectedId}
+            selected={feature.businessId === selectedId && (!selectedLocationId || feature.locationId === selectedLocationId)}
             title={`${place?.name ?? feature.name ?? 'Food place'}${moving ? ` — ${MOVING_TO_NEXT_LOCATION_LABEL}` : ''}`}
           />
         );
@@ -426,7 +454,8 @@ export function LiveMap({
         }
 
         const place = feature.place;
-        const isSelected = selectedId === place.id;
+        const isSelected = selectedId === place.id &&
+          (!selectedLocationId || place.locationId === selectedLocationId);
 
         return (
           <VenueMapMarker
@@ -446,7 +475,7 @@ export function LiveMap({
       })}
     </MapView>
     <Pressable
-      accessibilityLabel={perspective ? 'Use flat map view' : 'Use 3D map perspective'}
+      accessibilityLabel={perspective ? 'Use flat map view' : 'Use angled map perspective'}
       accessibilityRole="button"
       accessibilityState={{ selected: perspective }}
       onPress={() => {
@@ -459,8 +488,23 @@ export function LiveMap({
       }}
       style={[styles.perspectiveButton, perspective && styles.perspectiveButtonActive]}>
       <FontAwesome6 color={perspective ? '#FFFFFF' : palette.ink} name="cube" size={12} />
-      <Text style={[styles.perspectiveText, perspective && styles.perspectiveTextActive]}>3D</Text>
+      <Text style={[styles.perspectiveText, perspective && styles.perspectiveTextActive]}>Perspective</Text>
     </Pressable>
+    {navigationMode && userCoordinates ? (
+      <Pressable
+        accessibilityLabel="Recenter map on your live position"
+        accessibilityRole="button"
+        onPress={() => {
+          mapWasInteracted.current = true;
+          mapRef.current?.animateCamera(
+            { center: userCoordinates, pitch: perspective ? 48 : 0, zoom: 16 },
+            { duration: motionDuration(reduceMotion, 280) },
+          );
+        }}
+        style={styles.recenterButton}>
+        <FontAwesome6 color={palette.ink} name="location-crosshairs" size={14} />
+      </Pressable>
+    ) : null}
     {pendingViewport && onSearchArea ? (
       <Pressable
         accessibilityLabel="Search the visible map area"
@@ -669,6 +713,19 @@ const styles = StyleSheet.create({
   },
   perspectiveButtonActive: {
     backgroundColor: palette.ink,
+  },
+  recenterButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 253, 248, 0.95)',
+    borderColor: '#FFFFFF',
+    borderRadius: 999,
+    borderWidth: 2,
+    height: 44,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 14,
+    top: 66,
+    width: 44,
   },
   perspectiveText: {
     color: palette.ink,

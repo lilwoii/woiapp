@@ -11,10 +11,12 @@ can scale independently:
 - MapLibre renders the web map. Move native rendering from the current
   Apple/Google `react-native-maps` bridge to MapLibre React Native after signed
   device acceptance, so one Spottr style can cover web, iOS, and Android.
-- Stadia Maps Starter is the preferred launch basemap. Its current commercial
+- Stadia Maps Starter is the risk-adjusted MapLibre launch choice, not a claim
+  that it has the lowest possible bill. Its current commercial
   plan starts at $20/month, includes one million credits, supports MapLibre and
   OpenMapTiles, and exposes building height fields for 3D extrusion where the
-  source data contains them.
+  source data contains them. The chosen style must also include an enabled
+  `fill-extrusion` layer; height fields alone do not make a visible 3D map.
 - Keep the existing server-only Mapbox Directions adapter for walking, cycling,
   and traffic-aware driving routes. The current public pricing includes 100,000
   Directions requests per month before usage charges.
@@ -24,6 +26,10 @@ can scale independently:
 This is a launch-cost estimate, not a guaranteed bill. Confirm the final style,
 tile mix, monthly credits, route volume, overages, tax, SLA, data processing
 terms, and territorial coverage with each provider before activation.
+Stadia Starter search output is temporary and is not a persistent restaurant
+catalog. Overture Places is the planned durable inventory seed, subject to the
+quality, provenance, refresh, and attribution controls in
+[GLOBAL_DIRECTORY.md](GLOBAL_DIRECTORY.md).
 
 Primary provider references:
 

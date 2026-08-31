@@ -1125,51 +1125,58 @@ function ScopedConversationScreen({ id }: { id?: string }) {
                             {chatContext?.businessCategory === "home_kitchen"
                               ? (
                                 pickupOptions.length
-                                  ? pickupOptions.map((option) => (
-                                    <Pressable
-                                      accessibilityRole="radio"
-                                      aria-checked={selectedPickupOption?.id === option.id}
-                                      accessibilityState={{
-                                        checked: selectedPickupOption?.id ===
-                                          option.id,
-                                      }}
-                                      key={option.id}
-                                      onPress={() =>
-                                        void choosePickupOption(option)}
-                                      style={[
-                                        styles.pickupOption,
-                                        selectedPickupOption?.id ===
-                                          option.id &&
-                                        styles.pickupOptionSelected,
-                                      ]}
+                                  ? (
+                                    <View
+                                      accessibilityLabel="Pickup location options"
+                                      accessibilityRole="radiogroup"
                                     >
-                                      <View style={styles.pickupDetailCopy}>
-                                        <Text style={styles.pickupLocation}>
-                                          {option.label}
-                                        </Text>
-                                        <Text style={styles.pickupAddress}>
-                                          {option.address
-                                            ? `${option.address} · `
-                                            : ""}
-                                          {option.city}, {option.region}
-                                          {option.warningRequired
-                                            ? " · extra caution"
-                                            : " · public meetup place"}
-                                        </Text>
-                                      </View>
-                                      <FontAwesome6
-                                        color={selectedPickupOption?.id ===
-                                            option.id
-                                          ? palette.success
-                                          : palette.mutedLight}
-                                        name={selectedPickupOption?.id ===
-                                            option.id
-                                          ? "circle-check"
-                                          : "circle"}
-                                        size={13}
-                                      />
-                                    </Pressable>
-                                  ))
+                                      {pickupOptions.map((option) => (
+                                        <Pressable
+                                          accessibilityRole="radio"
+                                          aria-checked={selectedPickupOption?.id === option.id}
+                                          accessibilityState={{
+                                            checked: selectedPickupOption?.id ===
+                                              option.id,
+                                          }}
+                                          key={option.id}
+                                          onPress={() =>
+                                            void choosePickupOption(option)}
+                                          style={[
+                                            styles.pickupOption,
+                                            selectedPickupOption?.id ===
+                                              option.id &&
+                                            styles.pickupOptionSelected,
+                                          ]}
+                                        >
+                                          <View style={styles.pickupDetailCopy}>
+                                            <Text style={styles.pickupLocation}>
+                                              {option.label}
+                                            </Text>
+                                            <Text style={styles.pickupAddress}>
+                                              {option.address
+                                                ? `${option.address} · `
+                                                : ""}
+                                              {option.city}, {option.region}
+                                              {option.warningRequired
+                                                ? " · extra caution"
+                                                : " · public meetup place"}
+                                            </Text>
+                                          </View>
+                                          <FontAwesome6
+                                            color={selectedPickupOption?.id ===
+                                                option.id
+                                              ? palette.success
+                                              : palette.mutedLight}
+                                            name={selectedPickupOption?.id ===
+                                                option.id
+                                              ? "circle-check"
+                                              : "circle"}
+                                            size={13}
+                                          />
+                                        </Pressable>
+                                      ))}
+                                    </View>
+                                  )
                                   : (
                                     <Text style={styles.pickupWarning}>
                                       The seller has not configured 2–3 current

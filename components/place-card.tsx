@@ -7,6 +7,7 @@ import { OwnerUpdate } from '@/components/owner-update';
 import { Rating } from '@/components/rating';
 import { StatusPill } from '@/components/status-pill';
 import { palette, radii, spacing } from '@/constants/theme';
+import { placeLocationRouteParams } from '@/lib/links';
 import { showMessage } from '@/lib/platform-dialog';
 import { ActionResult, Place } from '@/types/marketplace';
 
@@ -37,7 +38,10 @@ export function PlaceCard({ place, followed, onToggleFollow, compact = false }: 
       <Pressable
         accessibilityLabel={`View ${place.name}`}
         accessibilityRole="link"
-        onPress={() => router.push(`/place/${place.id}`)}
+        onPress={() => router.push({
+          pathname: '/place/[id]',
+          params: placeLocationRouteParams(place.id, place.locationId),
+        })}
         style={({ pressed }) => [styles.cardAction, pressed && styles.pressed]}>
         <Image
           accessibilityLabel={`${place.name} food and business photo`}

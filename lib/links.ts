@@ -1,6 +1,8 @@
 import * as Linking from 'expo-linking';
 import { Platform } from 'react-native';
 
+import { normalizePublicUuid } from '@/lib/public-uuid';
+
 function configuredOrigin() {
   const candidate = process.env.EXPO_PUBLIC_APP_URL?.trim().replace(/\/+$/, '');
   if (!candidate) return null;
@@ -112,9 +114,41 @@ export function phoneHref(value: string | undefined | null) {
   return `tel:${trimmed.startsWith('+') ? '+' : ''}${digits}`;
 }
 
-export function placeShareUrl(placeId: string) {
+export function parsePublicLocationRouteParam(
+  value: string | string[] | null | undefined,
+): string | null | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (Array.isArray(value)) {
+    if (value.length !== 1) return null;
+    return parsePublicLocationRouteParam(value[0]);
+  }
+  return normalizePublicUuid(value);
+}
+
+export function placeLocationRoutePath(
+  route: 'place' | 'navigation' | 'order',
+  placeId: string,
+  locationId?: string,
+) {
+  const path = `/${route}/${encodeURIComponent(placeId)}`;
+  const normalizedLocationId = parsePublicLocationRouteParam(locationId);
+  return normalizedLocationId
+    ? `${path}?location=${encodeURIComponent(normalizedLocationId)}`
+    : path;
+}
+
+export function placeLocationRouteParams(placeId: string, locationId?: string) {
+  const normalizedLocationId = parsePublicLocationRouteParam(locationId);
+  return {
+    id: placeId,
+    ...(normalizedLocationId ? { location: normalizedLocationId } : {}),
+  };
+}
+
+export function placeShareUrl(placeId: string, locationId?: string) {
   const path = `/place/${encodeURIComponent(placeId)}`;
-  return appRouteUrl(path);
+  const normalizedLocationId = parsePublicLocationRouteParam(locationId);
+  return appRouteUrl(path, normalizedLocationId ? { location: normalizedLocationId } : undefined);
 }
 
 export function profileShareUrl(profileId: string) {

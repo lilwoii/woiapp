@@ -11,6 +11,9 @@ const nativeMap = readFileSync(resolve(__dirname, '../../components/live-map.nat
 const webMap = readFileSync(resolve(__dirname, '../../components/maplibre-map.web.tsx'), 'utf8');
 const navigationScreen = readFileSync(resolve(__dirname, '../../app/navigation/[id].tsx'), 'utf8');
 const navigationLibrary = readFileSync(resolve(__dirname, '../../lib/navigation.ts'), 'utf8');
+const marketplaceApi = readFileSync(resolve(__dirname, '../../lib/marketplace-api.ts'), 'utf8');
+const placeDetail = readFileSync(resolve(__dirname, '../../app/place/[id].tsx'), 'utf8');
+const orderScreen = readFileSync(resolve(__dirname, '../../app/order/[id].tsx'), 'utf8');
 
 describe('global map camera integration', () => {
   it('re-centers an untouched native map after delayed non-LA location resolution', () => {
@@ -40,7 +43,7 @@ describe('global map camera integration', () => {
     expect(discover).not.toMatch(/ranked\.length \|\| visibleMapInventory\.length \|\| mapMarkersSuppressed \? \(/);
     expect(discover).toMatch(/The map is ready when listings reconnect/);
     expect(webMap).toMatch(/const fallbackCenter: \[number, number\] = \[0, 20\]/);
-    expect(webMap).toMatch(/zoom: first \? 11\.5 : 2\.35/);
+    expect(webMap).toMatch(/zoom: restoredCamera\?\.zoom \?\? \(first \? 11\.5 : 2\.35\)/);
     expect(nativeMap).toMatch(/latitude: 20,[\s\S]*longitude: 0,[\s\S]*latitudeDelta: 100,[\s\S]*longitudeDelta: 160/);
   });
 
@@ -49,12 +52,92 @@ describe('global map camera integration', () => {
     expect(discover).toMatch(/if \(!viewportIsLiveInventoryEligible\(viewport\.bounds\)\)/);
     expect(webMap).toMatch(/setPendingViewport\(eligible && onSearchAreaRef\.current \? viewport : null\)/);
     expect(nativeMap).toMatch(/setPendingViewport\(eligible && onSearchArea \? viewport : null\)/);
+    expect(nativeMap).toMatch(
+      /onRegionChangeComplete[\s\S]*const eligible = viewportIsLiveInventoryEligible[\s\S]*setInventoryViewportEligible\(eligible\)[\s\S]*if \(!eligible\)[\s\S]*if \(userMovedMap\.current\)/,
+    );
+  });
+
+  it('never sends a precise nearby request after Discover blurs or backgrounds', () => {
+    expect(discover).toMatch(
+      /const isCurrent = \(\) =>[\s\S]*focusedRef\.current &&[\s\S]*appForegroundRef\.current &&[\s\S]*locationRequestGeneration\.current === generation/,
+    );
+    expect(discover).toMatch(
+      /requestForegroundPermissionsAsync\(\)[\s\S]*if \(!isCurrent\(\)\) return;[\s\S]*getCurrentPositionAsync\([\s\S]*if \(!isCurrent\(\)\) return;[\s\S]*const searchResult = await refresh/,
+    );
+    expect(discover).toMatch(
+      /setSortMode\('nearby'\);[\s\S]*if \(!isCurrent\(\)\) return;[\s\S]*loadMapInventory\(viewportAroundPoint/,
+    );
+    expect(discover).toMatch(
+      /useFocusEffect\(useCallback\(\(\) => \{[\s\S]*focusedRef\.current = true;[\s\S]*focusedRef\.current = false;[\s\S]*locationRequestGeneration\.current \+= 1;[\s\S]*setLocating\(false\)/,
+    );
+    expect(discover).toMatch(
+      /AppState\.addEventListener\('change'[\s\S]*appForegroundRef\.current = active;[\s\S]*if \(active\) return;[\s\S]*locationRequestGeneration\.current \+= 1;[\s\S]*setLocating\(false\)/,
+    );
+    expect(discover).toMatch(
+      /if \(!isSupabaseConfigured \|\| !focused \|\| !appForeground\)[\s\S]*Location\.getForegroundPermissionsAsync\(\)/,
+    );
+    expect(discover.match(/!focusedRef\.current \|\| !appForegroundRef\.current/g)?.length)
+      .toBeGreaterThanOrEqual(2);
+  });
+
+  it('never silently re-shares location after resume or a manual area choice', () => {
+    expect(discover).toMatch(
+      /if \(automaticNearbyAttempted\.current\) return;[\s\S]*automaticNearbyAttempted\.current = true;[\s\S]*Location\.getForegroundPermissionsAsync\(\)/,
+    );
+    expect(discover).toMatch(
+      /const applyManualArea[\s\S]*automaticNearbyAttempted\.current = true;[\s\S]*searchArea\(clean\)/,
+    );
+    expect(discover).toMatch(
+      /const searchVisibleMap[\s\S]*automaticNearbyAttempted\.current = true;[\s\S]*refresh\(\{/,
+    );
+    expect(discover).not.toMatch(/automaticNearbyAttempted\.current = false/);
+  });
+
+  it('clears stale search-area targets after programmatic camera moves without refreshing inventory', () => {
+    expect(nativeMap).toMatch(
+      /if \(userMovedMap\.current\) \{[\s\S]*onViewportInvalidated\?\.\(viewport\)[\s\S]*\} else \{[\s\S]*setPendingViewport\(null\);[\s\S]*\}\s*userMovedMap\.current = false/,
+    );
+    expect(webMap).toMatch(
+      /if \(userMovedMap\.current\) \{[\s\S]*onViewportInvalidatedRef\.current\?\.\(viewport\)[\s\S]*\} else \{[\s\S]*setPendingViewport\(null\);[\s\S]*\}\s*userMovedMap\.current = false/,
+    );
   });
 
   it('makes web markers keyboard reachable and offers 3D only when the loaded style supports it', () => {
     expect(webMap.match(/element\.tabIndex = 0/g)?.length).toBe(2);
     expect(webMap).toMatch(/\{supports3D \? \(/);
     expect(webMap).not.toMatch(/Use tilted map perspective/);
+  });
+
+  it('keeps map discovery ahead of ads and preserves a selected branch identity', () => {
+    expect(discover).toMatch(/const \[locationPanelOpen, setLocationPanelOpen\] = useState\(false\)/);
+    expect(discover).toMatch(/selectedLocationId=\{explicitSelection\?\.locationId\}/);
+    expect(webMap).toMatch(/inventoryFeature\.locationId === selectedLocationId/);
+    expect(nativeMap).toMatch(/feature\.locationId === selectedLocationId/);
+    expect(discover.indexOf('<SponsoredLane')).toBeGreaterThan(discover.indexOf('style={styles.resultsHeader}'));
+    expect(discover.indexOf('<SponsoredLane')).toBeLessThan(discover.indexOf('style={styles.resultsList}'));
+  });
+
+  it('recovers from a provider-wide web tile failure and keeps navigation recenterable', () => {
+    expect(webMap).toMatch(/tileFailureCount >= 12/);
+    expect(webMap).toMatch(/Retry map/);
+    expect(webMap).toMatch(/retryCamera\.current = \{/);
+    expect(webMap).toMatch(/fittedPlacesKey\.current = ''/);
+    expect(webMap).toMatch(/fittedRouteKey\.current = ''/);
+    expect(webMap).toMatch(/Recenter map on your live position/);
+    expect(nativeMap).toMatch(/Recenter map on your live position/);
+    expect(nativeMap).toMatch(/Use angled map perspective/);
+  });
+
+  it('preserves an exact public location through detail, navigation, and pickup', () => {
+    expect(discover).toMatch(/placeLocationRouteParams\(selected\.id, selected\.locationId\)/);
+    expect(placeDetail).toMatch(/ensurePlace\(id, locationId\)/);
+    expect(placeDetail).toMatch(
+      /placeLocationRouteParams\(place\.id, place\.locationId\)/,
+    );
+    expect(navigationScreen).toMatch(/ensurePlace\(placeId, locationId\)/);
+    expect(orderScreen).toMatch(/ensurePlace\(placeId, locationId\)/);
+    expect(orderScreen).toMatch(/window\.locationId === locationId/);
+    expect(marketplaceApi).toMatch(/findExactMarketplacePlace\([\s\S]*preferredLocationId/);
   });
 
   it('reconciles same-id web fallback markers when visible mobility content changes', () => {
@@ -64,18 +147,85 @@ describe('global map camera integration', () => {
     expect(webMap).toMatch(/businessId: feature\.kind === 'place'[\s\S]*signature,/);
   });
 
-  it('drops routes for moved destinations and aborts timed-out provider work', () => {
+  it('zooms reused web clusters from their current marker centroid', () => {
+    expect(webMap).toMatch(
+      /markerRefs\.current\s*\.get\(inventoryFeature\.id\)\s*\?\.marker\.getLngLat\(\)/,
+    );
+    expect(webMap).toMatch(
+      /markerRefs\.current\s*\.get\(feature\.id\)\s*\?\.marker\.getLngLat\(\)/,
+    );
+    expect(webMap.match(/center: currentCenter/g)?.length).toBe(2);
+  });
+
+  it('keeps moved-destination routes only as refreshable references', () => {
     expect(navigationScreen).toMatch(/destinationKey\(destinationRef\.current\) !== requestedDestinationKey/);
-    expect(navigationScreen).toMatch(/const visibleRoute = routeMatchesDestination && routeIsFresh \? route : null/);
-    expect(navigationScreen).toMatch(/This route estimate expired/);
+    expect(navigationScreen).toMatch(/const visibleRoute = route;/);
+    expect(navigationScreen).toMatch(/Destination changed — refresh route/);
+    expect(navigationScreen).toMatch(/This is the original route estimate/);
+    expect(navigationScreen).toMatch(/Refresh route/);
+    expect(navigationScreen).toMatch(/Original estimate/);
+    expect(navigationScreen).toMatch(/A route refresh is already in progress/);
+    expect(navigationScreen).toMatch(
+      /!navigationOperationActive\.current && selectedMode && shouldRequestAutomaticReroute/,
+    );
+    expect(navigationScreen).toMatch(
+      /const refreshActiveRoute[\s\S]*currentPositionWithTimeout\(\)[\s\S]*refreshRoute\(routeOrigin, mode\)/,
+    );
     expect(navigationLibrary).toMatch(/signal: controller\.signal/);
     expect(navigationLibrary).toMatch(/finally \{[\s\S]*clearTimeout\(timeout\)/);
+  });
+
+  it('invalidates one-shot location and route work as soon as the app leaves the foreground', () => {
+    expect(navigationScreen).toMatch(
+      /if \(state !== 'active'\) \{[\s\S]*navigationOperationGeneration\.current \+= 1;[\s\S]*routeRequestSequence\.current \+= 1;[\s\S]*activeRouteRequest\.current = null;/,
+    );
+    expect(navigationScreen.match(/appStateRef\.current !== 'active'/g)?.length)
+      .toBeGreaterThanOrEqual(8);
+    expect(navigationScreen).toMatch(
+      /const refreshRoute = useCallback[\s\S]*appStateRef\.current !== 'active'[\s\S]*requestRoutePlan/,
+    );
+    expect(navigationScreen).toMatch(
+      /const routed = await refreshRoute\(origin, selectedMode\);[\s\S]*if \(!routed\) return;[\s\S]*modeRef\.current = selectedMode;[\s\S]*trackingWanted\.current = true/,
+    );
+  });
+
+  it('keeps stale routes as references while suppressing unsafe turn guidance', () => {
+    expect(navigationScreen).toMatch(
+      /const actionableGuidance = Boolean\([\s\S]*routeMatchesDestination && routeIsFresh && !routeGuidanceNeedsRefresh/,
+    );
+    expect(navigationScreen).toMatch(
+      /const nextStep = actionableGuidance[\s\S]*\? visibleRoute\?\.steps\[routeStepIndex\][\s\S]*: null/,
+    );
+    expect(navigationScreen).toMatch(/Route expired — refresh for current turns/);
+    expect(navigationScreen).toMatch(/Location changed — refresh route guidance/);
+    expect(navigationScreen).toMatch(
+      /routeCoordinates=\{routeVisible \? visibleRoute\?\.coordinates : \[\]\}/,
+    );
+    expect(navigationScreen).toMatch(
+      /visibleRoute && \([\s\S]*!routeMatchesDestination \|\| !routeIsFresh \|\| routeGuidanceNeedsRefresh/,
+    );
+  });
+
+  it('allows one bounded recovery after foreground resume and surfaces an unmatched gap', () => {
+    expect(navigationScreen).toMatch(
+      /else if \(trackingWanted\.current && !watcher\.current\) \{[\s\S]*boundedRecoveryPending\.current = true;[\s\S]*beginWatching/,
+    );
+    expect(navigationScreen).toMatch(
+      /const allowBoundedRecovery = boundedRecoveryPending\.current;[\s\S]*boundedRecoveryPending\.current = false;[\s\S]*\{ allowBoundedRecovery \}/,
+    );
+    expect(navigationScreen).toMatch(
+      /setRouteGuidanceNeedsRefresh\(!nextProgress\.matched\)/,
+    );
+    expect(navigationLibrary).toMatch(/!recoveryProjection\.ambiguous/);
+    expect(navigationLibrary).toMatch(/ROUTE_RECOVERY_MAX_INSPECTED_SEGMENTS/);
   });
 
   it('offers on-device travel detection, traffic ETA, and explicit external map choices', () => {
     expect(navigationLibrary).toMatch(/export function inferTravelMode/);
     expect(navigationScreen).toMatch(/Auto estimated/);
-    expect(navigationScreen).toMatch(/ETA \{formatRouteArrivalTime\(visibleRoute\)\}/);
+    expect(navigationScreen).toMatch(
+      /actionableGuidance[\s\S]*routeProgress\?\.durationSeconds[\s\S]*formatRouteArrivalTime\([\s\S]*guidanceDurationSeconds/,
+    );
     expect(navigationScreen).toMatch(/openExternalMaps\('apple'\)/);
     expect(navigationScreen).toMatch(/openExternalMaps\('google'\)/);
   });

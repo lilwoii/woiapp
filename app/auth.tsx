@@ -305,7 +305,10 @@ export default function AuthScreen() {
               <>
                 <View style={styles.roleSection}>
                   <Text style={styles.label}>I’m joining as</Text>
-                  <View style={styles.roleRow}>
+                  <View
+                    accessibilityLabel="Account type"
+                    accessibilityRole="radiogroup"
+                    style={styles.roleRow}>
                     {(
                       [
                         ['customer', 'Customer', 'heart', 'Discover and review'],

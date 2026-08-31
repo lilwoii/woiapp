@@ -284,6 +284,7 @@ Deno.test("sponsored response exposes only a signed short-lived safe projection"
   assertEquals(
     normalizeSponsoredPlacement({
       business_id: "11111111-1111-4111-8111-111111111111",
+      location_id: "33333333-3333-4333-8333-333333333333",
       placement_id: "22222222-2222-4222-8222-222222222222",
       disclosure: "Sponsored ad",
       reason: "Near your selected area",
@@ -292,6 +293,7 @@ Deno.test("sponsored response exposes only a signed short-lived safe projection"
     }),
     {
       business_id: "11111111-1111-4111-8111-111111111111",
+      location_id: "33333333-3333-4333-8333-333333333333",
       placement_id: "22222222-2222-4222-8222-222222222222",
       disclosure: "Sponsored ad",
       reason: "Near your selected area",
@@ -302,11 +304,21 @@ Deno.test("sponsored response exposes only a signed short-lived safe projection"
   assertThrows(() =>
     normalizeSponsoredPlacement({
       business_id: "11111111-1111-4111-8111-111111111111",
+      location_id: "33333333-3333-4333-8333-333333333333",
       placement_id: "22222222-2222-4222-8222-222222222222",
       disclosure: "Sponsored ad",
       reason: "Near your selected area",
       placement_token: token,
       expires_at: "2026-09-22T00:00:00.000Z",
       bid_cap_minor: 500,
+    }), DiscoveryContractError);
+  assertThrows(() =>
+    normalizeSponsoredPlacement({
+      business_id: "11111111-1111-4111-8111-111111111111",
+      placement_id: "22222222-2222-4222-8222-222222222222",
+      disclosure: "Sponsored ad",
+      reason: "Near your selected area",
+      placement_token: token,
+      expires_at: "2026-09-22T00:00:00.000Z",
     }), DiscoveryContractError);
 });

@@ -1,5 +1,5 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { router, useIsFocused, usePathname } from 'expo-router';
+import { router, useFocusEffect, useIsFocused, usePathname } from 'expo-router';
 import * as Location from 'expo-location';
 import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
@@ -34,7 +34,8 @@ import {
   type DiscoverySort,
 } from '@/lib/discovery-filters';
 import { featureFlags } from '@/lib/features';
-import { normalizeLongitude, viewportIsLiveInventoryEligible, zoomFromLongitudeDelta } from '@/lib/map-clustering';
+import { placeLocationRouteParams } from '@/lib/links';
+import { mapPlaceIdentity, normalizeLongitude, viewportIsLiveInventoryEligible, zoomFromLongitudeDelta } from '@/lib/map-clustering';
 import { filterMapInventoryCategories, filterPlacesForEnabledCategories } from '@/lib/map-inventory';
 import { mapCategoryOrder, mapCategoryPresentation } from '@/lib/map-presentation';
 import { createLatestRequestGate } from '@/lib/latest-request';
@@ -151,11 +152,12 @@ function ScopedDiscoverScreen() {
   const [acknowledgedSponsoredId, setAcknowledgedSponsoredId] = useState<string | null>(null);
   const [openSponsorReasonId, setOpenSponsorReasonId] = useState<string | null>(null);
   const sponsoredImpressionAttempt = useRef<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | undefined>(publicPlaces[0]?.id);
+  const [selectedId, setSelectedId] = useState<string | undefined>();
+  const [selectedLocationId, setSelectedLocationId] = useState<string | undefined>();
   const [locationLabel, setLocationLabel] = useState(defaultLocationLabel);
   const [userCoordinates, setUserCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locating, setLocating] = useState(isSupabaseConfigured);
-  const [locationPanelOpen, setLocationPanelOpen] = useState(isSupabaseConfigured);
+  const [locationPanelOpen, setLocationPanelOpen] = useState(false);
   const [manualArea, setManualArea] = useState('');
   const [activeArea, setActiveArea] = useState('');
   const [mapFocusKey, setMapFocusKey] = useState('');
@@ -167,6 +169,9 @@ function ScopedDiscoverScreen() {
   const [appForeground, setAppForeground] = useState(AppState.currentState === 'active');
   const [mobileMapExpiryRevision, setMobileMapExpiryRevision] = useState(0);
   const mounted = useRef(true);
+  const appForegroundRef = useRef(AppState.currentState === 'active');
+  const automaticNearbyAttempted = useRef(false);
+  const focusedRef = useRef(focused);
   const locationRequestGeneration = useRef(0);
   const mapInventoryRequest = useRef(createLatestRequestGate());
   const latestMapViewport = useRef<MapViewport | null>(null);
@@ -204,7 +209,9 @@ function ScopedDiscoverScreen() {
     options: { preserveCurrent?: boolean } = {},
   ) => {
     const requestToken = mapInventoryRequest.current.begin();
-    if (!mounted.current) return { ok: false, reason: 'Screen is no longer active.' } as const;
+    if (!mounted.current || !focusedRef.current || !appForegroundRef.current) {
+      return { ok: false, reason: 'Screen is no longer active.' } as const;
+    }
     latestMapViewport.current = viewport;
     setMapInventoryError(null);
     if (!viewportIsLiveInventoryEligible(viewport.bounds)) {
@@ -220,6 +227,9 @@ function ScopedDiscoverScreen() {
     if (!options.preserveCurrent) {
       setMapInventoryFeatures([]);
       setMapMarkersSuppressed(true);
+    }
+    if (!mounted.current || !focusedRef.current || !appForegroundRef.current) {
+      return { ok: false, reason: 'Screen is no longer active.' } as const;
     }
     const result = await fetchMapFoodFeatures(viewport, requestedMapCategories);
     if (!mounted.current || !mapInventoryRequest.current.isCurrent(requestToken)) return result;
@@ -259,6 +269,31 @@ function ScopedDiscoverScreen() {
     };
   }, []);
 
+  useFocusEffect(useCallback(() => {
+    focusedRef.current = true;
+    return () => {
+      focusedRef.current = false;
+      locationRequestGeneration.current += 1;
+      mapInventoryRequest.current.invalidate();
+      setTimeout(() => {
+        if (mounted.current && !focusedRef.current) setLocating(false);
+      }, 0);
+    };
+  }, []));
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      const active = state === 'active';
+      appForegroundRef.current = active;
+      setAppForeground(active);
+      if (active) return;
+      locationRequestGeneration.current += 1;
+      mapInventoryRequest.current.invalidate();
+      setLocating(false);
+    });
+    return () => subscription.remove();
+  }, []);
+
   const toggleSelection = <T extends string | number>(
     value: T,
     selected: T[],
@@ -273,7 +308,11 @@ function ScopedDiscoverScreen() {
 
   const requestNearby = useCallback(async () => {
     const generation = ++locationRequestGeneration.current;
-    const isCurrent = () => mounted.current && locationRequestGeneration.current === generation;
+    const isCurrent = () =>
+      mounted.current &&
+      focusedRef.current &&
+      appForegroundRef.current &&
+      locationRequestGeneration.current === generation;
     if (!isCurrent()) return;
     setLocating(true);
     setLocationError(null);
@@ -297,6 +336,7 @@ function ScopedDiscoverScreen() {
       });
       const latitude = current.coords.latitude;
       const longitude = current.coords.longitude;
+      if (!isCurrent()) return;
       const searchResult = await refresh({
         latitude,
         longitude,
@@ -311,8 +351,10 @@ function ScopedDiscoverScreen() {
       setActiveArea('');
       setMapFocusKey(`near:${generation}:${latitude.toFixed(5)}:${longitude.toFixed(5)}`);
       setSelectedId(undefined);
+      setSelectedLocationId(undefined);
       setLocationPanelOpen(false);
       setSortMode('nearby');
+      if (!isCurrent()) return;
       void loadMapInventory(viewportAroundPoint(latitude, longitude, 16_093));
     } catch {
       if (!isCurrent()) return;
@@ -323,11 +365,23 @@ function ScopedDiscoverScreen() {
   }, [loadMapInventory, refresh]);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    if (!isSupabaseConfigured || !focused || !appForeground) {
+      const timer = setTimeout(() => setLocating(false), 0);
+      return () => clearTimeout(timer);
+    }
+    if (automaticNearbyAttempted.current) return;
+    automaticNearbyAttempted.current = true;
+    const generation = ++locationRequestGeneration.current;
     let active = true;
+    const isCurrent = () =>
+      active &&
+      mounted.current &&
+      focusedRef.current &&
+      appForegroundRef.current &&
+      locationRequestGeneration.current === generation;
     void Location.getForegroundPermissionsAsync()
       .then((permission) => {
-        if (!active) return;
+        if (!isCurrent()) return;
         if (permission.status === 'granted') {
           void requestNearby();
           return;
@@ -335,14 +389,17 @@ function ScopedDiscoverScreen() {
         setLocating(false);
       })
       .catch(() => {
-        if (!active) return;
+        if (!isCurrent()) return;
         setLocating(false);
         setLocationError('Choose a city or ZIP, or use location when you are ready.');
       });
     return () => {
       active = false;
+      if (locationRequestGeneration.current === generation) {
+        locationRequestGeneration.current += 1;
+      }
     };
-  }, [requestNearby]);
+  }, [appForeground, focused, requestNearby]);
 
   const applyManualArea = async () => {
     const clean = manualArea.replace(/\s+/g, ' ').trim();
@@ -350,6 +407,7 @@ function ScopedDiscoverScreen() {
       setLocationError('Enter a city or ZIP code.');
       return;
     }
+    automaticNearbyAttempted.current = true;
     const generation = ++locationRequestGeneration.current;
     const isCurrent = () => mounted.current && locationRequestGeneration.current === generation;
     if (!isCurrent()) return;
@@ -373,6 +431,7 @@ function ScopedDiscoverScreen() {
     setActiveArea(clean.toLocaleLowerCase('en-US'));
     setMapFocusKey(`area:${generation}:${clean.toLocaleLowerCase('en-US')}`);
     setSelectedId(undefined);
+    setSelectedLocationId(undefined);
     setLocationLabel(clean);
     setUserCoordinates(null);
     setLocationPanelOpen(false);
@@ -384,6 +443,7 @@ function ScopedDiscoverScreen() {
       setLocationError('Zoom in before searching this map area.');
       return;
     }
+    automaticNearbyAttempted.current = true;
     const generation = ++locationRequestGeneration.current;
     const isCurrent = () => mounted.current && locationRequestGeneration.current === generation;
     if (!isCurrent()) return;
@@ -405,6 +465,7 @@ function ScopedDiscoverScreen() {
     }
     setActiveArea('');
     setSelectedId(undefined);
+    setSelectedLocationId(undefined);
     setLocationLabel('Visible map area');
     setSortMode('nearby');
   }, [loadMapInventory, refresh]);
@@ -514,8 +575,10 @@ function ScopedDiscoverScreen() {
 
   const resultsKey = JSON.stringify(discoveryFilters);
   const visibleCount = pagination.key === resultsKey ? pagination.count : 24;
-  const explicitSelection = ranked.find((place) => place.id === selectedId);
-  const selected = explicitSelection ?? ranked[0];
+  const explicitSelection = ranked.find(
+    (place) => place.id === selectedId && (!selectedLocationId || place.locationId === selectedLocationId),
+  );
+  const selected = explicitSelection;
   const visibleRanked = ranked.slice(0, visibleCount);
   const mappedPlaces = ranked;
   const permittedMapInventory = useMemo(
@@ -547,13 +610,6 @@ function ScopedDiscoverScreen() {
     return filterMapInventoryCategories(permittedMapInventory, new Set([category]));
   }, [category, detailedMapFiltersActive, permittedMapInventory]);
   const authoritativeMapInventory = isSupabaseConfigured && !detailedMapFiltersActive;
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      setAppForeground(state === 'active');
-    });
-    return () => subscription.remove();
-  }, []);
-
   useEffect(() => {
     if (!focused || !appForeground || !authoritativeMapInventory) return;
     // Mobile stops become stale when their service window ends even if no
@@ -593,10 +649,16 @@ function ScopedDiscoverScreen() {
     [visibleMapInventory],
   );
 
-  const selectPlace = useCallback((place: Place) => setSelectedId(place.id), []);
+  const selectPlace = useCallback((place: Place) => {
+    setSelectedId(place.id);
+    setSelectedLocationId(place.locationId);
+  }, []);
   const selectBusinessId = useCallback(async (businessId: string, locationId?: string) => {
     const result = await ensurePlace(businessId, locationId, 'discovery');
-    if (mounted.current && result.ok) setSelectedId(businessId);
+    if (mounted.current && result.ok) {
+      setSelectedId(businessId);
+      setSelectedLocationId(locationId);
+    }
   }, [ensurePlace]);
 
   return (
@@ -628,7 +690,7 @@ function ScopedDiscoverScreen() {
             <View style={styles.locationPanelCopy}>
               <Text accessibilityRole="header" {...webSectionHeading} style={styles.locationPanelTitle}>Choose your search area</Text>
               <Text style={styles.locationPanelDetail}>
-                Use your location once, or search without sharing it.
+                Use foreground location while this map is open, or search without sharing it.
               </Text>
             </View>
             <Pressable
@@ -672,10 +734,10 @@ function ScopedDiscoverScreen() {
         ) : null}
 
         <View style={styles.intro}>
-          <Text style={styles.eyebrow}>Live local food, mapped.</Text>
-          <Text accessibilityRole="header" style={[styles.title, wide && styles.titleWide]}>Know what’s serving before you go.</Text>
+          <Text style={styles.eyebrow}>Live local food</Text>
+          <Text accessibilityRole="header" style={[styles.title, wide && styles.titleWide]}>Find what’s serving.</Text>
           <Text style={styles.subtitle}>
-            Live locations, current menus, clear payment details, and owner updates from the independent spots around you.
+            Food trucks first, plus restaurants, pop-ups, current menus, payments, and owner updates.
           </Text>
         </View>
 
@@ -796,7 +858,10 @@ function ScopedDiscoverScreen() {
             <View style={styles.filterSection}>
               <Text style={styles.filterSectionLabel}>Cuisine</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={styles.filterChoices}>
+                <View
+                  accessibilityLabel="Cuisine filter"
+                  accessibilityRole="radiogroup"
+                  style={styles.filterChoices}>
                   {cuisines.map((facet) => {
                     const selectedCuisine = cuisine === facet.label;
                     return (
@@ -861,7 +926,10 @@ function ScopedDiscoverScreen() {
             <View style={styles.filterColumns}>
               <View style={styles.filterSectionColumn}>
                 <Text style={styles.filterSectionLabel}>Distance</Text>
-                <View style={styles.filterChoices}>
+                <View
+                  accessibilityLabel="Distance filter"
+                  accessibilityRole="radiogroup"
+                  style={styles.filterChoices}>
                   {distanceOptions.map((miles) => (
                     <Pressable
                       accessibilityRole="radio"
@@ -877,7 +945,10 @@ function ScopedDiscoverScreen() {
               </View>
               <View style={styles.filterSectionColumn}>
                 <Text style={styles.filterSectionLabel}>Rating</Text>
-                <View style={styles.filterChoices}>
+                <View
+                  accessibilityLabel="Rating filter"
+                  accessibilityRole="radiogroup"
+                  style={styles.filterChoices}>
                   {ratingOptions.map((rating) => (
                     <Pressable
                       accessibilityRole="radio"
@@ -931,36 +1002,6 @@ function ScopedDiscoverScreen() {
           </View>
         ) : null}
 
-        {sponsoredPlace ? (
-          <SponsoredLane
-            interactionReady={acknowledgedSponsoredId === sponsoredPlace.sponsoredPlacement.id}
-            onImpression={() => recordVisibleSponsoredImpression(sponsoredPlace)}
-            onHide={() => {
-              const placementId = sponsoredPlace.sponsoredPlacement?.id;
-              const placementToken = sponsoredPlace.sponsoredPlacement?.token;
-              if (placementId) {
-                setHiddenSponsoredIds((current) => [...new Set([...current, placementId])]);
-              }
-              if (placementToken) void recordSponsoredInteraction(placementToken, 'hide');
-            }}
-            onOpen={() => {
-              if (acknowledgedSponsoredId !== sponsoredPlace.sponsoredPlacement.id) return;
-              const placementToken = sponsoredPlace.sponsoredPlacement?.token;
-              if (placementToken) void recordSponsoredInteraction(placementToken, 'open');
-              router.push(`/place/${sponsoredPlace.id}`);
-            }}
-            onToggleReason={() =>
-              setOpenSponsorReasonId((current) =>
-                current === sponsoredPlace.sponsoredPlacement?.id
-                  ? null
-                  : sponsoredPlace.sponsoredPlacement?.id ?? null
-              )
-            }
-            place={sponsoredPlace}
-            reasonOpen={openSponsorReasonId === sponsoredPlace.sponsoredPlacement?.id}
-          />
-        ) : null}
-
         {clientHydrated && focused && pathname === '/' ? (
           <View style={[styles.workspace, wide && styles.workspaceWide]}>
             <View style={[styles.mapColumn, wide && styles.mapColumnWide]}>
@@ -977,6 +1018,7 @@ function ScopedDiscoverScreen() {
                 places={mappedPlaces}
                 searchAreaKey={mapFocusKey || undefined}
                 selectedId={explicitSelection?.id}
+                selectedLocationId={explicitSelection?.locationId}
                 userCoordinates={userCoordinates}
               />
               <View
@@ -1032,7 +1074,10 @@ function ScopedDiscoverScreen() {
                   </View>
                   <Pressable
                     accessibilityLabel={`View ${selected.name}`}
-                    onPress={() => router.push(`/place/${selected.id}`)}
+                    onPress={() => router.push({
+                      pathname: '/place/[id]',
+                      params: placeLocationRouteParams(selected.id, selected.locationId),
+                    })}
                     style={styles.arrowButton}>
                     <FontAwesome6 color="#FFFFFF" name="arrow-right" size={14} />
                   </Pressable>
@@ -1063,6 +1108,41 @@ function ScopedDiscoverScreen() {
                   </Text>
                 </View>
               </View>
+              {sponsoredPlace ? (
+                <SponsoredLane
+                  interactionReady={acknowledgedSponsoredId === sponsoredPlace.sponsoredPlacement.id}
+                  onImpression={() => recordVisibleSponsoredImpression(sponsoredPlace)}
+                  onHide={() => {
+                    const placementId = sponsoredPlace.sponsoredPlacement?.id;
+                    const placementToken = sponsoredPlace.sponsoredPlacement?.token;
+                    if (placementId) {
+                      setHiddenSponsoredIds((current) => [...new Set([...current, placementId])]);
+                    }
+                    if (placementToken) void recordSponsoredInteraction(placementToken, 'hide');
+                  }}
+                  onOpen={() => {
+                    if (acknowledgedSponsoredId !== sponsoredPlace.sponsoredPlacement.id) return;
+                    const placementToken = sponsoredPlace.sponsoredPlacement?.token;
+                    if (placementToken) void recordSponsoredInteraction(placementToken, 'open');
+                    router.push({
+                      pathname: '/place/[id]',
+                      params: placeLocationRouteParams(
+                        sponsoredPlace.id,
+                        sponsoredPlace.locationId,
+                      ),
+                    });
+                  }}
+                  onToggleReason={() =>
+                    setOpenSponsorReasonId((current) =>
+                      current === sponsoredPlace.sponsoredPlacement?.id
+                        ? null
+                        : sponsoredPlace.sponsoredPlacement?.id ?? null
+                    )
+                  }
+                  place={sponsoredPlace}
+                  reasonOpen={openSponsorReasonId === sponsoredPlace.sponsoredPlacement?.id}
+                />
+              ) : null}
 
               <View style={styles.resultsList}>
                 {!visibleRanked.length ? (
@@ -1114,7 +1194,7 @@ function ScopedDiscoverScreen() {
                   <PlaceCard
                     compact={wide}
                     followed={followedIds.includes(place.id)}
-                    key={place.id}
+                    key={mapPlaceIdentity(place.id, place.locationId)}
                     onToggleFollow={toggleFollow}
                     place={place}
                   />
@@ -1273,7 +1353,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   intro: {
-    gap: spacing.sm,
+    gap: 3,
     marginTop: spacing.md,
     maxWidth: 760,
   },
@@ -1286,20 +1366,20 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.ink,
-    fontSize: 32,
+    fontSize: 24,
     fontWeight: '900',
-    letterSpacing: -2,
-    lineHeight: 36,
+    letterSpacing: -1.1,
+    lineHeight: 29,
   },
   titleWide: {
-    fontSize: 36,
-    letterSpacing: -1.8,
-    lineHeight: 40,
+    fontSize: 27,
+    letterSpacing: -1.2,
+    lineHeight: 32,
   },
   subtitle: {
     color: palette.muted,
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 12,
+    lineHeight: 17,
     maxWidth: 620,
   },
   searchBar: {
@@ -1310,7 +1390,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: spacing.sm,
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
     paddingHorizontal: spacing.md,
   },
   searchInput: {
@@ -1321,7 +1401,7 @@ const styles = StyleSheet.create({
   },
   categoryRow: {
     gap: spacing.sm,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
   },
   categoryChip: {
     alignItems: 'center',
@@ -1356,7 +1436,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.md,
     justifyContent: 'space-between',
-    marginBottom: spacing.xl,
+    marginBottom: spacing.md,
   },
   filterActions: {
     alignItems: 'center',

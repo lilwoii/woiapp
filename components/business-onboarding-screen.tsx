@@ -775,7 +775,10 @@ function BusinessOnboardingContent({
           <View style={styles.formPanel}>
             {step === 1 ? (
               <>
-                <View style={styles.modeRow}>
+                <View
+                  accessibilityLabel="Listing setup mode"
+                  accessibilityRole="radiogroup"
+                  style={styles.modeRow}>
                   <Pressable
                     accessibilityRole="radio"
                     aria-checked={!claimExisting}
@@ -883,7 +886,10 @@ function BusinessOnboardingContent({
                   value={businessName}
                 />
                 {claimExisting ? (
-                  <View style={styles.claimResults}>
+                  <View
+                    accessibilityLabel="Listing to claim"
+                    accessibilityRole="radiogroup"
+                    style={styles.claimResults}>
                     <Text style={styles.claimResultsLabel}>Choose the listing to claim</Text>
                     {claimSearching ? (
                       <View style={styles.claimSearchStatus}>
@@ -962,7 +968,10 @@ function BusinessOnboardingContent({
                     />
                   </>
                 ) : selectedClaimId ? (
-                  <View style={styles.claimMethodPanel}>
+                  <View
+                    accessibilityLabel="Claim verification method"
+                    accessibilityRole="radiogroup"
+                    style={styles.claimMethodPanel}>
                     <Text style={styles.label}>Verification method</Text>
                     <Text style={styles.claimMethodDetail}>
                       This request is checked against contact information already associated with the listing. No

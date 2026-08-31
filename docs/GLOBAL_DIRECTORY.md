@@ -5,6 +5,10 @@ required storage, transformation, display, refresh, correction, and deletion.
 The app must never scrape or persist Google Maps, Yelp, DoorDash, or Facebook
 Marketplace content.
 
+No licensed global restaurant dataset or production ingestion schedule is active
+in this release candidate. Until that evidence exists, coverage is limited to
+the currently published, provenance-bearing inventory returned by the backend.
+
 ## Coverage strategy
 
 1. Use Overture Maps Places as the open global baseline. Import only food and

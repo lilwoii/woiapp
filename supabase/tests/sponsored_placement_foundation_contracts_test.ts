@@ -97,13 +97,20 @@ Deno.test("sponsored projection stays out of organic list, ranking, and paginati
   assertMatch(edge, /operation === "nearby"[\s\S]*result_offset === 0/);
 
   const placesStart = marketplace.indexOf("const mappedPlaces = displayableBusinesses.map");
+  const exactSponsoredStart = marketplace.indexOf(
+    "const sponsoredBasePlace",
+    placesStart,
+  );
   const sponsorStart = marketplace.indexOf(
     "const { places, sponsoredPlace } = splitSponsoredPlaces",
     placesStart,
   );
-  assert(placesStart >= 0 && sponsorStart > placesStart);
   assert(
-    !marketplace.slice(placesStart, sponsorStart).includes("sponsoredPlacement"),
+    placesStart >= 0 && exactSponsoredStart > placesStart &&
+      sponsorStart > exactSponsoredStart,
+  );
+  assert(
+    !marketplace.slice(placesStart, exactSponsoredStart).includes("sponsoredPlacement"),
     "Organic place mapping must not carry sponsored metadata",
   );
 

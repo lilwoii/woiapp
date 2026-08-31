@@ -314,7 +314,10 @@ export default function SavedScreen() {
             eyebrow="Following"
             title="Your saved places"
           />
-          <View style={styles.filterRow}>
+          <View
+            accessibilityLabel="Saved place category"
+            accessibilityRole="radiogroup"
+            style={styles.filterRow}>
             {(
               [
                 ['all', 'All'],
@@ -433,7 +436,7 @@ export default function SavedScreen() {
             </View>
             <Switch
               accessibilityHint="Changing this switch updates every followed business."
-              accessibilityLabel="Account alerts for every followed business"
+              accessibilityLabel={`Account alerts for every followed business: ${visibleOwnerUpdatesState}`}
               accessibilityValue={{ text: visibleOwnerUpdatesState }}
               disabled={preferenceBusy !== null || followedIds.length === 0}
               onValueChange={(next) => void savePreference('owner_bundle', next)}
@@ -485,6 +488,7 @@ export default function SavedScreen() {
                       : undefined}
                     accessibilityLabel={`${preset.label}. ${preset.detail}`}
                     accessibilityRole="radio"
+                    aria-checked={selected}
                     accessibilityState={{ checked: selected, disabled }}
                     disabled={disabled}
                     key={preset.id}

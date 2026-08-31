@@ -2234,7 +2234,10 @@ function BusinessSetupContent({
                           />
                           <View style={styles.availabilityControl}>
                             <Text style={styles.controlLabel}>Availability</Text>
-                            <View style={styles.segmented}>
+                            <View
+                              accessibilityLabel={`Availability for ${item.name || `item ${itemIndex + 1}`}`}
+                              accessibilityRole="radiogroup"
+                              style={styles.segmented}>
                               {(
                                 [
                                   ['available', 'Available'],

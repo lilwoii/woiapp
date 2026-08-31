@@ -1,4 +1,11 @@
-import { phoneHref, safeHttpsUrl, safePublicHttpsUrl } from '@/lib/links';
+import {
+  parsePublicLocationRouteParam,
+  phoneHref,
+  placeLocationRoutePath,
+  placeLocationRouteParams,
+  safeHttpsUrl,
+  safePublicHttpsUrl,
+} from '@/lib/links';
 
 describe('external contact links', () => {
   it('accepts HTTPS without embedded credentials', () => {
@@ -36,5 +43,22 @@ describe('external contact links', () => {
     expect(phoneHref('+1 (323) 555-0199')).toBe('tel:+13235550199');
     expect(phoneHref('555')).toBeNull();
     expect(phoneHref('1'.repeat(16))).toBeNull();
+  });
+
+  it('keeps an exact public branch identity in internal routes', () => {
+    const locationId = '22222222-2222-4222-8222-222222222222';
+    const modernLocationId = '77777777-7777-7777-8777-777777777777';
+    expect(parsePublicLocationRouteParam(locationId.toUpperCase())).toBe(locationId);
+    expect(parsePublicLocationRouteParam(modernLocationId.toUpperCase())).toBe(modernLocationId);
+    expect(parsePublicLocationRouteParam(['one', 'two'])).toBeNull();
+    expect(parsePublicLocationRouteParam('not-a-location')).toBeNull();
+    expect(placeLocationRoutePath('navigation', 'business', locationId)).toBe(
+      `/navigation/business?location=${locationId}`,
+    );
+    expect(placeLocationRouteParams('business', locationId)).toEqual({
+      id: 'business',
+      location: locationId,
+    });
+    expect(placeLocationRouteParams('business', 'sample-slug')).toEqual({ id: 'business' });
   });
 });

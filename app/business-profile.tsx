@@ -482,7 +482,10 @@ function BusinessProfileContent({
                   </View>
                   <View style={styles.field}>
                     <Text style={styles.label}>Price level</Text>
-                    <View accessibilityRole="radiogroup" style={styles.priceRow}>
+                    <View
+                      accessibilityLabel="Business price level"
+                      accessibilityRole="radiogroup"
+                      style={styles.priceRow}>
                       {([1, 2, 3, 4] as const).map((level) => (
                         <Pressable accessibilityLabel={`${level} dollar price level`} accessibilityRole="radio" aria-checked={values.priceLevel === level} accessibilityState={{ checked: values.priceLevel === level }} key={level} onPress={() => update('priceLevel', level)} style={[styles.priceButton, values.priceLevel === level && styles.priceButtonActive]}>
                           <Text style={[styles.priceText, values.priceLevel === level && styles.priceTextActive]}>{'$'.repeat(level)}</Text>
