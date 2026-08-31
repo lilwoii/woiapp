@@ -41,6 +41,15 @@ async function expectNoSeriousAxeViolations(page: Page) {
   expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
 }
 
+async function setManualArea(page: Page, area: string) {
+  const input = page.getByLabel('City or ZIP code');
+  if (!(await input.count())) {
+    await page.getByRole('button', { name: /^Search area:/u }).click();
+  }
+  await input.fill(area);
+  await page.getByRole('button', { name: 'Set area' }).click();
+}
+
 test('exported fixture binds the map origin into both browser CSP resource directives', async ({ page }) => {
   await page.goto(`${fixtureAppOrigin}/`, { waitUntil: 'networkidle' });
   const policy = await page
@@ -58,8 +67,7 @@ test('populated discovery renders real results and bounds a 1,200-feature map re
   const fixture = fixtureObservations.get(page);
   expect(fixture).toBeDefined();
   await page.goto(`${fixtureAppOrigin}/`, { waitUntil: 'networkidle' });
-  await page.getByLabel('City or ZIP code').fill('Los Angeles, CA');
-  await page.getByRole('button', { name: 'Set area' }).click();
+  await setManualArea(page, 'Los Angeles, CA');
 
   await expect(page.getByRole('link', { name: 'View Maya Taco Truck' }).first()).toBeVisible();
   await expect.poll(() => fixture?.searchRequests.length ?? 0).toBe(1);
@@ -87,7 +95,7 @@ test('populated discovery renders real results and bounds a 1,200-feature map re
     await expect(page.locator(`button[data-category="${category}"]`).first()).toBeVisible();
   }
   await expect(page.locator('[data-category="home_kitchen"]')).toHaveCount(0);
-  const perspective = page.getByRole('button', { name: 'Use tilted map perspective' });
+  const perspective = page.getByRole('button', { name: 'Use 3D map perspective' });
   if (await perspective.count()) {
     await perspective.click();
     await expect(page.getByRole('button', { name: 'Use flat map view' })).toHaveAttribute('aria-pressed', 'true');
@@ -144,7 +152,9 @@ test('authenticated foreground navigation draws a provider route and remains use
   await page.goto(`${fixtureAppOrigin}/place/${fixture?.ids.business}`, { waitUntil: 'networkidle' });
 
   await page.getByRole('button', { name: 'Navigate in Spottr' }).click();
-  await expect(page).toHaveURL(`${fixtureAppOrigin}/navigation/${fixture?.ids.business}`);
+  await expect(page).toHaveURL(
+    `${fixtureAppOrigin}/navigation/${fixture?.ids.business}?location=${fixture?.ids.location}`,
+  );
   await expect(page.getByText(/does not send later movement to Mapbox for rerouting unless you separately turn on Automatic rerouting/i)).toBeVisible();
   expect(fixture?.routeRequests).toHaveLength(0);
 
@@ -205,8 +215,7 @@ test('authenticated foreground navigation draws a provider route and remains use
 
 test('zooming beyond the live inventory boundary removes stale server and fallback markers', async ({ page }) => {
   await page.goto(`${fixtureAppOrigin}/`, { waitUntil: 'networkidle' });
-  await page.getByLabel('City or ZIP code').fill('Los Angeles, CA');
-  await page.getByRole('button', { name: 'Set area' }).click();
+  await setManualArea(page, 'Los Angeles, CA');
 
   await expect(page.locator('.maplibregl-marker').first()).toBeVisible();
   const zoomOut = page.getByRole('button', { name: 'Zoom out' });
@@ -219,22 +228,21 @@ test('zooming beyond the live inventory boundary removes stale server and fallba
   await expect(page.locator('.maplibregl-marker')).toHaveCount(0);
 });
 
-test('an empty manual-area search removes markers from the previous area', async ({ page }) => {
+test('an empty manual-area search keeps the last verified map area', async ({ page }) => {
   const fixture = fixtureObservations.get(page);
   if (!fixture) throw new Error('Spottr fixture was not installed.');
 
   await page.goto(`${fixtureAppOrigin}/`, { waitUntil: 'networkidle' });
-  await page.getByLabel('City or ZIP code').fill('Los Angeles, CA');
-  await page.getByRole('button', { name: 'Set area' }).click();
+  await setManualArea(page, 'Los Angeles, CA');
   await expect(page.locator('.maplibregl-marker').first()).toBeVisible();
 
-  await page.getByRole('button', { name: /Search area:/u }).click();
-  await page.getByLabel('City or ZIP code').fill('No Results, ZZ');
-  await page.getByRole('button', { name: 'Set area' }).click();
+  await setManualArea(page, 'No Results, ZZ');
 
   await expect.poll(() => fixture.searchRequests.length).toBe(2);
-  await expect(page.locator('.maplibregl-marker')).toHaveCount(0);
-  await expect(page.getByText('No verified listings here yet')).toBeVisible();
+  await expect(page.locator('.maplibregl-marker').first()).toBeVisible();
+  await expect(page.getByText(
+    'No currently listed places matched that city or ZIP. The map stayed on your previous area.',
+  )).toBeVisible();
 });
 
 test('personalized feed is loaded through the active account and renders both followed lanes', async ({ page }) => {

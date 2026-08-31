@@ -241,6 +241,16 @@ export function LiveMap({
   const selectedLatitude = selectedPlace?.latitude;
   const selectedLongitude = selectedPlace?.longitude;
 
+  const adjustZoom = (delta: number) => {
+    mapWasInteracted.current = true;
+    userMovedMap.current = true;
+    const currentZoom = zoomFromLongitudeDelta(region.longitudeDelta);
+    mapRef.current?.animateCamera(
+      { zoom: Math.min(20, Math.max(2, currentZoom + delta)) },
+      { duration: motionDuration(reduceMotion, 180) },
+    );
+  };
+
   useEffect(() => {
     void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
     const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
@@ -494,6 +504,25 @@ export function LiveMap({
         );
       })}
     </MapView>
+    <View accessibilityLabel="Map zoom controls" style={styles.zoomControls}>
+      <Pressable
+        accessibilityHint="Shows a smaller area with more map detail"
+        accessibilityLabel="Zoom in"
+        accessibilityRole="button"
+        onPress={() => adjustZoom(1)}
+        style={styles.zoomButton}>
+        <FontAwesome6 color={palette.ink} name="plus" size={13} />
+      </Pressable>
+      <View accessibilityElementsHidden importantForAccessibility="no" style={styles.zoomDivider} />
+      <Pressable
+        accessibilityHint="Shows a larger surrounding area"
+        accessibilityLabel="Zoom out"
+        accessibilityRole="button"
+        onPress={() => adjustZoom(-1)}
+        style={styles.zoomButton}>
+        <FontAwesome6 color={palette.ink} name="minus" size={13} />
+      </Pressable>
+    </View>
     <Pressable
       accessibilityLabel={perspective ? 'Use flat map view' : 'Use angled map perspective'}
       accessibilityRole="button"
@@ -795,6 +824,32 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 14,
     top: 14,
+  },
+  zoomControls: {
+    backgroundColor: 'rgba(255, 253, 248, 0.95)',
+    borderColor: '#FFFFFF',
+    borderRadius: radii.md,
+    borderWidth: 2,
+    bottom: 58,
+    elevation: 4,
+    left: 14,
+    overflow: 'hidden',
+    position: 'absolute',
+    shadowColor: palette.ink,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 7,
+  },
+  zoomButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  zoomDivider: {
+    backgroundColor: palette.line,
+    height: 1,
+    marginHorizontal: 8,
   },
   perspectiveButtonActive: {
     backgroundColor: palette.ink,

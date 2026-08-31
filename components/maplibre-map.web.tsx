@@ -823,6 +823,7 @@ export default function MapLibreMapView({
       <View
         accessibilityLabel="Interactive map of nearby food"
         ref={containerRef}
+        role="region"
         style={styles.map}
       />
       <View style={styles.controls}>

@@ -111,8 +111,16 @@ describe('global map camera integration', () => {
 
   it('makes web markers keyboard reachable and offers 3D only when the loaded style supports it', () => {
     expect(webMap.match(/element\.tabIndex = 0/g)?.length).toBe(2);
+    expect(webMap).toMatch(/accessibilityLabel="Interactive map of nearby food"[\s\S]*role="region"/);
     expect(webMap).toMatch(/\{supports3D \? \(/);
     expect(webMap).not.toMatch(/Use tilted map perspective/);
+  });
+
+  it('offers explicit native zoom controls for touch, keyboard, and assistive technology users', () => {
+    expect(nativeMap).toMatch(/const adjustZoom = \(delta: number\) =>/);
+    expect(nativeMap).toMatch(/accessibilityLabel="Map zoom controls"/);
+    expect(nativeMap).toMatch(/accessibilityLabel="Zoom in"[\s\S]*onPress=\{\(\) => adjustZoom\(1\)\}/);
+    expect(nativeMap).toMatch(/accessibilityLabel="Zoom out"[\s\S]*onPress=\{\(\) => adjustZoom\(-1\)\}/);
   });
 
   it('keeps map discovery ahead of ads and preserves a selected branch identity', () => {
