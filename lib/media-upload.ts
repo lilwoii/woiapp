@@ -1,9 +1,8 @@
-import { File } from 'expo-file-system';
-import { Platform } from 'react-native';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { toActionError } from '@/lib/errors';
 import { featureFlags } from '@/lib/features';
+import { readLocalMedia } from '@/lib/local-media-file';
 import { supabase } from '@/lib/supabase';
 import { ActionResult } from '@/types/marketplace';
 
@@ -61,15 +60,6 @@ export function detectedImageMime(bytes: Uint8Array): string | null {
     return 'image/webp';
   }
   return null;
-}
-
-async function readLocalMedia(uri: string): Promise<ArrayBuffer> {
-  if (Platform.OS === 'web') {
-    const response = await fetch(uri);
-    if (!response.ok) throw new Error('The selected image could not be read.');
-    return response.arrayBuffer();
-  }
-  return new File(uri).arrayBuffer();
 }
 
 export async function stageMediaUpload(

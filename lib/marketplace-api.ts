@@ -79,6 +79,7 @@ export type MarketplacePage = {
   sponsoredPlace?: SponsoredPlace;
   hasMore: boolean;
   nextOffset: number;
+  areaMatchCount?: number;
 };
 
 export function splitSponsoredPlaces(
@@ -1887,6 +1888,7 @@ export async function searchMarketplacePlaces(
     if (!result.ok) return result;
 
     const rank = new Map(rankedIds.map((id, index) => [id, index]));
+    const returnedIds = new Set((result.data?.places ?? []).map((place) => place.id));
     return {
       ok: true,
       data: {
@@ -1899,6 +1901,7 @@ export async function searchMarketplacePlaces(
         nextOffset: searchRows.some((entry) => entry.has_more === true)
           ? resultOffset + resultLimit
           : resultOffset,
+        areaMatchCount: rankedIds.filter((id) => returnedIds.has(id)).length,
       },
     };
   } catch (error) {

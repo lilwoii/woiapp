@@ -1,8 +1,6 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { StatusBar } from 'expo-status-bar';
 import { DefaultTheme, Stack, ThemeProvider } from 'expo-router';
-import Head from 'expo-router/head';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { useEffect } from 'react';
@@ -35,7 +33,6 @@ const theme = {
 export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    ...FontAwesome.font,
     ...FontAwesome6.font,
   });
 
@@ -59,9 +56,6 @@ export default function RootLayout() {
         <AuthProvider>
           <MarketplaceStoreProvider>
             <ThemeProvider value={theme}>
-              <Head>
-                <title>Spottr · Live local food, mapped</title>
-              </Head>
               <StatusBar style="dark" />
               <RouteFocusManager />
               <Stack

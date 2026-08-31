@@ -1,4 +1,3 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
@@ -241,7 +240,7 @@ function FeedRow({ item }: { item: FeedItem }) {
           )}
           <Text style={styles.itemMeta}>{isBusiness ? 'Business post' : `@${item.authorUsername ?? 'member'} reviewed ${item.businessName}`} · {item.createdLabel} · {item.createdDateTimeLabel}</Text>
         </View>
-        {item.rating ? <View accessibilityLabel={`${item.rating} stars`} style={styles.rating}>{[1, 2, 3, 4, 5].map((star) => <FontAwesome color={star <= item.rating! ? palette.sun : palette.line} key={star} name="star" size={9} />)}</View> : null}
+        {item.rating ? <View accessibilityLabel={`${item.rating} stars`} style={styles.rating}>{[1, 2, 3, 4, 5].map((star) => <FontAwesome6 color={star <= item.rating! ? palette.sun : palette.line} key={star} name="star" size={9} />)}</View> : null}
       </View>
       {item.body ? <Text style={styles.itemBody}>{item.body}</Text> : null}
       {item.photos.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}><View style={styles.photos}>{item.photos.map((photo) => <Image key={photo} source={{ uri: photo }} style={styles.photo} />)}</View></ScrollView> : null}

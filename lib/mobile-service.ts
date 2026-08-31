@@ -110,3 +110,19 @@ export function earliestMovingServiceBoundary(
     ? { startsAtMs, placeIds: [...new Set(placeIds)].sort() }
     : null;
 }
+
+export function expireMovingServiceStates(
+  places: Place[],
+  nowMs = Date.now(),
+  eligiblePlaceIds?: ReadonlySet<string>,
+): Place[] {
+  let changed = false;
+  const next = places.map((place) => {
+    if (!place.mobility || (eligiblePlaceIds && !eligiblePlaceIds.has(place.id))) return place;
+    const startsAtMs = Date.parse(place.mobility.nextStop.startsAt);
+    if (!Number.isFinite(startsAtMs) || startsAtMs > nowMs) return place;
+    changed = true;
+    return { ...place, mobility: undefined };
+  });
+  return changed ? next : places;
+}

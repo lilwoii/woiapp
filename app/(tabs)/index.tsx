@@ -191,8 +191,14 @@ function ScopedDiscoverScreen() {
     [enabledMapCategories],
   );
   const enabledPlaces = useMemo(
-    () => filterPlacesForEnabledCategories(publicPlaces, enabledCategorySet),
-    [enabledCategorySet, publicPlaces],
+    () => {
+      const filtered = filterPlacesForEnabledCategories(publicPlaces, enabledCategorySet);
+      if (userCoordinates) return filtered;
+      return filtered.map((place) => place.distanceMiles === null
+        ? place
+        : { ...place, distanceMiles: null });
+    },
+    [enabledCategorySet, publicPlaces, userCoordinates],
   );
   const requestedMapCategories = useMemo(
     () => category === 'all'
@@ -269,17 +275,25 @@ function ScopedDiscoverScreen() {
     };
   }, []);
 
+  const expireForegroundLocation = useCallback(() => {
+    setUserCoordinates(null);
+    setLocationLabel((current) => current === 'Near your current location'
+      ? 'Last nearby search · refresh location'
+      : current);
+  }, []);
+
   useFocusEffect(useCallback(() => {
     focusedRef.current = true;
     return () => {
       focusedRef.current = false;
       locationRequestGeneration.current += 1;
       mapInventoryRequest.current.invalidate();
+      expireForegroundLocation();
       setTimeout(() => {
         if (mounted.current && !focusedRef.current) setLocating(false);
       }, 0);
     };
-  }, []));
+  }, [expireForegroundLocation]));
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -290,9 +304,10 @@ function ScopedDiscoverScreen() {
       locationRequestGeneration.current += 1;
       mapInventoryRequest.current.invalidate();
       setLocating(false);
+      expireForegroundLocation();
     });
     return () => subscription.remove();
-  }, []);
+  }, [expireForegroundLocation]);
 
   const toggleSelection = <T extends string | number>(
     value: T,
@@ -426,6 +441,10 @@ function ScopedDiscoverScreen() {
     setLocating(false);
     if (!result.ok) {
       setLocationError(result.reason);
+      return;
+    }
+    if ((result.data?.areaMatchCount ?? 0) === 0) {
+      setLocationError('No currently listed places matched that city or ZIP. The map stayed on your previous area.');
       return;
     }
     setActiveArea(clean.toLocaleLowerCase('en-US'));
@@ -744,9 +763,9 @@ function ScopedDiscoverScreen() {
         <View style={styles.searchBar}>
           <FontAwesome6 color={palette.muted} name="magnifying-glass" size={16} />
           <TextInput
-            accessibilityLabel="Search by business, cuisine, city, or ZIP code"
+            accessibilityLabel="Filter loaded places by business, cuisine, dish, or payment method"
             onChangeText={(text) => startTransition(() => setQuery(text))}
-            placeholder="Search food, business, city, or ZIP"
+            placeholder="Search food or business"
             placeholderTextColor={palette.mutedLight}
             returnKeyType="search"
             style={styles.searchInput}

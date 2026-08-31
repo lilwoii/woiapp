@@ -1,4 +1,3 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -451,7 +450,7 @@ function ScopedPublicProfile({ id, scopeKey }: { id?: string; scopeKey: string }
                     <Text style={styles.reviewDate}>{review.postedLabel}</Text>
                   </View>
                   <View style={styles.reviewStars}>
-                    {[1, 2, 3, 4, 5].map((star) => <FontAwesome color={star <= review.rating ? palette.sun : palette.line} key={star} name="star" size={10} />)}
+                    {[1, 2, 3, 4, 5].map((star) => <FontAwesome6 color={star <= review.rating ? palette.sun : palette.line} key={star} name="star" size={10} />)}
                   </View>
                 </Pressable>
                 <Text style={styles.reviewBody}>{review.body}</Text>

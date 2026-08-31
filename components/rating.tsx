@@ -1,4 +1,4 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
+import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { palette } from '@/constants/theme';
@@ -18,7 +18,7 @@ export function Rating({ rating, count, light = false, compact = false }: Props)
 
   return (
     <View accessibilityLabel={accessibilityLabel} accessibilityRole="text" accessible style={styles.row}>
-      <FontAwesome accessibilityElementsHidden color={palette.sun} importantForAccessibility="no" name="star" size={compact ? 12 : 14} />
+      <FontAwesome6 accessibilityElementsHidden color={palette.sun} importantForAccessibility="no" name="star" size={compact ? 12 : 14} />
       <Text accessibilityElementsHidden importantForAccessibility="no" style={[styles.rating, { color: ink }, compact && styles.compact]}>{rating.toFixed(1)}</Text>
       {typeof count === 'number' ? (
         <Text accessibilityElementsHidden importantForAccessibility="no" style={[styles.count, { color: light ? '#E8EFEC' : palette.muted }, compact && styles.compact]}>

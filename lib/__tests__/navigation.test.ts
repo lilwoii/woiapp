@@ -1,6 +1,5 @@
 import {
   advanceRouteProgress,
-  advanceRouteStepIndex,
   createRouteLiveProgress,
   externalDirectionsProviderUrl,
   externalDirectionsUrl,
@@ -8,7 +7,6 @@ import {
   formatRouteDistance,
   formatRouteDuration,
   inferTravelMode,
-  nearestRouteStep,
   parseRoutePlan,
   ROUTE_PROJECTION_MAX_INSPECTED_SEGMENTS,
   ROUTE_RECOVERY_MAX_INSPECTED_SEGMENTS,
@@ -73,11 +71,6 @@ describe('route plan parsing', () => {
     expect(inferTravelMode({ speedMetersPerSecond: 9, horizontalAccuracyMeters: 250, distanceMeters: 5_000 }))
       .toBe('drive');
   });
-  it('selects the nearest maneuver for live guidance', () => {
-    const route = parseRoutePlan(valid, 'walk', now);
-    expect(route && nearestRouteStep(route, { latitude: 34.041, longitude: -118.231 })?.instruction)
-      .toBe('Turn right on Spring Street');
-  });
   it('advances guidance one step at a time and never jumps backward', () => {
     const route = parseRoutePlan({
       ...valid,
@@ -95,11 +88,13 @@ describe('route plan parsing', () => {
     }, 'walk', now);
     expect(route).not.toBeNull();
     if (!route) return;
-    expect(advanceRouteStepIndex(route, { latitude: 34.05, longitude: -118.24 }, 0)).toBe(0);
-    expect(advanceRouteStepIndex(route, { latitude: 34.049, longitude: -118.239 }, 0)).toBe(1);
-    expect(advanceRouteStepIndex(route, { latitude: 34.0475, longitude: -118.2375 }, 0)).toBe(2);
-    expect(advanceRouteStepIndex(route, { latitude: 35, longitude: -117 }, 0)).toBe(0);
-    expect(advanceRouteStepIndex(route, { latitude: 34.05, longitude: -118.24 }, 2)).toBe(2);
+    const stepIndexAt = (current: typeof route.coordinates[number], previousIndex: number) =>
+      advanceRouteProgress(route, current, createRouteLiveProgress(route, previousIndex)).stepIndex;
+    expect(stepIndexAt({ latitude: 34.05, longitude: -118.24 }, 0)).toBe(0);
+    expect(stepIndexAt({ latitude: 34.049, longitude: -118.239 }, 0)).toBe(1);
+    expect(stepIndexAt({ latitude: 34.0475, longitude: -118.2375 }, 0)).toBe(2);
+    expect(stepIndexAt({ latitude: 35, longitude: -117 }, 0)).toBe(0);
+    expect(stepIndexAt({ latitude: 34.05, longitude: -118.24 }, 2)).toBe(2);
   });
   it('does not skip a folded-route maneuver just because its endpoints are close', () => {
     const route = parseRoutePlan({
@@ -118,8 +113,8 @@ describe('route plan parsing', () => {
     }, 'walk', now);
     expect(route).not.toBeNull();
     if (!route) return;
-    expect(advanceRouteStepIndex(route, route.coordinates[0], 0)).toBe(0);
-    expect(advanceRouteStepIndex(route, route.coordinates[3], 0)).toBe(1);
+    expect(advanceRouteProgress(route, route.coordinates[0], createRouteLiveProgress(route)).stepIndex).toBe(0);
+    expect(advanceRouteProgress(route, route.coordinates[3], createRouteLiveProgress(route)).stepIndex).toBe(1);
   });
   it('does not snap from an earlier leg to a later leg where a route crosses itself', () => {
     const route = parseRoutePlan({

@@ -53,7 +53,7 @@ describe('global map camera integration', () => {
     expect(webMap).toMatch(/setPendingViewport\(eligible && onSearchAreaRef\.current \? viewport : null\)/);
     expect(nativeMap).toMatch(/setPendingViewport\(eligible && onSearchArea \? viewport : null\)/);
     expect(nativeMap).toMatch(
-      /onRegionChangeComplete[\s\S]*const eligible = viewportIsLiveInventoryEligible[\s\S]*setInventoryViewportEligible\(eligible\)[\s\S]*if \(!eligible\)[\s\S]*if \(userMovedMap\.current\)/,
+      /onRegionChangeComplete[\s\S]*const eligible = viewportIsLiveInventoryEligible[\s\S]*const changedByGesture = userMovedMap\.current \|\| details\?\.isGesture === true[\s\S]*setInventoryViewportEligible\(eligible\)[\s\S]*if \(!eligible\)[\s\S]*if \(changedByGesture\)/,
     );
   });
 
@@ -91,12 +91,19 @@ describe('global map camera integration', () => {
       /const searchVisibleMap[\s\S]*automaticNearbyAttempted\.current = true;[\s\S]*refresh\(\{/,
     );
     expect(discover).not.toMatch(/automaticNearbyAttempted\.current = false/);
+    expect(discover).toMatch(
+      /const expireForegroundLocation[\s\S]*setUserCoordinates\(null\)[\s\S]*Last nearby search · refresh location/,
+    );
+    expect(discover.match(/expireForegroundLocation\(\)/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(discover).toMatch(/if \(\(result\.data\?\.areaMatchCount \?\? 0\) === 0\)[\s\S]*map stayed on your previous area/);
   });
 
   it('clears stale search-area targets after programmatic camera moves without refreshing inventory', () => {
     expect(nativeMap).toMatch(
-      /if \(userMovedMap\.current\) \{[\s\S]*onViewportInvalidated\?\.\(viewport\)[\s\S]*\} else \{[\s\S]*setPendingViewport\(null\);[\s\S]*\}\s*userMovedMap\.current = false/,
+      /if \(changedByGesture\) \{[\s\S]*onViewportInvalidated\?\.\(viewport\)[\s\S]*\} else \{[\s\S]*setPendingViewport\(null\);[\s\S]*\}\s*userMovedMap\.current = false/,
     );
+    expect(nativeMap).toMatch(/onTouchStart=\{\(\) => \{[^}]*mapWasInteracted\.current = true;[^}]*\}\}\s*onTouchMove/);
+    expect(nativeMap).not.toMatch(/onTouchStart=\{\(\) => \{[^}]*userMovedMap\.current = true/);
     expect(webMap).toMatch(
       /if \(userMovedMap\.current\) \{[\s\S]*onViewportInvalidatedRef\.current\?\.\(viewport\)[\s\S]*\} else \{[\s\S]*setPendingViewport\(null\);[\s\S]*\}\s*userMovedMap\.current = false/,
     );
@@ -113,6 +120,7 @@ describe('global map camera integration', () => {
     expect(discover).toMatch(/selectedLocationId=\{explicitSelection\?\.locationId\}/);
     expect(webMap).toMatch(/inventoryFeature\.locationId === selectedLocationId/);
     expect(nativeMap).toMatch(/feature\.locationId === selectedLocationId/);
+    expect(nativeMap).toContain('key={`${mapPlaceIdentity(place.id, place.locationId)}:${place.logoUrl}:${isSelected}`}');
     expect(discover.indexOf('<SponsoredLane')).toBeGreaterThan(discover.indexOf('style={styles.resultsHeader}'));
     expect(discover.indexOf('<SponsoredLane')).toBeLessThan(discover.indexOf('style={styles.resultsList}'));
   });
@@ -126,6 +134,9 @@ describe('global map camera integration', () => {
     expect(webMap).toMatch(/Recenter map on your live position/);
     expect(nativeMap).toMatch(/Recenter map on your live position/);
     expect(nativeMap).toMatch(/Use angled map perspective/);
+    expect(nativeMap).toMatch(/if \(!mapReady\.current\) setMapStartupTimedOut\(true\)/);
+    expect(nativeMap).toMatch(/onMapReady=\{\(\) => \{[\s\S]*mapReady\.current = true/);
+    expect(nativeMap).toMatch(/Retry map/);
   });
 
   it('preserves an exact public location through detail, navigation, and pickup', () => {

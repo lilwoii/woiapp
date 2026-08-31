@@ -1,4 +1,3 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -816,7 +815,7 @@ function ScopedPlaceDetailScreen({
                   <Text style={styles.reviewScore}>{place.rating.toFixed(1)}</Text>
                   <View style={styles.stars}>
                     {[1, 2, 3, 4, 5].map((star) => (
-                      <FontAwesome
+                      <FontAwesome6
                         color={star <= Math.round(place.rating) ? palette.sun : palette.line}
                         key={star}
                         name="star"
@@ -1000,7 +999,7 @@ function ScopedPlaceDetailScreen({
                     key={value}
                     onPress={() => setRating(value)}
                     style={styles.ratingOption}>
-                    <FontAwesome color={value <= rating ? palette.sun : palette.line} name="star" size={25} />
+                    <FontAwesome6 color={value <= rating ? palette.sun : palette.line} name="star" size={25} />
                   </Pressable>
                 ))}
                 <Text style={styles.ratingPickerText}>{rating}.0</Text>
@@ -1158,7 +1157,7 @@ function ScopedPlaceDetailScreen({
             </View>
 
             <View style={styles.infoPanel}>
-              <Text style={styles.infoTitle}>Accepted payments</Text>
+              <Text style={styles.infoTitle}>Ways to pay the business</Text>
               <View style={styles.paymentGrid}>
                 {place.payments.map((payment) => (
                   <View key={payment} style={styles.paymentChip}>
@@ -1169,8 +1168,8 @@ function ScopedPlaceDetailScreen({
               </View>
               <Text style={styles.paymentCaveat}>
                 {place.verified
-                  ? 'Payment details confirmed by the verified business.'
-                  : 'Payment details come from the listing source; confirm before ordering.'}
+                  ? 'Confirmed by the verified business. Spottr does not process these listing-level payment methods.'
+                  : 'Provided by the listing source; confirm directly. Spottr does not process these listing-level payment methods.'}
               </Text>
             </View>
 

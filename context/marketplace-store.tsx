@@ -28,7 +28,7 @@ import {
   MarketplaceRequestToken,
   resolveMarketplaceScope,
 } from '@/lib/marketplace-scope';
-import { earliestMovingServiceBoundary } from '@/lib/mobile-service';
+import { earliestMovingServiceBoundary, expireMovingServiceStates } from '@/lib/mobile-service';
 import {
   filterHomeKitchenPlaces,
   HOME_KITCHEN_UNAVAILABLE_REASON,
@@ -71,14 +71,18 @@ type MarketplaceStoreValue = {
     preferredLocationId?: string,
     source?: 'detail' | 'discovery'
   ) => Promise<ActionResult>;
-  searchArea: (searchText: string) => Promise<ActionResult>;
+  searchArea: (searchText: string) => Promise<ActionResult<MarketplaceRefreshResult>>;
   loadMoreResults: () => Promise<ActionResult>;
   loadMoreReviews: (placeId: string) => Promise<ActionResult>;
   refresh: (origin?: {
     latitude: number;
     longitude: number;
     radiusMeters?: number;
-  }) => Promise<ActionResult>;
+  }) => Promise<ActionResult<MarketplaceRefreshResult>>;
+};
+
+type MarketplaceRefreshResult = {
+  areaMatchCount?: number;
 };
 
 type MarketplaceStoreState = {
@@ -289,7 +293,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       latitude: number;
       longitude: number;
       radiusMeters?: number;
-    }): Promise<ActionResult> => {
+    }): Promise<ActionResult<MarketplaceRefreshResult>> => {
       const priorRefresh = activeRefresh.current;
       const token = requestGuard.begin(scopeKey, 'directory');
       if (!token) return marketplaceSessionChanged;
@@ -339,7 +343,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
           syncStatus: 'idle',
           syncMessage: 'Choose your location, city, or ZIP to load nearby listings.',
         }));
-        return { ok: true };
+        return { ok: true, data: {} };
       }
 
       commitStore(token, (current) => ({
@@ -348,8 +352,9 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
         syncStatus: 'syncing',
         syncMessage: 'Refreshing live listings…',
       }));
-      const request = lastArea.current && !origin
-        ? searchMarketplacePlaces(lastArea.current, {
+      const areaSearch = !origin ? lastArea.current : undefined;
+      const request = areaSearch
+        ? searchMarketplacePlaces(areaSearch, {
             expectedUserId: expectedUserId ?? undefined,
             includeBusinessIds,
             managedBusinessIds: managedPlaceIdsRef.current,
@@ -378,6 +383,17 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
         return result;
       }
 
+      const areaMatchCount = areaSearch ? result.data?.areaMatchCount ?? 0 : undefined;
+      if (areaSearch && areaMatchCount === 0) {
+        commitStore(token, (current) => ({
+          ...current,
+          hasMoreResults: false,
+          syncStatus: 'idle',
+          syncMessage: 'No currently listed places matched that city or ZIP.',
+        }));
+        return { ok: true, data: { areaMatchCount: 0 } };
+      }
+
       nextResultOffset.current = result.data?.nextOffset ?? 0;
       commitStore(token, (current) => ({
         ...current,
@@ -390,7 +406,12 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
         syncStatus: 'live',
         syncMessage: 'Live owner and community data is connected.',
       }));
-      return { ok: true };
+      return {
+        ok: true,
+        data: areaSearch
+          ? { areaMatchCount }
+          : {},
+      };
     },
     [commitStore, expectedUserId, requestGuard, scopeKey]
   );
@@ -457,7 +478,21 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       void refreshMovingServiceBoundary(movingServiceBoundary.placeIds)
         .catch(() => undefined)
         .finally(() => {
-          if (active) setMovingBoundaryRetryTick((current) => current + 1);
+          if (!active) return;
+          if (
+            (movingBoundaryAttempt.current?.attempts ?? 0) >= 3 &&
+            Date.now() >= movingServiceBoundary.startsAtMs
+          ) {
+            const expiredIds = new Set(movingServiceBoundary.placeIds);
+            setStoreState((current) => current.scopeKey === scopeKey
+              ? {
+                  ...current,
+                  places: expireMovingServiceStates(current.places, Date.now(), expiredIds),
+                }
+              : current);
+            setMobileMapRevision((current) => current + 1);
+          }
+          setMovingBoundaryRetryTick((current) => current + 1);
         });
     }, Math.min(delay, 2_147_483_647));
     return () => {
@@ -467,7 +502,7 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
   }, [movingBoundaryRetryTick, movingServiceBoundary, refreshMovingServiceBoundary, scopeKey]);
 
   const searchArea = useCallback(
-    async (searchText: string): Promise<ActionResult> => {
+    async (searchText: string): Promise<ActionResult<MarketplaceRefreshResult>> => {
       const token = requestGuard.begin(scopeKey, 'search-intent');
       if (!token) return marketplaceSessionChanged;
       if (!isSupabaseConfigured) {
@@ -482,9 +517,16 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
       }
 
       const clean = searchText.replace(/\s+/g, ' ').trim();
+      const previousArea = lastArea.current;
+      const previousOrigin = lastOrigin.current;
       lastArea.current = clean;
       lastOrigin.current = undefined;
-      return refresh();
+      const result = await refresh();
+      if (result.ok && result.data?.areaMatchCount === 0) {
+        lastArea.current = previousArea;
+        lastOrigin.current = previousOrigin;
+      }
+      return result;
     },
     [commitStore, refresh, requestGuard, scopeKey]
   );
@@ -623,7 +665,8 @@ export function MarketplaceStoreProvider({ children }: PropsWithChildren) {
         followedIds: followed,
         managedPlaceIds: ids,
       }));
-      return refresh();
+      const refreshed = await refresh();
+      return refreshed.ok ? { ok: true } : refreshed;
     }
 
     return {

@@ -200,6 +200,9 @@ export function LiveMap({
   );
   const [reduceMotion, setReduceMotion] = useState(false);
   const [perspective, setPerspective] = useState(false);
+  const [mapRetryRevision, setMapRetryRevision] = useState(0);
+  const [mapStartupTimedOut, setMapStartupTimedOut] = useState(false);
+  const mapReady = useRef(false);
   const userMovedMap = useRef(false);
   const mapWasInteracted = useRef(false);
   const hasCenteredOnUser = useRef(false);
@@ -249,6 +252,14 @@ export function LiveMap({
   }, []);
 
   useEffect(() => {
+    mapReady.current = false;
+    const timer = setTimeout(() => {
+      if (!mapReady.current) setMapStartupTimedOut(true);
+    }, 12_000);
+    return () => clearTimeout(timer);
+  }, [mapRetryRevision]);
+
+  useEffect(() => {
     if (selectedLatitude === undefined || selectedLongitude === undefined) return;
     mapRef.current?.animateCamera(
       { center: { latitude: selectedLatitude, longitude: selectedLongitude }, zoom: 14 },
@@ -295,8 +306,13 @@ export function LiveMap({
     <MapView
       accessibilityHint="Pan or zoom to explore food places. Use Search this area to refresh results."
       accessibilityLabel="Interactive map of nearby food"
-      initialRegion={initialMapRegion}
+      initialRegion={mapRetryRevision ? region : initialMapRegion}
+      key={`native-map:${mapRetryRevision}`}
       ref={mapRef}
+      onMapReady={() => {
+        mapReady.current = true;
+        setMapStartupTimedOut(false);
+      }}
       onPanDrag={() => {
         if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
         mapWasInteracted.current = true;
@@ -305,18 +321,22 @@ export function LiveMap({
       onTouchStart={() => {
         if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
         mapWasInteracted.current = true;
+      }}
+      onTouchMove={() => {
+        mapWasInteracted.current = true;
         userMovedMap.current = true;
       }}
-      onRegionChangeComplete={(nextRegion) => {
+      onRegionChangeComplete={(nextRegion, details) => {
         setRegion(nextRegion);
         const viewport = viewportFromRegion(nextRegion);
         const eligible = viewportIsLiveInventoryEligible(viewport.bounds);
+        const changedByGesture = userMovedMap.current || details?.isGesture === true;
         setInventoryViewportEligible(eligible);
         if (!eligible) {
           setPendingViewport(null);
           if (inventoryTimer.current) clearTimeout(inventoryTimer.current);
         }
-        if (userMovedMap.current) {
+        if (changedByGesture) {
           setPendingViewport(eligible && onSearchArea ? viewport : null);
           onViewportInvalidated?.(viewport);
           if (eligible && onViewportChange) {
@@ -464,7 +484,7 @@ export function LiveMap({
             description={place.mobility
               ? `${MOVING_TO_NEXT_LOCATION_LABEL} · ${place.mobility.nextStop.timeWindow}. Scheduled next-stop destination; no live vehicle location.`
               : `${place.categoryLabel} · ${place.todayHours}`}
-            key={`${place.id}:${place.logoUrl}:${isSelected}`}
+            key={`${mapPlaceIdentity(place.id, place.locationId)}:${place.logoUrl}:${isSelected}`}
             logoUrl={place.logoUrl}
             moving={Boolean(place.mobility)}
             onPress={() => onSelect?.(place)}
@@ -518,6 +538,25 @@ export function LiveMap({
         <FontAwesome6 color="#FFFFFF" name="magnifying-glass-location" size={12} />
         <Text style={styles.searchAreaText}>Search this area</Text>
       </Pressable>
+    ) : null}
+    {mapStartupTimedOut ? (
+      <View accessibilityLiveRegion="assertive" accessibilityRole="alert" style={styles.mapUnavailable}>
+        <FontAwesome6 color={palette.accentDeep} name="map" size={17} />
+        <View style={styles.mapUnavailableCopy}>
+          <Text style={styles.mapUnavailableTitle}>Map did not finish loading</Text>
+          <Text style={styles.mapUnavailableDetail}>Check your connection, then try the map again.</Text>
+        </View>
+        <Pressable
+          accessibilityLabel="Retry loading the map"
+          accessibilityRole="button"
+          onPress={() => {
+            setMapStartupTimedOut(false);
+            setMapRetryRevision((current) => current + 1);
+          }}
+          style={styles.mapUnavailableRetry}>
+          <Text style={styles.mapUnavailableRetryText}>Retry map</Text>
+        </Pressable>
+      </View>
     ) : null}
     {!inventoryViewportEligible || markersSuppressed ? (
       <View
@@ -628,6 +667,52 @@ const styles = StyleSheet.create({
   inventoryRetryText: {
     color: palette.accentDeep,
     fontSize: 10,
+    fontWeight: '900',
+  },
+  mapUnavailable: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(255, 253, 248, 0.98)',
+    borderColor: palette.line,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    elevation: 6,
+    flexDirection: 'row',
+    gap: 11,
+    left: 18,
+    padding: 14,
+    position: 'absolute',
+    right: 18,
+    shadowColor: palette.ink,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    top: 92,
+  },
+  mapUnavailableCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  mapUnavailableTitle: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  mapUnavailableDetail: {
+    color: palette.muted,
+    fontSize: 9,
+    lineHeight: 14,
+  },
+  mapUnavailableRetry: {
+    backgroundColor: palette.ink,
+    borderRadius: radii.pill,
+    justifyContent: 'center',
+    minHeight: 40,
+    paddingHorizontal: 13,
+  },
+  mapUnavailableRetryText: {
+    color: '#FFFFFF',
+    fontSize: 9,
     fontWeight: '900',
   },
   pin: {

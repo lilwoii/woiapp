@@ -296,19 +296,6 @@ export function shouldRequestAutomaticReroute(input: {
     navigationDistanceMeters(input.previousOrigin, input.currentOrigin) >= 100;
 }
 
-export function nearestRouteStep(route: RoutePlan, current: NavigationCoordinate): RouteStep | null {
-  let nearest: RouteStep | null = null;
-  let nearestDistance = Number.POSITIVE_INFINITY;
-  for (const step of route.steps) {
-    const distance = navigationDistanceMeters(current, step.maneuver);
-    if (distance < nearestDistance) {
-      nearest = step;
-      nearestDistance = distance;
-    }
-  }
-  return nearest;
-}
-
 function normalizedLongitudeDelta(from: number, to: number) {
   return ((((to - from + 180) % 360) + 360) % 360) - 180;
 }
@@ -563,17 +550,4 @@ export function advanceRouteProgress(
     segmentIndex: segmentIndexAtProgress(geometry, progressMeters),
     stepIndex,
   };
-}
-
-export function advanceRouteStepIndex(
-  route: RoutePlan,
-  current: NavigationCoordinate,
-  previousIndex: number,
-): number {
-  if (!route.steps.length) return 0;
-  return advanceRouteProgress(
-    route,
-    current,
-    createRouteLiveProgress(route, previousIndex),
-  ).stepIndex;
 }

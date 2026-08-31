@@ -1,7 +1,9 @@
 import {
   earliestMovingServiceBoundary,
+  expireMovingServiceStates,
   movingServiceFromPublicRow,
 } from '@/lib/mobile-service';
+import type { Place } from '@/types/marketplace';
 
 const businessId = '11111111-1111-4111-8111-111111111111';
 const locationId = '22222222-2222-4222-8222-222222222222';
@@ -93,5 +95,28 @@ describe('public mobile service projection', () => {
       placeIds: [businessId, secondBusinessId],
     });
     expect(earliestMovingServiceBoundary([{ id: businessId, mobility: undefined }])).toBeNull();
+  });
+
+  it('locally suppresses an elapsed destination after bounded refresh failure', () => {
+    const places = [{
+      id: businessId,
+      mobility: movingServiceFromPublicRow(
+        publicMovingRow,
+        businessId,
+        'America/Los_Angeles',
+        now,
+      ),
+    }] as unknown as Place[];
+
+    expect(expireMovingServiceStates(
+      places,
+      Date.parse('2026-08-30T19:59:59.000Z'),
+      new Set([businessId]),
+    )).toBe(places);
+    expect(expireMovingServiceStates(
+      places,
+      Date.parse('2026-08-30T20:00:00.000Z'),
+      new Set([businessId]),
+    )[0].mobility).toBeUndefined();
   });
 });
