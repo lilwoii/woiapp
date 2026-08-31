@@ -126,7 +126,11 @@ Deno.test("follow writes serialize and access refresh retries around optimistic 
 });
 
 Deno.test("listing details remount their local cache for every account and route scope", () => {
-  assert(placeScreen.includes("key={`${scopeKey}:place:${id ?? ''}`}"));
+  assert(
+    placeScreen.includes(
+      "key={`${scopeKey}:place:${id ?? ''}:${locationId ?? ''}:${locationParamInvalid}`}",
+    ),
+  );
   assertMatch(placeScreen, /mounted\.current = false/);
   assertMatch(
     placeScreen,
@@ -158,11 +162,11 @@ Deno.test("discovery and live navigation remount precise location by account sco
   assertMatch(discoverScreen, /key=\{`discover:\$\{scopeKey\}`\}/);
   assertMatch(
     discoverScreen,
-    /mounted\.current && locationRequestGeneration\.current === generation/,
+    /mounted\.current &&\s+focusedRef\.current &&\s+appForegroundRef\.current &&\s+locationRequestGeneration\.current === generation/,
   );
   assertMatch(
     navigationScreen,
-    /key=\{`\$\{scopeKey\}:navigation:\$\{placeId \?\? ''\}`\}/,
+    /key=\{`\$\{scopeKey\}:navigation:\$\{placeId \?\? ''\}:\$\{locationId \?\? ''\}:\$\{locationParamInvalid\}`\}/,
   );
   assertMatch(navigationScreen, /watcher\.current\?\.remove\(\)/);
   assertMatch(navigationScreen, /navigationOperationGeneration\.current \+= 1/);
