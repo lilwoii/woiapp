@@ -446,15 +446,16 @@ begin
     return private.prepaid_checkout_payload(prior.id);
   end if;
   perform private.consume_rate_limit(target_user_id, 'prepare_prepaid_pickup_checkout', 20, 3600);
-  select * into config from private.prepaid_pickup_runtime_config where singleton for update;
+  select * into config from private.prepaid_pickup_runtime_config where singleton for share;
   if not found or not config.enabled then raise exception using errcode = '55000', message = 'PREPAID_PICKUP_DISABLED'; end if;
+  perform private.lock_notification_business_eligibility(array[target_business_id]::uuid[]);
   perform 1 from public.businesses business where business.id = target_business_id
-    and business.kind in ('restaurant', 'food_truck') and business.verification = 'verified' for update;
+    and business.kind in ('restaurant', 'food_truck') and business.verification = 'verified' for share of business;
   if not found or not private.is_business_publicly_eligible(target_business_id) then
     raise exception using errcode = '55000', message = 'PREPAID_PICKUP_UNAVAILABLE';
   end if;
   select * into account from private.merchant_payment_accounts payment
-  where payment.business_id = target_business_id for update;
+  where payment.business_id = target_business_id for share;
   if not found or not account.accept_prepaid or not account.details_submitted
     or not account.charges_enabled or not account.payouts_enabled
   then raise exception using errcode = '55000', message = 'PREPAID_PICKUP_UNAVAILABLE'; end if;
@@ -577,7 +578,11 @@ create or replace function public.complete_prepaid_checkout_server(
   target_total_minor integer, target_tax_minor integer
 ) returns jsonb language plpgsql volatile security definer set search_path = '' as $$
 declare checkout_row private.pickup_checkout_drafts%rowtype; new_order_id uuid := gen_random_uuid();
-  ordering_config private.pickup_ordering_runtime_config%rowtype; inserted_event boolean;
+  ordering_config private.pickup_ordering_runtime_config%rowtype;
+  prepaid_config private.prepaid_pickup_runtime_config%rowtype;
+  payment_account private.merchant_payment_accounts%rowtype;
+  inserted_event boolean; business_ready boolean := false; user_ready boolean := false;
+  location_ready boolean := false; preference_ready boolean := false;
 begin
   perform private.require_payment_service_role();
   if target_event_type not in ('checkout.session.completed', 'checkout.session.async_payment_succeeded') then
@@ -591,8 +596,34 @@ begin
     or target_tax_minor not between 0 and 100000000
   then raise exception using errcode = '22023', message = 'INVALID_CHECKOUT_COMPLETION'; end if;
   select * into checkout_row from private.pickup_checkout_drafts target
-  where target.public_id = target_checkout_public_id for update;
+  where target.public_id = target_checkout_public_id;
   if not found or checkout_row.provider_checkout_id is distinct from target_provider_checkout_id
+    or checkout_row.currency <> target_currency
+    or target_total_minor <> checkout_row.item_subtotal_minor + target_tax_minor
+  then raise exception using errcode = '55000', message = 'CHECKOUT_COMPLETION_MISMATCH'; end if;
+  select * into prepaid_config from private.prepaid_pickup_runtime_config where singleton for share;
+  select * into ordering_config from private.pickup_ordering_runtime_config where singleton for share;
+  perform profile.user_id from public.profiles profile
+  where profile.user_id = checkout_row.customer_id and profile.status = 'active' for share of profile;
+  user_ready := found;
+  perform private.lock_notification_business_eligibility(array[checkout_row.business_id]::uuid[]);
+  perform business.id from public.businesses business
+  where business.id = checkout_row.business_id and business.kind in ('restaurant', 'food_truck')
+    and business.verification = 'verified' for share of business;
+  business_ready := found;
+  select * into payment_account from private.merchant_payment_accounts account
+  where account.business_id = checkout_row.business_id for share;
+  perform preference.business_id from public.business_pickup_ordering_preferences preference
+  where preference.business_id = checkout_row.business_id and preference.opted_in for share of preference;
+  preference_ready := found;
+  perform location.id from public.business_locations location
+  where location.id = checkout_row.location_id and location.business_id = checkout_row.business_id
+    and location.publication_state = 'published' and location.public_address
+    and not location.is_approximate and location.address_line is not null for share of location;
+  location_ready := found;
+  select * into checkout_row from private.pickup_checkout_drafts target
+  where target.public_id = target_checkout_public_id for update;
+  if checkout_row.provider_checkout_id is distinct from target_provider_checkout_id
     or checkout_row.currency <> target_currency
     or target_total_minor <> checkout_row.item_subtotal_minor + target_tax_minor
   then raise exception using errcode = '55000', message = 'CHECKOUT_COMPLETION_MISMATCH'; end if;
@@ -600,17 +631,13 @@ begin
   if checkout_row.state not in ('open', 'prepared') then raise exception using errcode = '55000', message = 'CHECKOUT_NOT_COMPLETABLE'; end if;
   update private.pickup_checkout_drafts set provider_payment_intent_id = target_provider_payment_intent_id,
     updated_at = now() where id = checkout_row.id;
-  if checkout_row.customer_id is null or not private.is_active_user(checkout_row.customer_id)
+  if not user_ready or prepaid_config.enabled is not true or ordering_config.enabled is not true
+    or not business_ready or not private.is_business_publicly_eligible(checkout_row.business_id)
+    or payment_account.accept_prepaid is not true or payment_account.details_submitted is not true
+    or payment_account.charges_enabled is not true or payment_account.payouts_enabled is not true
+    or not preference_ready or not location_ready
     or checkout_row.requested_pickup_at <= now() + interval '5 minutes'
   then
-    insert into private.pickup_payment_refunds (
-      checkout_id, provider_payment_intent_id, amount_minor, currency
-    ) values (checkout_row.id, target_provider_payment_intent_id, target_total_minor, target_currency);
-    update private.pickup_checkout_drafts set state = 'refund_pending', updated_at = now() where id = checkout_row.id;
-    return jsonb_build_object('status', 'refund_pending');
-  end if;
-  select * into ordering_config from private.pickup_ordering_runtime_config where singleton;
-  if not found or not ordering_config.enabled then
     insert into private.pickup_payment_refunds (
       checkout_id, provider_payment_intent_id, amount_minor, currency
     ) values (checkout_row.id, target_provider_payment_intent_id, target_total_minor, target_currency);
