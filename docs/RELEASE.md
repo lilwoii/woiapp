@@ -449,7 +449,7 @@ leaves alert types, consent, runtime gates, and leased delivery state untouched.
 The settings UI distinguishes account preferences from this-device delivery;
 none of these controls activates a push provider.
 
-Migration `20261022000000_web_push_delivery.sql` extends the private device and
+Migration `20261023000000_web_push_delivery.sql` extends the private device and
 delivery contracts to standards-based Web Push. Browser subscriptions receive
 the same keyed-HMAC deduplication, AES-GCM storage, Auth-session binding,
 cross-account revocation, consent revalidation, and queued-delivery cancellation

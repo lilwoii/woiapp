@@ -317,7 +317,7 @@ Deno.test("dispatch storage, RPCs, functions, and runtime switches stay private 
     "migrations/20260928000000_notification_ambiguity_finalization.sql",
   );
   const webPushMigration = await text(
-    "migrations/20261022000000_web_push_delivery.sql",
+    "migrations/20261023000000_web_push_delivery.sql",
   );
   const dispatch = await text("functions/notification-dispatch/index.ts");
   const receipt = await text("functions/notification-receipt/index.ts");

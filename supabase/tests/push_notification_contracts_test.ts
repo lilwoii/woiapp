@@ -173,7 +173,7 @@ Deno.test("notification storage is private, cascading, deduplicated, and disable
   const followLifecycle = await text(
     "migrations/20260920000000_notification_follow_lifecycle.sql",
   );
-  const webPush = await text("migrations/20261022000000_web_push_delivery.sql");
+  const webPush = await text("migrations/20261023000000_web_push_delivery.sql");
   for (
     const table of [
       "notification_consents",

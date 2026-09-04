@@ -252,17 +252,18 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   keeps purge behind a separate default-off service gate. Counsel must still
   approve retention duration, hold release, purge, access, appeal, and deletion
   precedence before document evidence or claims can be enabled.
-- Push now has a private encrypted-device, explicit-consent, outbox, delivery-
-  lease, preference-RPC, revocation, and fail-closed Expo dispatch/receipt
-  foundation. Its Expo provider and receipt lifecycle is implemented and
-  contract-tested, and the production-maintenance client now has an independently
+- Push now has private encrypted native-token and browser-subscription storage,
+  explicit consent, an event-reference-only outbox, delivery leases,
+  preference RPCs, revocation, and fail-closed Expo and Web Push adapters. Expo
+  receipt polling and browser invalid-subscription retirement are implemented
+  and contract-tested, and the production-maintenance client has an independently
   gated, bounded dispatch/receipt scheduler path with strict response validation
   and heartbeat failure semantics. It has no accepted production credentials,
-  scheduler activation/alert evidence, signed-device evidence, or web-push path;
-  registration, enqueueing, delivery, provider, both workers, the scheduler
+  scheduler activation/alert evidence, or signed-device/browser evidence;
+  registration, enqueueing, delivery, both providers, both workers, the scheduler
   gate, and the client flag remain off. Expo/APNs/FCM credentials and DPA, VAPID,
-  key-rotation and receipt drills, production scheduler/alerts, signed-device
-  acceptance, and legal/store review remain external blockers.
+  key-rotation and receipt drills, production scheduler/alerts, signed-device and
+  browser acceptance, and legal/store review remain external blockers.
 - Launch requires a legal entity, counsel-reviewed terms/privacy and
   marketplace/food-liability decisions, jurisdiction-by-jurisdiction home
   kitchen approval, licensed data/provider agreements, insurance/tax review,
