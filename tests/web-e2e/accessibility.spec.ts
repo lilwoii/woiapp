@@ -105,7 +105,7 @@ test('back navigation restores focus to the control that opened the route', asyn
 
 test('unconfigured discovery shell is explicit and keeps keyboard traversal bounded', async ({ page }) => {
   await page.goto('/', { waitUntil: 'networkidle' });
-  await expect(page.getByText(/live spottr services are not configured/i).first()).toBeVisible();
+  await expect(page.getByText(/private preview is not connected to the verified listing database/i).first()).toBeVisible();
   const sequentialFocusTargetCount = await page
     .locator('a[href], button, input, select, textarea, [tabindex]')
     .evaluateAll((elements) => elements.filter((element) => {
