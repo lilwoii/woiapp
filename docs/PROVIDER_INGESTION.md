@@ -310,6 +310,26 @@ Production rollout also requires:
 - key rotation and provider offboarding drills;
 - a kill switch that leaves the public directory on last-known-good data.
 
+The checked-in operator client signs and submits an already-normalized batch
+without putting the provider secret on the command line or in request logs. It
+restricts the destination to the exact Supabase `provider-ingest` endpoint,
+preserves the original bytes and idempotency key across bounded transient
+retries, rejects oversized or malformed receipts, and supports an offline
+validation pass:
+
+```powershell
+$env:SPOTTR_PROVIDER_INGEST_URL='https://PROJECT.supabase.co/functions/v1/provider-ingest'
+$env:SPOTTR_PROVIDER_INGEST_KEY_ID='primary-2026'
+$env:SPOTTR_PROVIDER_INGEST_SECRET='<unpadded-base64url-secret>'
+npm run provider:ingest -- --batch .private-data/provider/batch-000001.json --dry-run
+npm run provider:ingest -- --batch .private-data/provider/batch-000001.json
+```
+
+The secret must be injected by the protected job or secret manager and cleared
+after the run. A successful receipt proves only that the named batch committed;
+snapshot completion, reconciliation, freshness, and public materialization
+still require their separate monitored evidence.
+
 Never log or send to telemetry the signature, signing registry, authorization
 headers, raw request body, provider URLs containing licensed identifiers,
 business contact details, or SQL error text. The implementation returns stable
