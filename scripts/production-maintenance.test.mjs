@@ -52,6 +52,10 @@ function completeOrderExpiry() {
   return response({ expired: 0, more_work: false, skipped: false });
 }
 
+function completePickupOrderExpiry() {
+  return response({ expired: 0, more_work: false });
+}
+
 function completePushDispatch(overrides = {}) {
   return response({
     status: 'complete',
@@ -113,6 +117,7 @@ test('maintenance drains bounded deletion work and runs every bounded cleanup', 
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
     completeProviderLifecycle(),
     completeSponsoredReservations(),
@@ -131,9 +136,10 @@ test('maintenance drains bounded deletion work and runs every bounded cleanup', 
   assert.equal(summary.deletionStatus, 'idle');
   assert.equal(summary.quoteExpiry, 'complete');
   assert.equal(summary.orderExpiry, 'complete');
+  assert.equal(summary.pickupOrderExpiry, 'complete');
   assert.equal(summary.pushDispatch, 'disabled');
   assert.equal(summary.pushReceipts, 'disabled');
-  assert.equal(calls.length, 11);
+  assert.equal(calls.length, 12);
   assert.match(calls[2].url, /\/functions\/v1\/media-cleanup$/);
   assert.match(calls[3].url, /\/rpc\/cleanup_marketplace_chat_ephemera$/);
   assert.match(calls[4].url, /\/rpc\/cleanup_unavailable_meeting_place_requests$/);
@@ -141,10 +147,12 @@ test('maintenance drains bounded deletion work and runs every bounded cleanup', 
   assert.deepEqual(JSON.parse(calls[5].init.body), { batch_limit: 200 });
   assert.match(calls[6].url, /\/rpc\/expire_shadow_orders$/);
   assert.deepEqual(JSON.parse(calls[6].init.body), { batch_limit: 100 });
-  assert.match(calls[7].url, /\/rpc\/cleanup_public_discovery_leases$/);
-  assert.match(calls[8].url, /\/rpc\/reconcile_licensed_provider_lifecycle$/);
-  assert.match(calls[9].url, /\/rpc\/reconcile_sponsored_reservations$/);
-  assert.equal(calls[10].url, VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL);
+  assert.match(calls[7].url, /\/rpc\/expire_pay_in_person_pickup_orders$/);
+  assert.deepEqual(JSON.parse(calls[7].init.body), { batch_size: 200 });
+  assert.match(calls[8].url, /\/rpc\/cleanup_public_discovery_leases$/);
+  assert.match(calls[9].url, /\/rpc\/reconcile_licensed_provider_lifecycle$/);
+  assert.match(calls[10].url, /\/rpc\/reconcile_sponsored_reservations$/);
+  assert.equal(calls[11].url, VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL);
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${VALID_ENV.SPOTTR_ACCOUNT_DELETE_WORKER_SECRET}`);
   assert.equal(calls[3].init.headers.apikey, VALID_ENV.SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY);
 });
@@ -158,6 +166,7 @@ test('maintenance runs bounded push dispatch and receipt polling before its hear
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
     completeProviderLifecycle(),
     completeSponsoredReservations(),
@@ -176,24 +185,24 @@ test('maintenance runs bounded push dispatch and receipt polling before its hear
 
   assert.equal(summary.pushDispatch, 'complete');
   assert.equal(summary.pushReceipts, 'complete');
-  assert.equal(calls.length, 12);
-  assert.match(calls[9].url, /\/functions\/v1\/notification-dispatch$/);
-  assert.deepEqual(JSON.parse(calls[9].init.body), {
+  assert.equal(calls.length, 13);
+  assert.match(calls[10].url, /\/functions\/v1\/notification-dispatch$/);
+  assert.deepEqual(JSON.parse(calls[10].init.body), {
     outboxBatchSize: 20,
     recipientBatchSize: 200,
     deliveryBatchSize: 50,
   });
   assert.equal(
-    calls[9].init.headers.Authorization,
+    calls[10].init.headers.Authorization,
     `Bearer ${PUSH_ENABLED_ENV.SPOTTR_PUSH_DISPATCH_SECRET}`,
   );
-  assert.match(calls[10].url, /\/functions\/v1\/notification-receipt$/);
-  assert.deepEqual(JSON.parse(calls[10].init.body), { batchSize: 100 });
+  assert.match(calls[11].url, /\/functions\/v1\/notification-receipt$/);
+  assert.deepEqual(JSON.parse(calls[11].init.body), { batchSize: 100 });
   assert.equal(
-    calls[10].init.headers.Authorization,
+    calls[11].init.headers.Authorization,
     `Bearer ${PUSH_ENABLED_ENV.SPOTTR_PUSH_RECEIPT_SECRET}`,
   );
-  assert.equal(calls[11].url, VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL);
+  assert.equal(calls[12].url, VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL);
 });
 
 test('maintenance withholds heartbeat when push worker counts are inconsistent', async () => {
@@ -205,6 +214,7 @@ test('maintenance withholds heartbeat when push worker counts are inconsistent',
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
     completeProviderLifecycle(),
     completeSponsoredReservations(),
@@ -222,7 +232,7 @@ test('maintenance withholds heartbeat when push worker counts are inconsistent',
     }),
     /inconsistent delivery counts/,
   );
-  assert.equal(calls.length, 10);
+  assert.equal(calls.length, 11);
   assert.equal(
     calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
     false,
@@ -238,6 +248,7 @@ test('maintenance withholds heartbeat when receipt worker counts are inconsisten
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
     completeProviderLifecycle(),
     completeSponsoredReservations(),
@@ -256,7 +267,7 @@ test('maintenance withholds heartbeat when receipt worker counts are inconsisten
     }),
     /inconsistent receipt counts/,
   );
-  assert.equal(calls.length, 11);
+  assert.equal(calls.length, 12);
   assert.equal(
     calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
     false,
@@ -271,6 +282,7 @@ test('maintenance rejects a dispatch ambiguity backlog hidden by top-level more_
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
     completeProviderLifecycle(),
     completeSponsoredReservations(),
@@ -294,6 +306,7 @@ test('maintenance rejects a dispatch outbox finalizer backlog hidden by top-leve
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
     completeProviderLifecycle(),
     completeSponsoredReservations(),
@@ -317,6 +330,7 @@ test('maintenance rejects a receipt finalizer backlog hidden by top-level more_w
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
     completeProviderLifecycle(),
     completeSponsoredReservations(),
@@ -343,6 +357,7 @@ for (const phase of ['dispatch', 'receipt']) {
       response({ requests_cancelled: 0 }),
       completeQuoteExpiry(),
       completeOrderExpiry(),
+      completePickupOrderExpiry(),
       response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
       completeProviderLifecycle(),
       completeSponsoredReservations(),
@@ -361,7 +376,7 @@ for (const phase of ['dispatch', 'receipt']) {
       }),
       new RegExp(`notification-${phase} did not report bounded completion`),
     );
-    assert.equal(calls.length, phase === 'dispatch' ? 10 : 11);
+    assert.equal(calls.length, phase === 'dispatch' ? 11 : 12);
     assert.equal(
       calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
       false,
@@ -381,6 +396,7 @@ test('maintenance accepts a retryable receipt-finalization wait', async () => {
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
     completeProviderLifecycle(),
     completeSponsoredReservations(),
@@ -406,6 +422,7 @@ for (const terminalStatus of ['more_work', 'deleted']) {
       response({ requests_cancelled: 0 }),
       completeQuoteExpiry(),
       completeOrderExpiry(),
+      completePickupOrderExpiry(),
       response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
       completeProviderLifecycle(),
       completeSponsoredReservations(),
@@ -423,7 +440,7 @@ for (const terminalStatus of ['more_work', 'deleted']) {
       /exhausted its bounded call cap/,
     );
 
-    assert.equal(calls.length, 18);
+    assert.equal(calls.length, 19);
     assert.equal(
       calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
       false,
@@ -440,6 +457,7 @@ test('maintenance withholds heartbeat while discovery cleanup has a backlog', as
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({
       leases_deleted: 0,
       buckets_deleted: 10_000,
@@ -458,7 +476,7 @@ test('maintenance withholds heartbeat while discovery cleanup has a backlog', as
     }),
     /did not report bounded completion/,
   );
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 8);
 });
 
 test('maintenance withholds heartbeat when a discovery operation was skipped', async () => {
@@ -470,6 +488,7 @@ test('maintenance withholds heartbeat when a discovery operation was skipped', a
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({
       leases_deleted: 0,
       buckets_deleted: 0,
@@ -488,7 +507,7 @@ test('maintenance withholds heartbeat when a discovery operation was skipped', a
     }),
     /did not report bounded completion/,
   );
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 8);
 });
 
 for (const receipt of [
@@ -556,6 +575,35 @@ for (const receipt of [
   });
 }
 
+test('maintenance withholds heartbeat while pay-in-person pickup expiry has a backlog', async () => {
+  const calls = [];
+  const queue = [
+    response({ status: 'idle' }),
+    response({ status: 'complete' }),
+    response({ requests_expired: 0 }),
+    response({ requests_cancelled: 0 }),
+    completeQuoteExpiry(),
+    completeOrderExpiry(),
+    response({ expired: 200, more_work: true }),
+  ];
+  await assert.rejects(
+    runProductionMaintenance({
+      config: readMaintenanceConfiguration(VALID_ENV),
+      fetchImpl: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return queue.shift();
+      },
+      log: () => {},
+    }),
+    /expire_pay_in_person_pickup_orders did not report bounded completion/,
+  );
+  assert.equal(calls.length, 7);
+  assert.equal(
+    calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
+    false,
+  );
+});
+
 test('maintenance withholds heartbeat while provider lifecycle work remains', async () => {
   const calls = [];
   const queue = [
@@ -565,6 +613,7 @@ test('maintenance withholds heartbeat while provider lifecycle work remains', as
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
     response({
       sources_marked_stale: 500,
@@ -584,7 +633,7 @@ test('maintenance withholds heartbeat while provider lifecycle work remains', as
     }),
     /reconcile_licensed_provider_lifecycle did not report bounded completion/,
   );
-  assert.equal(calls.length, 8);
+  assert.equal(calls.length, 9);
   assert.equal(
     calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
     false,
@@ -630,6 +679,7 @@ test('maintenance withholds heartbeat while sponsored reservations remain', asyn
     response({ requests_cancelled: 0 }),
     completeQuoteExpiry(),
     completeOrderExpiry(),
+    completePickupOrderExpiry(),
     response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
     completeProviderLifecycle(),
     response({ released: 500, more_work: true, skipped: false }),
@@ -645,7 +695,7 @@ test('maintenance withholds heartbeat while sponsored reservations remain', asyn
     }),
     /reconcile_sponsored_reservations did not report bounded completion/,
   );
-  assert.equal(calls.length, 9);
+  assert.equal(calls.length, 10);
   assert.equal(
     calls.some(({ url }) => url === VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL),
     false,

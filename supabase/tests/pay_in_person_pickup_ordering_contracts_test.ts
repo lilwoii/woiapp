@@ -32,7 +32,7 @@ Deno.test("pickup transitions are versioned, bounded, and merchant authorized", 
   assertMatch(migration, /array\['owner', 'manager', 'staff'\]::public\.member_role\[\]/);
   assertMatch(migration, /target\.version <> expected_version/);
   assertMatch(migration, /for update skip locked/);
-  assertMatch(migration, /grant execute on function private\.expire_pay_in_person_pickup_orders\(integer\) to service_role/);
+  assertMatch(migration, /grant execute on function public\.expire_pay_in_person_pickup_orders\(integer\) to service_role/);
 });
 
 Deno.test("only authenticated callers receive the public pickup RPCs", () => {

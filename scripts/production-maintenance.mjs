@@ -301,6 +301,20 @@ export async function runProductionMaintenance({
   ) {
     throw new Error('expire_shadow_orders did not report bounded completion.');
   }
+  const pickupOrderExpiry = await requestJson(
+    fetchImpl,
+    'expire_pay_in_person_pickup_orders',
+    `${restRoot}/expire_pay_in_person_pickup_orders`,
+    { method: 'POST', headers: databaseHeaders, body: JSON.stringify({ batch_size: 200 }) },
+  );
+  if (
+    !Number.isInteger(pickupOrderExpiry?.expired) ||
+    pickupOrderExpiry.expired < 0 ||
+    pickupOrderExpiry.expired > 200 ||
+    pickupOrderExpiry.more_work !== false
+  ) {
+    throw new Error('expire_pay_in_person_pickup_orders did not report bounded completion.');
+  }
   const discoveryCleanup = await requestJson(
     fetchImpl,
     'cleanup_public_discovery_leases',
@@ -402,6 +416,7 @@ export async function runProductionMaintenance({
     databaseCleanup: 'complete',
     quoteExpiry: 'complete',
     orderExpiry: 'complete',
+    pickupOrderExpiry: 'complete',
     providerLifecycle: 'complete',
     sponsoredReservations: 'complete',
     pushDispatch,

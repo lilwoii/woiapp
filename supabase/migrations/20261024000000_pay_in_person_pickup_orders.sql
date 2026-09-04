@@ -488,8 +488,8 @@ begin
 end;
 $$;
 
-create or replace function private.expire_pay_in_person_pickup_orders(batch_size integer default 200)
-returns integer
+create or replace function public.expire_pay_in_person_pickup_orders(batch_size integer default 200)
+returns jsonb
 language plpgsql
 volatile
 security definer
@@ -522,7 +522,14 @@ begin
     ) values (target.id, target.version + 1, 'pending_acceptance', 'expired', 'system');
     expired_count := expired_count + 1;
   end loop;
-  return expired_count;
+  return jsonb_build_object(
+    'expired', expired_count,
+    'more_work', exists (
+      select 1 from private.pickup_orders target_order
+      where target_order.state = 'pending_acceptance'
+        and target_order.acceptance_expires_at <= now()
+    )
+  );
 end;
 $$;
 
@@ -541,9 +548,9 @@ grant execute on function public.get_pay_in_person_pickup_menu(uuid),
   public.transition_pay_in_person_pickup_order(uuid, integer, text, text)
   to authenticated;
 
-revoke all on function private.expire_pay_in_person_pickup_orders(integer)
+revoke all on function public.expire_pay_in_person_pickup_orders(integer)
   from public, anon, authenticated, service_role;
-grant execute on function private.expire_pay_in_person_pickup_orders(integer) to service_role;
+grant execute on function public.expire_pay_in_person_pickup_orders(integer) to service_role;
 
 -- Surface the independent runtime state to merchant settings without ever
 -- treating a merchant opt-in as authority to enable the service.
