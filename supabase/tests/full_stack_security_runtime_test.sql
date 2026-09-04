@@ -782,7 +782,7 @@ declare
   completed jsonb;
   duplicate_result jsonb;
   checkout_public_id uuid;
-  order_id uuid;
+  runtime_order_id uuid;
   refund_claim jsonb;
   refund_public_id uuid;
   refund_lease_token uuid;
@@ -842,12 +842,12 @@ begin
     raise exception 'Duplicate Stripe event was not idempotent';
   end if;
 
-  select checkout.order_id into order_id
+  select checkout.order_id into runtime_order_id
   from private.pickup_checkout_drafts checkout
   where checkout.public_id = checkout_public_id;
-  if order_id is null or not exists (
+  if runtime_order_id is null or not exists (
     select 1 from private.pickup_orders pickup_order
-    where pickup_order.id = order_id
+    where pickup_order.id = runtime_order_id
       and pickup_order.payment_method = 'card_or_wallet'
       and pickup_order.payment_state = 'captured'
       and pickup_order.item_subtotal_minor = 1200
@@ -858,10 +858,11 @@ begin
     raise exception 'Captured prepaid order totals or payment state are invalid';
   end if;
 
-  update private.pickup_orders set state = 'rejected', updated_at = now() where id = order_id;
+  update private.pickup_orders set state = 'rejected', updated_at = now()
+  where id = runtime_order_id;
   if not exists (
     select 1 from private.pickup_payment_refunds refund
-    where refund.order_id = order_id and refund.state = 'pending'
+    where refund.order_id = runtime_order_id and refund.state = 'pending'
       and refund.amount_minor = 1320 and refund.currency = 'USD'
   ) then
     raise exception 'Terminal prepaid order did not enqueue its refund';
@@ -882,7 +883,7 @@ begin
   );
   if not exists (
     select 1 from private.pickup_orders pickup_order
-    where pickup_order.id = order_id and pickup_order.payment_state = 'refunded'
+    where pickup_order.id = runtime_order_id and pickup_order.payment_state = 'refunded'
   ) then
     raise exception 'Successful provider refund did not finalize the pickup order';
   end if;

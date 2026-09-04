@@ -8,9 +8,13 @@ commitment or production activation.
 Use a modular stack so the visual map, global tiles, food inventory, and routes
 can scale independently:
 
-- MapLibre renders the web map. Move native rendering from the current
-  Apple/Google `react-native-maps` bridge to MapLibre React Native after signed
-  device acceptance, so one Spottr style can cover web, iOS, and Android.
+- MapLibre renders the branded web map. Native launch builds intentionally use
+  the Apple/Google `react-native-maps` bridge so they inherit platform-grade
+  buildings, road detail, traffic, accessibility, and camera behavior while
+  Spottr supplies the category markers, clusters, live-stop state, route
+  overlays, and controls. A later MapLibre Native migration is an optional
+  branding/cost optimization, not a launch dependency, and must earn its own
+  signed-device acceptance before replacing the native renderers.
 - Stadia Maps Starter is the risk-adjusted MapLibre launch choice, not a claim
   that it has the lowest possible bill. Its current commercial
   plan starts at $20/month, includes one million credits, supports MapLibre and
@@ -111,6 +115,6 @@ bulk extraction and derivative mapping databases.
 - [Google Maps Platform Terms](https://cloud.google.com/maps-platform/terms)
 - [Apple Xcode and SDK Agreement](https://www.apple.com/legal/sla/docs/xcode.pdf)
 
-No native renderer migration, provider key, route gate, or offline download is
-activated until its signed-device, legal, attribution, privacy, load, cost, and
-rollback evidence is attached to the release record.
+No native renderer replacement, provider key, route gate, or offline download
+is activated until its signed-device, legal, attribution, privacy, load, cost,
+and rollback evidence is attached to the release record.
