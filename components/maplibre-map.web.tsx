@@ -46,7 +46,7 @@ export type Props = {
 };
 
 const fallbackCenter: [number, number] = [-118.2437, 34.0522];
-const fallbackZoom = 13.25;
+const fallbackZoom = 15.25;
 const openFreeMapStyleUrl = 'https://tiles.openfreemap.org/styles/liberty';
 const mapAttribution = process.env.EXPO_PUBLIC_MAP_ATTRIBUTION?.trim() ||
   'OpenFreeMap · © OpenMapTiles · OpenStreetMap';
@@ -384,7 +384,7 @@ export default function MapLibreMapView({
         pitchWithRotate: true,
         scrollZoom: true,
         style: createMapStyle(),
-        zoom: restoredCamera?.zoom ?? (first ? 13 : fallbackZoom),
+        zoom: restoredCamera?.zoom ?? (first ? 15 : fallbackZoom),
       });
       mapRef.current = map;
       failureTimer = setTimeout(() => setFailed(true), 12_000);
@@ -629,7 +629,7 @@ export default function MapLibreMapView({
         map.easeTo({
           center: [fitPlaces[0].longitude, fitPlaces[0].latitude],
           duration: motionDuration(reduceMotion, 450),
-          zoom: Math.max(map.getZoom(), 13),
+          zoom: Math.max(map.getZoom(), 15),
         });
       } else if (fitPlaces.length > 1) {
         const fitBounds = boundsForMapCoordinates(fitPlaces, {
@@ -648,7 +648,7 @@ export default function MapLibreMapView({
           map.easeTo({
             center: [fitPlaces[0].longitude, fitPlaces[0].latitude],
             duration: motionDuration(reduceMotion, 450),
-            zoom: Math.max(map.getZoom(), 13),
+            zoom: Math.max(map.getZoom(), 15),
           });
         }
       }
@@ -672,7 +672,7 @@ export default function MapLibreMapView({
     map.easeTo({
       center: [selected.longitude, selected.latitude],
       duration: motionDuration(reduceMotion, 380),
-      zoom: Math.max(map.getZoom(), 13),
+      zoom: Math.max(map.getZoom(), 15),
     });
   }, [places, ready, reduceMotion, selectedId, selectedLocationId]);
 
@@ -727,7 +727,7 @@ export default function MapLibreMapView({
       map.easeTo({
         center: [userCoordinates.longitude, userCoordinates.latitude],
         duration: motionDuration(reduceMotion, 380),
-        zoom: Math.max(map.getZoom(), 13),
+        zoom: Math.max(map.getZoom(), 15),
       });
     }
   }, [navigationMode, ready, reduceMotion, userCoordinates]);

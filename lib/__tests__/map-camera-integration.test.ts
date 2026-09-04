@@ -18,7 +18,7 @@ const orderScreen = readFileSync(resolve(__dirname, '../../app/order/[id].tsx'),
 describe('global map camera integration', () => {
   it('re-centers an untouched native map after delayed non-LA location resolution', () => {
     expect(nativeMap).toMatch(/hasCenteredOnUser\.current \|\| mapWasInteracted\.current/);
-    expect(nativeMap).toMatch(/center: userCoordinates, zoom: 13/);
+    expect(nativeMap).toMatch(/center: userCoordinates, zoom: 15/);
     expect(discover).toMatch(/setMapFocusKey\(`near:/);
   });
 
@@ -42,11 +42,11 @@ describe('global map camera integration', () => {
     expect(discover).toMatch(/clientHydrated && focused && pathname === '\/' \? \([\s\S]*<View style=\{\[styles\.workspace, wide && styles\.workspaceWide\]\}>/);
     expect(discover).not.toMatch(/ranked\.length \|\| visibleMapInventory\.length \|\| mapMarkersSuppressed \? \(/);
     expect(discover).toMatch(/Verified listings are not connected/);
-    expect(webMap).toMatch(/const fallbackZoom = 13\.25/);
-    expect(webMap).toMatch(/zoom: restoredCamera\?\.zoom \?\? \(first \? 13 : fallbackZoom\)/);
+    expect(webMap).toMatch(/const fallbackZoom = 15\.25/);
+    expect(webMap).toMatch(/zoom: restoredCamera\?\.zoom \?\? \(first \? 15 : fallbackZoom\)/);
     expect(webMap).toMatch(/cameraFitPlaces\(places, Boolean\(searchAreaKey\)\)/);
     expect(webMap).toMatch(/isLocalExtent\(fitBounds\)/);
-    expect(nativeMap).toMatch(/latitudeDelta: 0\.08,[\s\S]*longitudeDelta: 0\.08/);
+    expect(nativeMap).toMatch(/latitudeDelta: 0\.025,[\s\S]*longitudeDelta: 0\.025/);
   });
 
   it('supports direct wheel zoom and a real vector 3D fallback on web', () => {

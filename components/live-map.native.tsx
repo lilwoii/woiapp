@@ -42,8 +42,8 @@ type Props = {
 const fallbackRegion = {
   latitude: 34.0522,
   longitude: -118.2437,
-  latitudeDelta: 0.08,
-  longitudeDelta: 0.08,
+  latitudeDelta: 0.025,
+  longitudeDelta: 0.025,
 };
 
 function VenueMarker({
@@ -273,7 +273,7 @@ export function LiveMap({
   useEffect(() => {
     if (selectedLatitude === undefined || selectedLongitude === undefined) return;
     mapRef.current?.animateCamera(
-      { center: { latitude: selectedLatitude, longitude: selectedLongitude }, zoom: 14 },
+      { center: { latitude: selectedLatitude, longitude: selectedLongitude }, zoom: 15 },
       { duration: motionDuration(reduceMotion, 380) }
     );
   }, [reduceMotion, selectedLatitude, selectedLongitude]);
@@ -284,7 +284,7 @@ export function LiveMap({
     userMovedMap.current = false;
     if (places.length === 1) {
       mapRef.current?.animateCamera(
-        { center: { latitude: places[0].latitude, longitude: places[0].longitude }, zoom: 13 },
+        { center: { latitude: places[0].latitude, longitude: places[0].longitude }, zoom: 15 },
         { duration: motionDuration(reduceMotion, 420) },
       );
       return;
@@ -299,7 +299,7 @@ export function LiveMap({
     if (!userCoordinates || hasCenteredOnUser.current || mapWasInteracted.current) return;
     hasCenteredOnUser.current = true;
     mapRef.current?.animateCamera(
-      { center: userCoordinates, zoom: 13 },
+      { center: userCoordinates, zoom: 15 },
       { duration: motionDuration(reduceMotion, 380) },
     );
   }, [reduceMotion, userCoordinates]);
