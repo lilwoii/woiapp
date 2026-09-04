@@ -138,7 +138,10 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   cuisine, and loaded-menu matches ahead of incidental text.
 - Account notification settings now preserve mixed per-business choices and
   offer validated IANA quiet-hours presets without changing consent or delivery
-  state. Push remains visibly and technically off. Verified restaurants and
+  state. Native and standards-based browser registration/dispatch paths are
+  implemented with generic lock-screen content and independent fail-closed
+  gates; push remains visibly and technically off pending credentials and live
+  acceptance. Verified restaurants and
   food trucks may record a future pay-in-person pickup preference, but public
   ordering, card charging, and Apple Pay remain hard disabled. The licensed 3D
   basemap/routing decision and legal data boundary are documented in

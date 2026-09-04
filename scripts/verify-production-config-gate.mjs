@@ -117,7 +117,7 @@ const rejectedConfigurations = [
   ['non-public support URL', { EXPO_PUBLIC_SUPPORT_URL: 'https://127.0.0.1/support' }],
   ['unverified home kitchens', { EXPO_PUBLIC_HOME_KITCHENS_ENABLED: 'true' }],
   ['unverified media uploads', { EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED: 'TRUE' }],
-  ['unimplemented push delivery', { EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED: 'true' }],
+  ['unaccepted push delivery', { EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED: 'true' }],
   ['unverified pickup ordering', { EXPO_PUBLIC_PICKUP_ORDERING_ENABLED: 'true' }],
   ['unverified in-app navigation', { EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED: 'true' }],
   ['unverified business claims', { EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED: 'true' }],

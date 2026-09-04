@@ -12,6 +12,25 @@ export type RegisterNotificationDevice = {
   consentPolicyVersion: string;
 };
 
+export type WebPushSubscriptionPayload = {
+  endpoint: string;
+  keys: {
+    auth: string;
+    p256dh: string;
+  };
+};
+
+export type RegisterWebNotificationDevice = {
+  action: "register_web";
+  installationId: string;
+  subscription: WebPushSubscriptionPayload;
+  applicationServerKey: string;
+  timezone: string;
+  appVersion: string;
+  permissionState: "granted";
+  consentPolicyVersion: string;
+};
+
 export type RevokeNotificationDevice = {
   action: "revoke";
   installationId: string;
@@ -25,12 +44,15 @@ export type RevokeAllNotificationDevices = {
 
 export type NotificationDeviceRequest =
   | RegisterNotificationDevice
+  | RegisterWebNotificationDevice
   | RevokeNotificationDevice
   | RevokeAllNotificationDevices;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EXPO_TOKEN = /^(?:Expo|Exponent)PushToken\[[A-Za-z0-9_-]{20,220}\]$/;
 const APP_VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,79}$/;
+const WEB_PUSH_PUBLIC_KEY = /^[A-Za-z0-9_-]{87}$/;
+const WEB_PUSH_AUTH_SECRET = /^[A-Za-z0-9_-]{22}$/;
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -54,9 +76,67 @@ function validTimezone(value: string): boolean {
   }
 }
 
+function parseWebPushSubscription(value: unknown): WebPushSubscriptionPayload {
+  const subscription = record(value);
+  const keys = record(subscription?.keys);
+  if (
+    !subscription || !keys ||
+    !exactKeys(subscription, ["endpoint", "keys"]) ||
+    !exactKeys(keys, ["auth", "p256dh"]) ||
+    typeof subscription.endpoint !== "string" || subscription.endpoint.length > 1024 ||
+    typeof keys.auth !== "string" || !WEB_PUSH_AUTH_SECRET.test(keys.auth) ||
+    typeof keys.p256dh !== "string" || !WEB_PUSH_PUBLIC_KEY.test(keys.p256dh)
+  ) throw new Error("INVALID_NOTIFICATION_DEVICE_REQUEST");
+  let endpoint: URL;
+  try {
+    endpoint = new URL(subscription.endpoint);
+  } catch {
+    throw new Error("INVALID_NOTIFICATION_DEVICE_REQUEST");
+  }
+  if (
+    endpoint.protocol !== "https:" || endpoint.username || endpoint.password ||
+    endpoint.hash || (endpoint.port && endpoint.port !== "443") || endpoint.pathname === "/"
+  ) throw new Error("INVALID_NOTIFICATION_DEVICE_REQUEST");
+  return {
+    endpoint: endpoint.href,
+    keys: { auth: keys.auth, p256dh: keys.p256dh },
+  };
+}
+
+export function serializeWebPushSubscription(subscription: WebPushSubscriptionPayload): string {
+  const parsed = parseWebPushSubscription(subscription);
+  return JSON.stringify({
+    endpoint: parsed.endpoint,
+    keys: { auth: parsed.keys.auth, p256dh: parsed.keys.p256dh },
+  });
+}
+
+export function validateWebPushEndpointOrigin(endpoint: string, rawAllowedOrigins: string): void {
+  const entries = rawAllowedOrigins.split(",").map((entry) => entry.trim()).filter(Boolean);
+  if (entries.length < 1 || entries.length > 12 || new Set(entries).size !== entries.length) {
+    throw new Error("INVALID_WEB_PUSH_ORIGINS");
+  }
+  const allowed = new Set(entries.map((entry) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(entry);
+    } catch {
+      throw new Error("INVALID_WEB_PUSH_ORIGINS");
+    }
+    if (
+      parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash ||
+      parsed.search || parsed.pathname !== "/" || (parsed.port && parsed.port !== "443")
+    ) throw new Error("INVALID_WEB_PUSH_ORIGINS");
+    return parsed.origin;
+  }));
+  if (!allowed.has(new URL(endpoint).origin)) throw new Error("WEB_PUSH_ENDPOINT_NOT_ALLOWED");
+}
+
 export function parseNotificationDeviceRequest(value: unknown): NotificationDeviceRequest {
   const body = record(value);
-  if (!body || !["register", "revoke", "revoke_all"].includes(String(body.action))) {
+  if (
+    !body || !["register", "register_web", "revoke", "revoke_all"].includes(String(body.action))
+  ) {
     throw new Error("INVALID_NOTIFICATION_DEVICE_REQUEST");
   }
   if (body.action === "revoke_all") {
@@ -82,6 +162,38 @@ export function parseNotificationDeviceRequest(value: unknown): NotificationDevi
     return {
       action: "revoke",
       installationId: body.installationId.toLowerCase(),
+      consentPolicyVersion: body.consentPolicyVersion,
+    };
+  }
+
+  if (body.action === "register_web") {
+    if (
+      !exactKeys(body, [
+        "action",
+        "installationId",
+        "subscription",
+        "applicationServerKey",
+        "timezone",
+        "appVersion",
+        "permissionState",
+        "consentPolicyVersion",
+      ]) ||
+      typeof body.installationId !== "string" || !UUID.test(body.installationId) ||
+      typeof body.applicationServerKey !== "string" ||
+      !WEB_PUSH_PUBLIC_KEY.test(body.applicationServerKey) ||
+      typeof body.timezone !== "string" || !validTimezone(body.timezone) ||
+      typeof body.appVersion !== "string" || !APP_VERSION.test(body.appVersion) ||
+      body.permissionState !== "granted" ||
+      body.consentPolicyVersion !== PUSH_CONSENT_POLICY_VERSION
+    ) throw new Error("INVALID_NOTIFICATION_DEVICE_REQUEST");
+    return {
+      action: "register_web",
+      installationId: body.installationId.toLowerCase(),
+      subscription: parseWebPushSubscription(body.subscription),
+      applicationServerKey: body.applicationServerKey,
+      timezone: body.timezone,
+      appVersion: body.appVersion,
+      permissionState: "granted",
       consentPolicyVersion: body.consentPolicyVersion,
     };
   }

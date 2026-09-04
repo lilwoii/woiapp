@@ -2,10 +2,12 @@ import { assert, assertEquals, assertMatch, assertRejects, assertThrows } from "
 import { HttpError } from "../functions/_shared/http.ts";
 import {
   buildGenericExpoMessage,
+  buildGenericNotificationPayload,
   decryptPushToken,
   EXPO_RECEIPTS_URL,
   EXPO_SEND_URL,
   fetchExpoReceipts,
+  parseDeliveryClaims,
   parseDispatchRequest,
   parseEncryptionKeyRing,
   parseNotificationFinalization,
@@ -14,6 +16,11 @@ import {
   sendExpoMessages,
   validateExpoAccessToken,
 } from "../functions/notification-dispatch/contract.ts";
+import {
+  classifyWebPushFailure,
+  parseWebPushSubscription,
+  validateWebPushProviderConfig,
+} from "../functions/notification-dispatch/web-push.ts";
 import { protectPushToken } from "../functions/notification-device/contract.ts";
 
 const root = new URL("../", import.meta.url);
@@ -114,6 +121,69 @@ Deno.test("lock-screen payload is generic and tap data is canonical", () => {
   assert(!serialized.includes("device_id"));
 });
 
+Deno.test("web push subscriptions, provider configuration, and failures are constrained", () => {
+  const endpoint = "https://updates.push.services.mozilla.com/wpush/v2/example-token";
+  const subscription = {
+    endpoint,
+    keys: { auth: "A".repeat(22), p256dh: "B".repeat(87) },
+  };
+  assertEquals(
+    parseWebPushSubscription(
+      JSON.stringify(subscription),
+      "https://fcm.googleapis.com,https://updates.push.services.mozilla.com",
+    ),
+    subscription,
+  );
+  assertThrows(
+    () =>
+      parseWebPushSubscription(
+        JSON.stringify({ ...subscription, endpoint: "https://attacker.example/push" }),
+        "https://updates.push.services.mozilla.com",
+      ),
+    HttpError,
+    "INVALID_WEB_PUSH_SUBSCRIPTION",
+  );
+  assertEquals(
+    validateWebPushProviderConfig({
+      subject: "https://spottr.example/",
+      publicKey: "B".repeat(87),
+      privateKey: "C".repeat(43),
+      allowedOrigins: "https://updates.push.services.mozilla.com",
+    }).subject,
+    "https://spottr.example/",
+  );
+  assertEquals(
+    classifyWebPushFailure({ statusCode: 410 }),
+    { state: "invalid", code: "WebPushSubscriptionExpired" },
+  );
+  assertEquals(
+    classifyWebPushFailure({ statusCode: 429 }),
+    { state: "rejected", code: "WebPushThrottled", retry: true },
+  );
+  const payload = buildGenericNotificationPayload({
+    business_id: businessId,
+    source_event_id: 42,
+    notification_kind: "location_change",
+  });
+  assertEquals(payload.body, "A place you follow updated its location.");
+  assertEquals(
+    parseDeliveryClaims([{
+      delivery_id: "10000000-0000-4000-8000-000000000001",
+      device_id: "20000000-0000-4000-8000-000000000002",
+      user_id: "30000000-0000-4000-8000-000000000003",
+      business_id: businessId,
+      source_event_id: 42,
+      notification_kind: "owner_update",
+      provider: "web_push",
+      token_ciphertext: "A".repeat(24),
+      token_nonce: "A".repeat(16),
+      encryption_key_version: 1,
+      lease_token: "40000000-0000-4000-8000-000000000004",
+    }], 1)[0].provider,
+    "web_push",
+  );
+});
+
 Deno.test("Expo dispatch uses the fixed endpoint, enhanced auth, and ordered tickets", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fakeFetch = ((input: string | URL | Request, init?: RequestInit) => {
@@ -181,7 +251,8 @@ Deno.test("provider 5xx responses remain unknown while explicit throttles retry"
     notification_kind: "owner_update",
   });
   for (const status of [500, 502, 503]) {
-    const providerFailure = (() => Promise.resolve(new Response("upstream failure", { status }))) as typeof fetch;
+    const providerFailure = (() =>
+      Promise.resolve(new Response("upstream failure", { status }))) as typeof fetch;
     await assertRejects(
       () => sendExpoMessages([message], accessToken, providerFailure),
       PushProviderError,
@@ -194,7 +265,8 @@ Deno.test("provider 5xx responses remain unknown while explicit throttles retry"
       assertEquals(error.resolution, "unknown");
     }
   }
-  const throttled = (() => Promise.resolve(new Response("slow down", { status: 429 }))) as typeof fetch;
+  const throttled =
+    (() => Promise.resolve(new Response("slow down", { status: 429 }))) as typeof fetch;
   try {
     await sendExpoMessages([message], accessToken, throttled);
   } catch (error) {
@@ -244,12 +316,17 @@ Deno.test("dispatch storage, RPCs, functions, and runtime switches stay private 
   const ambiguityMigration = await text(
     "migrations/20260928000000_notification_ambiguity_finalization.sql",
   );
+  const webPushMigration = await text(
+    "migrations/20261022000000_web_push_delivery.sql",
+  );
   const dispatch = await text("functions/notification-dispatch/index.ts");
   const receipt = await text("functions/notification-receipt/index.ts");
   const fullStackRuntime = await text("tests/full_stack_security_runtime_test.sql");
   const config = await text("config.toml");
   const env = await text("functions/.env.example");
   assert(migration.includes("private.notification_receipt_checks"));
+  assert(webPushMigration.includes("private.record_web_push_delivery_result"));
+  assert(webPushMigration.includes("WebPushSubscriptionExpired"));
   assert(migration.includes("for update of receipt skip locked"));
   assert(migration.includes("now() + interval '15 minutes'"));
   assert(migration.includes("target_provider_code = 'DeviceNotRegistered'"));
@@ -257,19 +334,37 @@ Deno.test("dispatch storage, RPCs, functions, and runtime switches stay private 
   assert(migration.includes("last_provider_code = 'worker_handoff_ambiguous'"));
   assertMatch(ambiguityMigration, /updated_at < now\(\) - interval '2 hours'/);
   assertMatch(ambiguityMigration, /notification_outbox_terminal_finalize_idx/);
-  assertMatch(ambiguityMigration, /queue\.state in \('pending', 'retry'\)[\s\S]+queue\.attempts >= 20/);
-  assertMatch(ambiguityMigration, /queue\.state = 'leased'[\s\S]+queue\.attempts >= 20[\s\S]+queue\.lease_expires_at <= now\(\)/);
+  assertMatch(
+    ambiguityMigration,
+    /queue\.state in \('pending', 'retry'\)[\s\S]+queue\.attempts >= 20/,
+  );
+  assertMatch(
+    ambiguityMigration,
+    /queue\.state = 'leased'[\s\S]+queue\.attempts >= 20[\s\S]+queue\.lease_expires_at <= now\(\)/,
+  );
   assertMatch(ambiguityMigration, /state = 'dead'[\s\S]+outbox_max_attempts/);
-  assertMatch(ambiguityMigration, /finalize_notification_outbox\([\s\S]+for update of queue skip locked/);
+  assertMatch(
+    ambiguityMigration,
+    /finalize_notification_outbox\([\s\S]+for update of queue skip locked/,
+  );
   assertMatch(ambiguityMigration, /state = 'failed'[\s\S]+provider_ambiguity_expired/);
   assertMatch(ambiguityMigration, /delivery\.state = 'retry'[\s\S]+delivery\.attempts >= 20/);
-  assertMatch(ambiguityMigration, /delivery\.state = 'leased'[\s\S]+delivery\.attempts >= 20[\s\S]+delivery\.lease_expires_at <= now\(\)/);
+  assertMatch(
+    ambiguityMigration,
+    /delivery\.state = 'leased'[\s\S]+delivery\.attempts >= 20[\s\S]+delivery\.lease_expires_at <= now\(\)/,
+  );
   assertMatch(ambiguityMigration, /for update of delivery skip locked/);
   assertMatch(ambiguityMigration, /for update of receipt skip locked/);
   assertMatch(ambiguityMigration, /claim_notification_receipts_core/);
-  assertMatch(ambiguityMigration, /create or replace function private\.claim_notification_receipts\(\s*[\s\S]+perform private\.finalize_notification_receipt_expiry/);
+  assertMatch(
+    ambiguityMigration,
+    /create or replace function private\.claim_notification_receipts\(\s*[\s\S]+perform private\.finalize_notification_receipt_expiry/,
+  );
   assert(!ambiguityMigration.includes("claim_notification_receipts_legacy"));
-  assertMatch(ambiguityMigration, /receipt\.state <> 'leased' or receipt\.lease_expires_at <= now\(\)/);
+  assertMatch(
+    ambiguityMigration,
+    /receipt\.state <> 'leased' or receipt\.lease_expires_at <= now\(\)/,
+  );
   assertMatch(ambiguityMigration, /receipt_max_attempts/);
   assertMatch(ambiguityMigration, /receipt_expired/);
   assertMatch(
@@ -343,11 +438,11 @@ Deno.test("dispatch storage, RPCs, functions, and runtime switches stay private 
   assert(!dispatch.includes("recipientBatchSaturated"));
   assert(
     dispatch.indexOf("finalize_notification_outbox_server") <
-      dispatch.indexOf("const accessToken = validateExpoAccessToken"),
+      dispatch.indexOf("const accessToken = expoEnabled"),
   );
   assert(
     dispatch.indexOf("finalize_unknown_notification_deliveries_server") <
-      dispatch.indexOf("const accessToken = validateExpoAccessToken"),
+      dispatch.indexOf("const accessToken = expoEnabled"),
   );
   assert(
     receipt.indexOf("finalize_notification_receipt_expiry_server") <
@@ -386,6 +481,9 @@ Deno.test("dispatch storage, RPCs, functions, and runtime switches stay private 
   assertMatch(env, /SPOTTR_PUSH_DISPATCH_WORKER_ENABLED=false/);
   assertMatch(env, /SPOTTR_PUSH_RECEIPT_WORKER_ENABLED=false/);
   assertMatch(env, /SPOTTR_PUSH_EXPO_PROVIDER_ENABLED=false/);
+  assertMatch(env, /SPOTTR_WEB_PUSH_PROVIDER_ENABLED=false/);
+  assert(dispatch.includes('requiredSetting("SPOTTR_WEB_PUSH_VAPID_PRIVATE_KEY")'));
+  assert(dispatch.includes("sendWebPushNotification"));
   for (
     const signature of [
       "public.finalize_notification_outbox_server(integer)",

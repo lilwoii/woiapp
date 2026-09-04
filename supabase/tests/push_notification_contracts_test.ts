@@ -1,14 +1,11 @@
-import {
-  assert,
-  assertEquals,
-  assertMatch,
-  assertRejects,
-} from "jsr:@std/assert@1";
+import { assert, assertEquals, assertMatch, assertRejects } from "jsr:@std/assert@1";
 
 import {
   parseNotificationDeviceRequest,
   protectPushToken,
   PUSH_CONSENT_POLICY_VERSION,
+  serializeWebPushSubscription,
+  validateWebPushEndpointOrigin,
 } from "../functions/notification-device/contract.ts";
 
 const root = new URL("../", import.meta.url);
@@ -20,6 +17,11 @@ async function text(relativePath: string): Promise<string> {
 const installationId = "8a7ba30d-91c2-4ec8-a492-55e4a0cdb004";
 const projectId = "162152fc-7f83-4f89-83c2-1bd081f2be03";
 const token = "ExpoPushToken[abcdefghijklmnopqrstuvwx]";
+const webPublicKey = "B".repeat(87);
+const webSubscription = {
+  endpoint: "https://updates.push.services.mozilla.com/wpush/v2/example-token",
+  keys: { auth: "A".repeat(22), p256dh: webPublicKey },
+};
 
 Deno.test("notification device input is exact, provider-bound, and timezone validated", () => {
   const parsed = parseNotificationDeviceRequest({
@@ -34,6 +36,22 @@ Deno.test("notification device input is exact, provider-bound, and timezone vali
     consentPolicyVersion: PUSH_CONSENT_POLICY_VERSION,
   });
   assertEquals(parsed.action, "register");
+  const parsedWeb = parseNotificationDeviceRequest({
+    action: "register_web",
+    installationId,
+    subscription: webSubscription,
+    applicationServerKey: webPublicKey,
+    timezone: "America/Los_Angeles",
+    appVersion: "0.2.0",
+    permissionState: "granted",
+    consentPolicyVersion: PUSH_CONSENT_POLICY_VERSION,
+  });
+  assertEquals(parsedWeb.action, "register_web");
+  assertEquals(serializeWebPushSubscription(webSubscription), JSON.stringify(webSubscription));
+  validateWebPushEndpointOrigin(
+    webSubscription.endpoint,
+    "https://fcm.googleapis.com,https://updates.push.services.mozilla.com",
+  );
   assertEquals(
     parseNotificationDeviceRequest({
       action: "revoke_all",
@@ -52,6 +70,16 @@ Deno.test("notification device input is exact, provider-bound, and timezone vali
         timezone: "UTC",
         appVersion: "1",
         permissionState: "granted",
+        consentPolicyVersion: PUSH_CONSENT_POLICY_VERSION,
+      },
+      {
+        action: "register_web",
+        installationId,
+        subscription: webSubscription,
+        applicationServerKey: webPublicKey,
+        timezone: "UTC",
+        appVersion: "1",
+        permissionState: "provisional",
         consentPolicyVersion: PUSH_CONSENT_POLICY_VERSION,
       },
       {
@@ -102,6 +130,15 @@ Deno.test("notification device input is exact, provider-bound, and timezone vali
       "INVALID_NOTIFICATION_DEVICE_REQUEST",
     );
   }
+  assertRejects(
+    async () =>
+      validateWebPushEndpointOrigin(
+        "https://attacker.example/push",
+        "https://updates.push.services.mozilla.com",
+      ),
+    Error,
+    "WEB_PUSH_ENDPOINT_NOT_ALLOWED",
+  );
 });
 
 Deno.test("push tokens are hashed and AES-GCM encrypted before persistence", async () => {
@@ -136,6 +173,7 @@ Deno.test("notification storage is private, cascading, deduplicated, and disable
   const followLifecycle = await text(
     "migrations/20260920000000_notification_follow_lifecycle.sql",
   );
+  const webPush = await text("migrations/20261022000000_web_push_delivery.sql");
   for (
     const table of [
       "notification_consents",
@@ -201,6 +239,14 @@ Deno.test("notification storage is private, cascading, deduplicated, and disable
   assertMatch(
     followLifecycle,
     /join public\.follows followed on followed\.user_id = delivery\.user_id/,
+  );
+  assertMatch(webPush, /provider in \('expo', 'web_push'\)/);
+  assertMatch(webPush, /platform in \('ios', 'android', 'web'\)/);
+  assert(webPush.includes("register_web_notification_device_server"));
+  assert(webPush.includes("record_web_push_delivery_result_server"));
+  assertMatch(
+    webPush,
+    /revoke all on function public\.register_web_notification_device_server[\s\S]+from public, anon, authenticated, service_role/,
   );
   assertMatch(
     followLifecycle,
@@ -273,7 +319,8 @@ Deno.test("notification UX stays capability-aware and notification taps are rout
   const nativeHandler = await text("../components/route-focus-manager.native.tsx");
   const routeParser = await text("../lib/notification-routing.ts");
   assert(saved.includes("nativePushDeliveryAvailable"));
-  assert(saved.includes("Web push is not available in this release."));
+  assert(saved.includes("webPushDeliveryAvailable"));
+  assert(saved.includes("Enable push for this browser."));
   assert(saved.includes("QUIET_HOURS_PRESETS.map"));
   assert(saved.includes("No notification provider is enabled in this release."));
   assert(saved.includes("do not request background location or opt you into marketing"));
@@ -311,7 +358,10 @@ Deno.test("delivery claim and provider handoff revalidate public business eligib
   assertMatch(claim, /delivery\.state = 'leased' and delivery\.lease_expires_at <= now\(\)/);
   assertMatch(handoff, /delivery\.state = 'leased'/);
   assert(handoff.includes("affected <> cardinality(target_delivery_ids)"));
-  assertMatch(migration, /grant execute on function private\.claim_notification_deliveries[\s\S]+to service_role/);
+  assertMatch(
+    migration,
+    /grant execute on function private\.claim_notification_deliveries[\s\S]+to service_role/,
+  );
 });
 
 Deno.test("registration is fail-closed and revocation remains available during shutdown", async () => {
@@ -325,7 +375,7 @@ Deno.test("registration is fail-closed and revocation remains available during s
   assert(registerGate > edge.indexOf('command.action === "revoke"'));
   assertMatch(
     edge,
-    /authenticatedUser\(\s*request,\s*command\.action === "register",?\s*\)/,
+    /authenticatedUser\(\s*request,\s*command\.action === "register" \|\| command\.action === "register_web",?\s*\)/,
   );
   assert(edge.includes('requiredSetting("SPOTTR_PUSH_EXPO_PROJECT_ID")'));
   assert(edge.includes('requiredSetting("SPOTTR_PUSH_TOKEN_ENCRYPTION_KEY")'));
@@ -337,6 +387,8 @@ Deno.test("registration is fail-closed and revocation remains available during s
   assert(!edge.includes("console.log"));
   assertMatch(config, /\[functions\.notification-device\]\s+verify_jwt = true/);
   assertMatch(env, /SPOTTR_PUSH_DEVICE_REGISTRATION_ENABLED=false/);
+  assertMatch(env, /SPOTTR_WEB_PUSH_DEVICE_REGISTRATION_ENABLED=false/);
+  assertMatch(env, /SPOTTR_WEB_PUSH_PROVIDER_ENABLED=false/);
 });
 
 Deno.test("native permission is user-triggered and sign-out revokes before the auth session", async () => {
@@ -346,6 +398,7 @@ Deno.test("native permission is user-triggered and sign-out revokes before the a
   const nativeSupabase = await text("../lib/supabase.native.ts");
   const webSupabase = await text("../lib/supabase.ts");
   const auth = await text("../context/auth-context.tsx");
+  const serviceWorker = await text("../public/sw.js");
   const deepLinkHandler = auth.slice(
     auth.indexOf("const handleDeepLink"),
     auth.indexOf("const linkSubscription"),
@@ -366,7 +419,12 @@ Deno.test("native permission is user-triggered and sign-out revokes before the a
   assert(native.includes("requestPermissionsAsync"));
   assert(native.includes("getExpoPushTokenAsync({ projectId: easProjectId })"));
   assert(native.includes("SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY"));
-  assert(web.includes("Web push is not enabled"));
+  assert(web.includes("registration.pushManager.subscribe"));
+  assert(web.includes("action: 'register_web'"));
+  assert(web.includes("createAccessTokenBoundSupabaseClient"));
+  assert(serviceWorker.includes("self.addEventListener('push'"));
+  assert(serviceWorker.includes("self.addEventListener('notificationclick'"));
+  assert(serviceWorker.includes("SAFE_NOTIFICATION_BODIES"));
   assert(native.includes("createAccessTokenBoundSupabaseClient"));
   assert(native.includes("revokePushNotificationDeviceWithAccessToken"));
   assert(native.includes("timeout: DEVICE_REQUEST_TIMEOUT_MS"));

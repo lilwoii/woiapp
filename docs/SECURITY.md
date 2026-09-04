@@ -158,7 +158,7 @@ separate server-only HMAC key rather than an offline-testable plain digest. Raw
 tokens and cryptographic material must never enter logs, Realtime, lock-screen
 payloads, analytics, or account exports.
 
-Each active native registration is also bound to the verified Supabase Auth
+Each active native or web registration is also bound to the verified Supabase Auth
 `session_id` that registered it. Legacy unbound rows are revoked during the
 forward migration. Registration validates session ownership server-side;
 delivery claim and provider handoff require the same user/session row to remain
@@ -179,13 +179,16 @@ A `sending` delivery remains ambiguous and may produce at most the one
 already-handed-off notification; it is never converted into a blind retry.
 
 Provider dispatch is internal-authenticated, bounded, and separately gated from
-registration and database enqueueing. Tokens are decrypted only at send time
-with an explicitly versioned AES-GCM key ring. The provider host is fixed in
-source, lock-screen text is generic, and tap data contains only a canonical place
-route and public-event identifier. An ambiguous send is recorded as `unknown`
-and is never blindly retried. Receipt checks begin after the provider's minimum
-recommended delay, do not resend content, and retire devices reported as
-`DeviceNotRegistered`. All provider and worker gates default false.
+registration and database enqueueing. Tokens and canonical browser subscriptions
+are decrypted only at send time with an explicitly versioned AES-GCM key ring.
+Expo uses a fixed provider host; Web Push revalidates an HTTPS push-service
+origin against a server allowlist. Lock-screen text is generic, and tap data
+contains only a canonical place route and public-event identifier. An ambiguous
+send is recorded as `unknown` and is never blindly retried. Expo receipt checks
+begin after the provider's minimum recommended delay, do not resend content,
+and retire devices reported as `DeviceNotRegistered`. Web Push HTTP 404/410
+retires a subscription; service acceptance is not misreported as device
+delivery. All provider and worker gates default false.
 The production-maintenance scheduler path adds another default-false gate and
 separate dispatch/receipt worker secrets. It sends only fixed bounded commands,
 rejects malformed or inconsistent counters, treats a saturated batch as a

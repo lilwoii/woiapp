@@ -413,10 +413,10 @@ change rather than a client feature-flag flip.
 
 ### Push
 
-Keep `EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED=false` until APNs/FCM credentials,
-permission/consent UX, quiet hours, per-business preferences, unsubscribe, token
-deletion, delivery telemetry, abuse controls, and incident revocation are
-verified.
+Keep `EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED=false` until APNs/FCM and VAPID
+credentials, permission/consent UX, quiet hours, per-business preferences,
+unsubscribe, token/subscription deletion, delivery telemetry, abuse controls,
+and incident revocation are verified.
 
 Migration `20260917000000_push_notification_foundation.sql` establishes private
 encrypted device registrations, explicit product-versus-marketing consent,
@@ -449,8 +449,19 @@ leaves alert types, consent, runtime gates, and leased delivery state untouched.
 The settings UI distinguishes account preferences from this-device delivery;
 none of these controls activates a push provider.
 
-Database enqueue/delivery, device registration, provider access, dispatch, the
-receipt worker, and the client remain independently gated and default false.
+Migration `20261022000000_web_push_delivery.sql` extends the private device and
+delivery contracts to standards-based Web Push. Browser subscriptions receive
+the same keyed-HMAC deduplication, AES-GCM storage, Auth-session binding,
+cross-account revocation, consent revalidation, and queued-delivery cancellation
+as native devices. Web registration requires the exact VAPID public key and an
+allowlisted HTTPS push-service origin. The service worker accepts only generic
+copy and canonical same-origin place routes; the dispatch adapter retires
+HTTP 404/410 subscriptions, retries explicit throttling, and leaves ambiguous
+network/provider outcomes `unknown` without a blind resend.
+
+Database enqueue/delivery, native and web registration, Expo and Web Push
+provider access, dispatch, the Expo receipt worker, and the client remain
+independently gated and default false.
 The production-maintenance client also has a separate default-false
 `SPOTTR_MAINTENANCE_PUSH_ENABLED` repository-variable gate. When enabled, it
 uses different dispatch and receipt secrets, submits fixed bounded commands,

@@ -114,15 +114,16 @@ or push delivery unless their separate gates are complete.
 - Moderated review, logo, menu, and gallery photos after scanner/operations
   acceptance
 - Push notifications after the private encrypted-device/outbox foundation is
-  deployed and consent, provider receipts, quiet hours, unsubscribe, signed-
-  device behavior, credentials, and operational evidence are accepted. A
-  fail-closed Expo dispatch/receipt adapter exists, but every provider, worker,
-  database, scheduler, and client gate remains disabled pending live
-  acceptance. The checked-in maintenance control plane can invoke both workers
-  in bounded phases once its separate protected gate is explicitly enabled.
-  Native registrations are Auth-session-bound and are rejected by the delivery
-  path after that session ends; this is defense in depth and not a substitute
-  for signed-device and live-provider acceptance.
+  deployed and consent, provider receipts where available, quiet hours,
+  unsubscribe, signed-device/browser behavior, credentials, and operational
+  evidence are accepted. Fail-closed Expo and standards-based Web Push adapters
+  exist, but every provider, worker, database, scheduler, and client gate remains
+  disabled pending live acceptance. The checked-in maintenance control plane
+  can invoke the bounded dispatch and Expo-receipt phases once its separate
+  protected gate is explicitly enabled. Registrations are Auth-session-bound
+  and are rejected by the delivery path after that session ends; this is defense
+  in depth and not a substitute for signed-device, browser, and live-provider
+  acceptance.
 - Licensed provider inventory with contractual attribution, field-level
   provenance, refresh, correction, caching, and deletion rules
 - Owner-authorized menu OCR into review-before-publish drafts

@@ -171,20 +171,25 @@ The complete rollout and failure-recovery contract is documented in
 
 ## Notification device registration
 
-`POST /functions/v1/notification-device` is the only device-token boundary.
-Registration requires an active `aal2` account, an exact Expo project ID, an
-explicit native-settings consent version, and the server-side registration
-gate. The Edge function HMACs the token with a separate server-only key for
-deduplication and encrypts it with AES-GCM before calling a service-role-only
-RPC; raw tokens are never stored,
-returned, exported, or logged. A token moving between accounts revokes its old
-ownership before the new registration becomes active.
+`POST /functions/v1/notification-device` is the only native-token or browser-
+subscription boundary. Registration requires an active `aal2` account,
+explicit consent, and the provider-specific server gate. Native registration
+also requires the exact Expo project ID. Web registration requires HTTPS, the
+exact VAPID public key, and a push-service origin from the configured allowlist.
+The Edge function HMACs the token or canonical subscription with a separate
+server-only key for deduplication and encrypts it with AES-GCM before calling a
+service-role-only RPC; raw values are never stored, returned, exported, or
+logged. A token, subscription, or installation moving between accounts revokes
+its old ownership before the new registration becomes active.
 
 Current-device and all-device revocation remain callable with a valid session
 even while new registration is disabled, so sign-out fails safe. Auth-user
 deletion cascades device, consent, outbox-delivery, and preference records.
-Web push is intentionally absent; it requires a separate VAPID and service-
-worker acceptance program.
+The standards-based web client requests permission only after an explicit user
+action, keeps subscriptions out of local storage, and uses a same-origin service
+worker that accepts only generic copy and canonical place routes. Web
+registration and delivery have independent default-false gates and still
+require VAPID credentials plus browser/device acceptance before activation.
 
 The private transactional outbox stores only an eligible public-event reference,
 never owner-update text. Enqueueing and delivery are separate runtime switches
@@ -192,11 +197,14 @@ and both default to false. Bounded `SKIP LOCKED` leases, device/event dedupe,
 explicit consent, per-business preferences, timezone-aware quiet hours, and an
 `unknown` outcome for ambiguous provider requests are database contracts.
 
-`notification-dispatch` adds a bounded, internal-authenticated Expo adapter.
-It decrypts a token only at send time through a versioned AES-GCM key ring,
-uses fixed allowlisted Expo endpoints, emits generic lock-screen copy and a
-canonical place route only, and never retries an ambiguous send. Accepted
-tickets create receipt checks no earlier than 15 minutes after submission.
+`notification-dispatch` adds bounded, internal-authenticated Expo and Web Push
+adapters. It decrypts a token or subscription only at send time through a
+versioned AES-GCM key ring, validates fixed/allowlisted provider origins, emits
+generic lock-screen copy and a canonical place route only, and never retries an
+ambiguous send. Accepted Expo tickets create receipt checks no earlier than 15
+minutes after submission. Web Push acceptance is recorded without inventing a
+device-delivery receipt; HTTP 404/410 retires the subscription, 429 is retryable,
+and ambiguous network/provider failures remain terminally unknown.
 `notification-receipt` resolves those tickets without resending, retires tokens
 that return `DeviceNotRegistered`, and bounds every lease and retry. Provider
 5xx responses and expired send leases remain `unknown` for a fixed two-hour
@@ -206,8 +214,9 @@ their accepted delivery. Outbox fan-out rows also have a service-only
 20-attempt finalizer, while active leases remain untouched. Maintenance treats
 any finalizer backlog as unfinished work and withholds its heartbeat.
 
-The provider, dispatch worker, receipt worker, database enqueue/delivery, and
-client switches are independent and all default false. Keep them false until
-Expo credentials and DPA, enhanced push security, receipt/key-rotation drills,
-scheduler and alerts, signed-device tests, legal review, and store declarations
-are approved. Source code and fake-provider tests are not production acceptance.
+The Expo provider, Web Push provider, provider-specific registration, dispatch
+worker, receipt worker, database enqueue/delivery, and client switches are
+independent and all default false. Keep them false until Expo and VAPID
+credentials/agreements, receipt/key-rotation drills, scheduler and alerts,
+signed-device/browser tests, legal review, and store declarations are approved.
+Source code and fake-provider tests are not production acceptance.

@@ -61,6 +61,10 @@ export default function SavedScreen() {
   const deliveryGeneration = useRef(0);
   const nativePushDeliveryAvailable =
     featureFlags.pushNotifications && (Platform.OS === 'ios' || Platform.OS === 'android');
+  const webPushDeliveryAvailable = featureFlags.pushNotifications && Platform.OS === 'web' &&
+    typeof window !== 'undefined' && window.location.protocol === 'https:' &&
+    'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const pushDeliveryAvailable = nativePushDeliveryAvailable || webPushDeliveryAvailable;
   const deviceTimeZone = useMemo(() => currentIanaTimeZone(), []);
 
   const followedKey = [...followedIds].sort().join(',');
@@ -378,12 +382,12 @@ export default function SavedScreen() {
               <Text style={styles.preferenceDetail}>
                 {nativePushDeliveryAvailable
                   ? 'Enable push for this signed device. Only product updates from places you follow are included.'
-                  : Platform.OS === 'web' && featureFlags.pushNotifications
-                    ? 'Web push is not available in this release. Account preferences below are still saved.'
+                  : webPushDeliveryAvailable
+                    ? 'Enable push for this browser. Only product updates from places you follow are included.'
                     : 'Push delivery is disabled for this release. Account preferences below are still saved.'}
               </Text>
             </View>
-            {nativePushDeliveryAvailable ? (
+            {pushDeliveryAvailable ? (
               <Pressable
                 accessibilityRole="button"
                 disabled={deliveryBusy}
@@ -397,7 +401,7 @@ export default function SavedScreen() {
               </View>
             )}
           </View>
-          {nativePushDeliveryAvailable ? (
+          {pushDeliveryAvailable ? (
             <View style={styles.deliveryDisableRow}>
               <Pressable
                 accessibilityRole="button"
@@ -525,7 +529,9 @@ export default function SavedScreen() {
           <View style={styles.preferenceNotice}>
             <FontAwesome6 color={palette.muted} name="shield-halved" size={12} />
             <Text style={styles.preferenceNoticeText}>
-              No notification provider is enabled in this release. These controls do not request background location or opt you into marketing.
+              {pushDeliveryAvailable
+                ? 'Lock-screen messages stay generic. These controls do not request background location or opt you into marketing.'
+                : 'No notification provider is enabled in this release. These controls do not request background location or opt you into marketing.'}
             </Text>
           </View>
           {preferenceBusy === 'loading' ? (

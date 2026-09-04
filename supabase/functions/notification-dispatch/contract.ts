@@ -33,7 +33,7 @@ export type DeliveryClaim = {
   business_id: string;
   source_event_id: number;
   notification_kind: NotificationKind;
-  provider: "expo";
+  provider: "expo" | "web_push";
   token_ciphertext: string;
   token_nonce: string;
   encryption_key_version: number;
@@ -59,6 +59,12 @@ export type ReceiptClaim = {
 
 export type ExpoMessage = {
   to: string;
+  title: "Spottr";
+  body: string;
+  data: { route: string; eventId: string };
+};
+
+export type GenericNotificationPayload = {
   title: "Spottr";
   body: string;
   data: { route: string; eventId: string };
@@ -131,7 +137,8 @@ export function parseDeliveryClaims(value: unknown, maximum: number): DeliveryCl
       !UUID.test(String(claim.business_id ?? "")) ||
       !UUID.test(String(claim.lease_token ?? "")) ||
       !Number.isSafeInteger(claim.source_event_id) ||
-      !notificationKind(claim.notification_kind) || claim.provider !== "expo" ||
+      !notificationKind(claim.notification_kind) ||
+      (claim.provider !== "expo" && claim.provider !== "web_push") ||
       typeof claim.token_ciphertext !== "string" || claim.token_ciphertext.length > 2048 ||
       typeof claim.token_nonce !== "string" || !BASE64URL_NONCE.test(claim.token_nonce) ||
       !Number.isSafeInteger(claim.encryption_key_version) ||
@@ -270,7 +277,7 @@ export async function decryptPushToken(
       Uint8Array.from(ciphertext).buffer,
     );
     const token = new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
-    if (!EXPO_TOKEN.test(token)) throw new Error("invalid token");
+    if (!token || token.length > 1536) throw new Error("invalid token");
     return token;
   } catch {
     throw new HttpError(503, "PUSH_TOKEN_DECRYPTION_FAILED");
@@ -281,10 +288,16 @@ export function buildGenericExpoMessage(
   token: string,
   claim: Pick<DeliveryClaim, "business_id" | "source_event_id" | "notification_kind">,
 ): ExpoMessage {
-  if (
-    !EXPO_TOKEN.test(token) || !UUID.test(claim.business_id) ||
-    !Number.isSafeInteger(claim.source_event_id)
-  ) {
+  if (!EXPO_TOKEN.test(token)) {
+    throw new HttpError(500, "INVALID_NOTIFICATION_DELIVERY_CLAIM");
+  }
+  return { to: token, ...buildGenericNotificationPayload(claim) };
+}
+
+export function buildGenericNotificationPayload(
+  claim: Pick<DeliveryClaim, "business_id" | "source_event_id" | "notification_kind">,
+): GenericNotificationPayload {
+  if (!UUID.test(claim.business_id) || !Number.isSafeInteger(claim.source_event_id)) {
     throw new HttpError(500, "INVALID_NOTIFICATION_DELIVERY_CLAIM");
   }
   const body = claim.notification_kind === "location_change"
@@ -293,7 +306,6 @@ export function buildGenericExpoMessage(
     ? "Something is available again at a place you follow."
     : "A place you follow has a new update.";
   return {
-    to: token,
     title: "Spottr",
     body,
     data: {
