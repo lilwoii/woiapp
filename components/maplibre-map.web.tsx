@@ -314,6 +314,7 @@ export default function MapLibreMapView({
   const fittedPlacesKey = useRef('');
   const userMarkerRef = useRef<Marker | null>(null);
   const fittedRouteKey = useRef('');
+  const navigationPerspectiveInitialized = useRef(false);
   const initialPlaces = useRef(places);
   const retryCamera = useRef<{
     bearing: number;
@@ -775,6 +776,21 @@ export default function MapLibreMapView({
     );
     map.fitBounds(bounds, { duration: motionDuration(reduceMotion, 450), maxZoom: 17, padding: 84 });
   }, [ready, reduceMotion, routeCoordinates]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!navigationMode) {
+      navigationPerspectiveInitialized.current = false;
+      return;
+    }
+    if (!map || !ready || !supports3D || navigationPerspectiveInitialized.current) return;
+    navigationPerspectiveInitialized.current = true;
+    setPerspective(true);
+    map.easeTo({
+      duration: motionDuration(reduceMotion, 320),
+      pitch: 48,
+    });
+  }, [navigationMode, ready, reduceMotion, supports3D]);
 
   if (failed) {
     return (

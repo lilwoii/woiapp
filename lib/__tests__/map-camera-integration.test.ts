@@ -247,6 +247,12 @@ describe('global map camera integration', () => {
     );
     expect(navigationScreen).toMatch(/openExternalMaps\('apple'\)/);
     expect(navigationScreen).toMatch(/openExternalMaps\('google'\)/);
+    expect(nativeMap).toMatch(
+      /if \(!navigationMode\)[\s\S]*navigationPerspectiveInitialized\.current = false[\s\S]*setPerspective\(true\)[\s\S]*pitch: 48/,
+    );
+    expect(webMap).toMatch(
+      /!map \|\| !ready \|\| !supports3D[\s\S]*setPerspective\(true\)[\s\S]*pitch: 48/,
+    );
   });
 
   it('cancels hidden tracking when a public destination disappears or becomes blocked without unmounting', () => {

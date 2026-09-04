@@ -207,6 +207,7 @@ export function LiveMap({
   const mapWasInteracted = useRef(false);
   const hasCenteredOnUser = useRef(false);
   const fittedSearchAreaKey = useRef<string | null>(null);
+  const navigationPerspectiveInitialized = useRef(false);
   const inventoryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authoritativeInventory = inventoryFeatures !== undefined;
   const clientFeatures = useMemo(
@@ -310,6 +311,20 @@ export function LiveMap({
       motionDuration(reduceMotion, 450),
     );
   }, [reduceMotion, routeCoordinates]);
+
+  useEffect(() => {
+    if (!navigationMode) {
+      navigationPerspectiveInitialized.current = false;
+      return;
+    }
+    if (navigationPerspectiveInitialized.current) return;
+    navigationPerspectiveInitialized.current = true;
+    setPerspective(true);
+    mapRef.current?.animateCamera(
+      { pitch: 48 },
+      { duration: motionDuration(reduceMotion, 320) },
+    );
+  }, [navigationMode, reduceMotion]);
 
   return (
     <View style={styles.frame}>
