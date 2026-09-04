@@ -534,14 +534,12 @@ end;
 $$;
 
 revoke all on function public.get_pay_in_person_pickup_menu(uuid),
-  public.create_pay_in_person_pickup_order(uuid, uuid, timestamptz, jsonb, text, text),
   public.get_my_pay_in_person_pickup_orders(integer),
   public.get_business_pay_in_person_pickup_orders(uuid, integer),
   public.cancel_pay_in_person_pickup_order(uuid, integer, text),
   public.transition_pay_in_person_pickup_order(uuid, integer, text, text)
   from public, anon, authenticated, service_role;
 grant execute on function public.get_pay_in_person_pickup_menu(uuid),
-  public.create_pay_in_person_pickup_order(uuid, uuid, timestamptz, jsonb, text, text),
   public.get_my_pay_in_person_pickup_orders(integer),
   public.get_business_pay_in_person_pickup_orders(uuid, integer),
   public.cancel_pay_in_person_pickup_order(uuid, integer, text),
@@ -888,3 +886,10 @@ begin
   return response;
 end;
 $$;
+
+revoke all on function public.create_pay_in_person_pickup_order(
+  uuid, uuid, timestamptz, jsonb, text, text
+) from public, anon, authenticated, service_role;
+grant execute on function public.create_pay_in_person_pickup_order(
+  uuid, uuid, timestamptz, jsonb, text, text
+) to authenticated;
