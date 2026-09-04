@@ -1,14 +1,17 @@
-import { File } from 'expo-file-system';
-import { Platform } from 'react-native';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { toActionError } from '@/lib/errors';
+import { featureFlags } from '@/lib/features';
+import { readLocalMedia } from '@/lib/local-media-file';
 import { supabase } from '@/lib/supabase';
 import { ActionResult } from '@/types/marketplace';
 
 export type MediaPurpose =
   | 'profile_avatar'
+  | 'profile_banner'
   | 'business_logo'
   | 'business_gallery'
+  | 'business_post'
   | 'review_photo'
   | 'chat_photo';
 
@@ -59,22 +62,21 @@ export function detectedImageMime(bytes: Uint8Array): string | null {
   return null;
 }
 
-async function readLocalMedia(uri: string): Promise<ArrayBuffer> {
-  if (Platform.OS === 'web') {
-    const response = await fetch(uri);
-    if (!response.ok) throw new Error('The selected image could not be read.');
-    return response.arrayBuffer();
-  }
-  return new File(uri).arrayBuffer();
-}
-
 export async function stageMediaUpload(
   media: LocalMedia,
   purpose: MediaPurpose,
   businessId?: string,
-  conversationId?: string
+  conversationId?: string,
+  accountClient?: SupabaseClient,
 ): Promise<ActionResult<StagedMedia>> {
-  const client = supabase;
+  if (!featureFlags.mediaUploads) {
+    return {
+      ok: false,
+      code: 'CONFIG_REQUIRED',
+      reason: 'Photo uploads are not available in this release.',
+    };
+  }
+  const client = accountClient ?? supabase;
   if (!client) {
     return {
       ok: false,
@@ -85,6 +87,7 @@ export async function stageMediaUpload(
   if (
     (purpose === 'business_logo' ||
       purpose === 'business_gallery' ||
+      purpose === 'business_post' ||
       purpose === 'review_photo' ||
       purpose === 'chat_photo') &&
     !businessId

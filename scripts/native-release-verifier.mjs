@@ -3,6 +3,8 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { validateProductionArtifactContent } from './production-artifact-purity.mjs';
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SCRIPT_DIR, '..');
 
@@ -18,6 +20,18 @@ const ALLOWED_ANDROID_PERMISSIONS = new Set([
   'ACCESS_COARSE_LOCATION',
   'ACCESS_FINE_LOCATION',
 ]);
+
+const HIGH_RISK_FEATURE_FLAGS = [
+  'EXPO_PUBLIC_HOME_KITCHENS_ENABLED',
+  'EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED',
+  'EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED',
+  'EXPO_PUBLIC_PICKUP_ORDERING_ENABLED',
+  'EXPO_PUBLIC_PREPAID_PICKUP_ENABLED',
+  'EXPO_PUBLIC_INTERNAL_SHADOW_ORDERING_ENABLED',
+  'EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED',
+  'EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED',
+  'EXPO_PUBLIC_SPONSORED_PLACEMENTS_ENABLED',
+];
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -143,8 +157,9 @@ export function validateNativeConfiguration(appBase, eas, sdkRequirements) {
     'NSLocationWhenInUseUsageDescription',
     errors,
   );
+  const photoUsageDescription = ios.infoPlist?.NSPhotoLibraryUsageDescription;
   validateUsageDescription(
-    ios.infoPlist?.NSPhotoLibraryUsageDescription,
+    photoUsageDescription,
     'NSPhotoLibraryUsageDescription',
     errors,
   );
@@ -179,8 +194,22 @@ export function validateNativeConfiguration(appBase, eas, sdkRequirements) {
   }
   const pickerPlugin = findPlugin(expo.plugins ?? [], 'expo-image-picker');
   const pickerOptions = Array.isArray(pickerPlugin) ? pickerPlugin[1] : null;
+  if (pickerOptions?.photosPermission !== photoUsageDescription) {
+    errors.push('iOS photo-library and image-picker permission descriptions must remain identical.');
+  }
+  for (const purpose of ['profile', 'banner', 'business', 'review']) {
+    if (!photoUsageDescription?.toLocaleLowerCase('en-US').includes(purpose)) {
+      errors.push(`Photo permission description must disclose the ${purpose} image purpose.`);
+    }
+  }
   if (pickerOptions?.cameraPermission !== false || pickerOptions?.microphonePermission !== false) {
     errors.push('Image picker camera and microphone permissions must remain disabled.');
+  }
+  if (!findPlugin(expo.plugins ?? [], 'expo-notifications')) {
+    errors.push('expo-notifications must remain explicitly configured for native device registration.');
+  }
+  if ((ios.infoPlist?.UIBackgroundModes ?? []).includes('remote-notification')) {
+    errors.push('Background remote notifications must remain disabled until separately reviewed.');
   }
 
   const privacyManifests = ios.privacyManifests;
@@ -204,6 +233,11 @@ export function validateNativeConfiguration(appBase, eas, sdkRequirements) {
   if (production?.environment !== 'production') errors.push('Production EAS environment must be production.');
   if (production?.env?.EXPO_PUBLIC_APP_ENV !== 'production') {
     errors.push('Production EAS builds must set EXPO_PUBLIC_APP_ENV=production.');
+  }
+  for (const name of HIGH_RISK_FEATURE_FLAGS) {
+    if (production?.env?.[name] !== 'false') {
+      errors.push(`Production EAS builds must explicitly set ${name}=false.`);
+    }
   }
   if (!isRecord(eas?.submit?.production)) errors.push('A production EAS submit profile is required.');
 
@@ -245,7 +279,7 @@ async function sha256(filePath) {
   return createHash('sha256').update(await readFile(filePath)).digest('hex');
 }
 
-async function verifyArtifact(projectRoot, platform) {
+export async function verifyArtifact(projectRoot, platform) {
   const outputRoot = path.join(projectRoot, `dist-${platform}`);
   const metadataPath = path.join(outputRoot, 'metadata.json');
   const metadata = await readJson(metadataPath);
@@ -262,10 +296,22 @@ async function verifyArtifact(projectRoot, platform) {
       errors.push(`${platform} artifact is missing: ${relativePath}`);
     }
   }
+  for (const artifactFile of await walkFiles(outputRoot)) {
+    const relativePath = path.relative(outputRoot, artifactFile).replaceAll('\\', '/');
+    try {
+      errors.push(...validateProductionArtifactContent(
+        `${platform} production artifact ${relativePath}`,
+        await readFile(artifactFile),
+      ));
+    } catch {
+      errors.push(`${platform} artifact could not be inspected: ${relativePath}`);
+    }
+  }
   const bundlePath = safeArtifactPath(outputRoot, platformMetadata?.bundle);
   if (bundlePath) {
     try {
-      if ((await stat(bundlePath)).size < 100_000) errors.push(`${platform} bundle is unexpectedly small.`);
+      const bundle = await readFile(bundlePath);
+      if (bundle.length < 100_000) errors.push(`${platform} bundle is unexpectedly small.`);
     } catch {
       // Missing file already reported above.
     }

@@ -1,6 +1,10 @@
 # Secure marketplace chat and pickup disclosure
 
-Spottr chat is a private, server-moderated exposure channel for two categories:
+Spottr chat is a private, server-moderated exposure channel for two categories.
+Home-kitchen chat is additionally behind the private, default-false global
+launch gate in `20260929000000_home_kitchen_global_launch_gate.sql`; the client
+feature flag is not an authorization boundary. A disabled gate blocks new and
+existing participant reads/writes and revokes active exact pickup state.
 
 - An eligible, published Neighborhood Kitchen always offers chat. A seller
   cannot disable it while remaining in this category.
@@ -132,7 +136,7 @@ Account deletion first destroys every exact pickup disclosure attached to the
 user's conversations, cancels pending or authorized pickup requests, clears
 typing/read state, and closes each thread. Auth deletion then nulls participant
 and sender identifiers. A shared thread survives for the remaining participant
-as a closed conversation with a â€œDeleted accountâ€ identity; the deleting
+as a closed conversation with a “Deleted account” identity; the deleting
 user's media objects are frozen, snapshotted, deleted, and checkpointed by the
 durable account-deletion storage workflow before Auth removal. This is
 pseudonymization, not an assertion that every shared message body can always be
@@ -156,8 +160,8 @@ city. A category is therefore unavailable by default unless its exact
 status, verified permits, and operational ownership. Platform terms or a seller
 disclaimer never substitute for permits, food-safety controls, required
 intermediary disclosures, insurance analysis, tax/payment duties, or incident
-response. California, for example, imposes specific duties on an â€œinternet
-food service intermediary,â€ including conspicuous fee and liability-insurance
+response. California, for example, imposes specific duties on an “internet
+food service intermediary,” including conspicuous fee and liability-insurance
 disclosures; production counsel must review the current statute before enabling
 any California locality.
 

@@ -1,6 +1,6 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router, type Href } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -18,6 +18,7 @@ import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import {
   decideModerationItem,
+  isReportedReview,
   loadModerationQueue,
   type ModerationDecision,
   type ModerationQueueItem,
@@ -25,6 +26,15 @@ import {
 
 export default function ModerationScreen() {
   const auth = useAuth();
+  const workspaceKey = auth.status === 'authenticated'
+    ? `${auth.account?.id ?? 'missing'}:${auth.securityStatus}:${auth.assuranceLevel}:${auth.mfaEnrolled}`
+    : auth.status;
+  return <ModerationWorkspace key={workspaceKey} />;
+}
+
+function ModerationWorkspace() {
+  const auth = useAuth();
+  const accountId = auth.status === 'authenticated' ? auth.account?.id : undefined;
   const [items, setItems] = useState<ModerationQueueItem[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -33,22 +43,32 @@ export default function ModerationScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [message, setMessage] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
+  const requestGeneration = useRef(0);
+  const mounted = useRef(true);
 
   const canLoad =
     auth.status === 'authenticated' &&
+    Boolean(accountId) &&
     auth.securityStatus === 'ready' &&
     auth.mfaEnrolled &&
     auth.assuranceLevel === 'aal2';
 
+  useEffect(() => () => {
+    mounted.current = false;
+    requestGeneration.current += 1;
+  }, []);
+
   const load = useCallback(async (offset = 0) => {
-    if (!canLoad) return;
+    if (!canLoad || !accountId) return;
+    const generation = ++requestGeneration.current;
     if (offset) {
       setLoadingMore(true);
     } else {
       setLoading(true);
     }
     setMessage(null);
-    const result = await loadModerationQueue(offset);
+    const result = await loadModerationQueue(accountId, offset);
+    if (!mounted.current || generation !== requestGeneration.current) return;
     setLoading(false);
     setLoadingMore(false);
     if (!result.ok) {
@@ -68,7 +88,7 @@ export default function ModerationScreen() {
         : result.data.items
     );
     setHasMore(result.data.hasMore);
-  }, [canLoad]);
+  }, [accountId, canLoad]);
 
   useEffect(() => {
     if (!canLoad) return;
@@ -77,10 +97,12 @@ export default function ModerationScreen() {
   }, [canLoad, load]);
 
   const decide = async (item: ModerationQueueItem, decision: ModerationDecision) => {
-    if (savingId) return;
+    if (savingId || !accountId) return;
+    const generation = ++requestGeneration.current;
     setSavingId(`${item.targetType}:${item.targetId}`);
     setMessage(null);
-    const result = await decideModerationItem(item, decision, reason);
+    const result = await decideModerationItem(accountId, item, decision, reason);
+    if (!mounted.current || generation !== requestGeneration.current) return;
     setSavingId(null);
     if (!result.ok) {
       setMessage({ tone: 'error', text: result.reason });
@@ -92,7 +114,9 @@ export default function ModerationScreen() {
     setReason('');
     setMessage({
       tone: 'success',
-      text: decision === 'approved' ? 'Content approved and audit receipt recorded.' : 'Content rejected and audit receipt recorded.',
+      text: isReportedReview(item) || item.targetType === 'review_comment' || item.targetType === 'business_post'
+        ? decision === 'approved' ? 'Content kept and reports dismissed with an audit receipt.' : 'Content removed and reports resolved with an audit receipt.'
+        : decision === 'approved' ? 'Content approved and audit receipt recorded.' : 'Content rejected and audit receipt recorded.',
     });
   };
 
@@ -127,9 +151,13 @@ export default function ModerationScreen() {
           <View style={styles.intro}>
             <Text style={styles.eyebrow}>Trust operations</Text>
             <Text accessibilityRole="header" style={styles.title}>Moderate with context and an audit trail.</Text>
-            <Text style={styles.subtitle}>Approve only content that is professional, relevant, and safe. Rejections require a concise internal reason.</Text>
+            <Text style={styles.subtitle}>Approve or keep only professional, relevant, safe content. Every decision requires an internal reason.</Text>
             <Pressable accessibilityHint="Open reported chat and pickup site queues" accessibilityRole="button" onPress={() => router.push('/marketplace-moderation' as Href)} style={styles.operationsLink}>
               <Text style={styles.operationsLinkText}>Chat reports &amp; pickup safety</Text>
+              <FontAwesome6 color={palette.ink} name="arrow-right" size={11} />
+            </Pressable>
+            <Pressable accessibilityHint="Open pending business listing approvals" accessibilityRole="button" onPress={() => router.push('/business-submission-moderation' as Href)} style={styles.operationsLink}>
+              <Text style={styles.operationsLinkText}>Business listing approvals</Text>
               <FontAwesome6 color={palette.ink} name="arrow-right" size={11} />
             </Pressable>
           </View>
@@ -143,18 +171,19 @@ export default function ModerationScreen() {
           {loading ? (
             <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={palette.accentDeep} /><Text style={styles.loadingText}>Loading the oldest pending content…</Text></View>
           ) : !items.length ? (
-            <View style={styles.empty}><FontAwesome6 color={palette.success} name="circle-check" size={21} /><Text accessibilityRole="header" style={styles.emptyTitle}>Queue clear</Text><Text style={styles.emptyBody}>No pending reviews, owner updates, or responses are available to this operator.</Text></View>
+            <View style={styles.empty}><FontAwesome6 color={palette.success} name="circle-check" size={21} /><Text accessibilityRole="header" style={styles.emptyTitle}>Queue clear</Text><Text style={styles.emptyBody}>No pending content or reported reviews, profile comments, or business posts are available to this operator.</Text></View>
           ) : (
             <View style={styles.queue}>
               {items.map((item) => {
                 const key = `${item.targetType}:${item.targetId}`;
                 const selected = selectedId === key;
                 const mediaReady = item.context.all_media_clean !== false;
+                const reported = isReportedReview(item);
                 return (
                   <View key={key} style={styles.item}>
                     <View style={styles.itemHeader}>
                       <View style={styles.itemCopy}>
-                        <Text style={styles.itemType}>{item.targetType}</Text>
+                        <Text style={styles.itemType}>{reported ? 'reported review' : item.targetType.replaceAll('_', ' ')}</Text>
                         <Text style={styles.businessName}>{item.businessName}</Text>
                         <Text style={styles.author}>By {item.authorDisplayName} · {new Date(item.submittedAt).toLocaleString()}</Text>
                       </View>
@@ -169,8 +198,8 @@ export default function ModerationScreen() {
                         <TextInput accessibilityLabel="Internal moderation reason" maxLength={1000} multiline onChangeText={setReason} placeholder="Reason recorded in the restricted audit log" placeholderTextColor={palette.mutedLight} style={styles.reasonInput} textAlignVertical="top" value={reason} />
                         <View style={styles.decisionActions}>
                           <Pressable accessibilityRole="button" disabled={Boolean(savingId)} onPress={() => { setSelectedId(null); setReason(''); }} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel</Text></Pressable>
-                          <Pressable accessibilityRole="button" accessibilityState={{ busy: savingId === key, disabled: Boolean(savingId) }} disabled={Boolean(savingId)} onPress={() => void decide(item, 'rejected')} style={styles.rejectButton}><Text style={styles.rejectText}>Reject</Text></Pressable>
-                          <Pressable accessibilityRole="button" accessibilityState={{ busy: savingId === key, disabled: Boolean(savingId) || !mediaReady }} disabled={Boolean(savingId) || !mediaReady} onPress={() => void decide(item, 'approved')} style={[styles.approveButton, (!mediaReady || Boolean(savingId)) && styles.disabled]}>{savingId === key ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}<Text style={styles.approveText}>Approve</Text></Pressable>
+                          <Pressable accessibilityRole="button" accessibilityState={{ busy: savingId === key, disabled: Boolean(savingId) }} disabled={Boolean(savingId)} onPress={() => void decide(item, 'rejected')} style={styles.rejectButton}><Text style={styles.rejectText}>{reported || item.targetType === 'review_comment' || item.targetType === 'business_post' ? 'Remove' : 'Reject'}</Text></Pressable>
+                          <Pressable accessibilityRole="button" accessibilityState={{ busy: savingId === key, disabled: Boolean(savingId) || !mediaReady }} disabled={Boolean(savingId) || !mediaReady} onPress={() => void decide(item, 'approved')} style={[styles.approveButton, (!mediaReady || Boolean(savingId)) && styles.disabled]}>{savingId === key ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}<Text style={styles.approveText}>{reported || item.targetType === 'review_comment' || item.targetType === 'business_post' ? 'Keep' : 'Approve'}</Text></Pressable>
                         </View>
                       </View>
                     ) : (

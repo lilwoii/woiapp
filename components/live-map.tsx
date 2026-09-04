@@ -10,11 +10,17 @@ import type { NavigationCoordinate, TravelMode } from '@/types/navigation';
 type Props = {
   places: Place[];
   selectedId?: string;
+  selectedLocationId?: string;
   onSelect?: (place: Place) => void;
-  onSelectBusinessId?: (businessId: string) => void;
+  onSelectBusinessId?: (businessId: string, locationId?: string) => void;
   onSearchArea?: (viewport: MapViewport) => Promise<void> | void;
   onViewportChange?: (viewport: MapViewport) => Promise<void> | void;
+  onViewportInvalidated?: (viewport: MapViewport) => void;
+  onRetryInventory?: () => void;
   inventoryFeatures?: MapInventoryFeature[];
+  inventoryError?: string | null;
+  markersSuppressed?: boolean;
+  searchAreaKey?: string;
   userCoordinates?: { latitude: number; longitude: number } | null;
   routeCoordinates?: NavigationCoordinate[];
   navigationMode?: TravelMode;

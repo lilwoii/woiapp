@@ -8,6 +8,7 @@ import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
+import { featureFlags } from '@/lib/features';
 import { listMarketplaceConversations } from '@/lib/marketplace-chat';
 import type { MarketplaceConversation } from '@/types/chat';
 
@@ -52,7 +53,11 @@ export default function MessagesScreen() {
           <View style={styles.heading}>
             <Text style={styles.eyebrow}>PRIVATE MARKETPLACE CHAT</Text>
             <Text accessibilityRole="header" style={styles.title}>Messages</Text>
-            <Text style={styles.subtitle}>Coordinate directly with verified Neighborhood Kitchens and participating pop-ups.</Text>
+            <Text style={styles.subtitle}>
+              {featureFlags.homeKitchens
+                ? 'Coordinate directly with verified Neighborhood Kitchens and participating pop-ups.'
+                : 'Coordinate directly with participating pop-ups.'}
+            </Text>
           </View>
 
           {auth.status !== 'authenticated' ? (

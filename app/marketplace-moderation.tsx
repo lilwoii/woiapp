@@ -1,6 +1,6 @@
 import FontAwesome6 from "@expo/vector-icons/FontAwesome6";
 import { router } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -26,31 +26,50 @@ type Notice = { tone: "error" | "success"; text: string };
 
 export default function MarketplaceModerationScreen() {
   const auth = useAuth();
+  const workspaceKey = auth.status === "authenticated"
+    ? `${auth.account?.id ?? "missing"}:${auth.securityStatus}:${auth.assuranceLevel}:${auth.mfaEnrolled}`
+    : auth.status;
+  return <MarketplaceModerationWorkspace key={workspaceKey} />;
+}
+
+function MarketplaceModerationWorkspace() {
+  const auth = useAuth();
+  const accountId = auth.status === "authenticated" ? auth.account?.id : undefined;
   const [items, setItems] = useState<ReportedChatMessage[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const requestGeneration = useRef(0);
+  const mounted = useRef(true);
   const canLoad = auth.status === "authenticated" &&
+    Boolean(accountId) &&
     auth.securityStatus === "ready" &&
     auth.mfaEnrolled &&
     auth.assuranceLevel === "aal2";
 
+  useEffect(() => () => {
+    mounted.current = false;
+    requestGeneration.current += 1;
+  }, []);
+
   const load = useCallback(async () => {
-    if (!canLoad) return;
+    if (!canLoad || !accountId) return;
+    const generation = ++requestGeneration.current;
     setLoading(true);
     setNotice(null);
     setSelected(null);
     setReason("");
-    const result = await loadReportedChatMessages();
+    const result = await loadReportedChatMessages(accountId);
+    if (!mounted.current || generation !== requestGeneration.current) return;
     setLoading(false);
     if (!result.ok) {
       setNotice({ tone: "error", text: result.reason });
       return;
     }
     setItems(result.data);
-  }, [canLoad]);
+  }, [accountId, canLoad]);
 
   useEffect(() => {
     const timer = setTimeout(() => void load(), 0);
@@ -61,10 +80,12 @@ export default function MarketplaceModerationScreen() {
     item: ReportedChatMessage,
     visibility: "visible" | "held" | "removed",
   ) => {
-    if (busy) return;
+    if (busy || !accountId) return;
+    const generation = ++requestGeneration.current;
     setBusy(true);
     setNotice(null);
-    const result = await moderateReportedChatMessage(item, visibility, reason);
+    const result = await moderateReportedChatMessage(accountId, item, visibility, reason);
+    if (!mounted.current || generation !== requestGeneration.current) return;
     setBusy(false);
     if (!result.ok) {
       setNotice({ tone: "error", text: result.reason });

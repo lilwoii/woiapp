@@ -1,4 +1,4 @@
-import type { BusinessCategory, Place } from '@/types/marketplace';
+import type { BusinessCategory, MovingServiceState, Place } from '@/types/marketplace';
 
 export type MapViewport = {
   latitude: number;
@@ -26,4 +26,5 @@ export type MapInventoryFeature = {
   name?: string;
   logoUrl?: string;
   sourceLabel?: Place['sourceLabel'];
+  mobilityState?: MovingServiceState['state'];
 };

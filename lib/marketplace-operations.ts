@@ -1,5 +1,5 @@
 import { createMarketplaceOperationsKey, type BusinessMarketplaceResult } from '@/lib/business-marketplace';
-import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import { createAccountBoundSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 
 type Row = Record<string, unknown>;
 type ChatVisibility = 'visible' | 'held' | 'removed';
@@ -99,13 +99,11 @@ export function mapPendingPickupSites(value: unknown): PendingPickupSite[] {
   });
 }
 
-async function client() {
-  if (!isSupabaseConfigured || !supabase) throw new Error('Live services are not configured.');
-  const [{ data, error }, assurance] = await Promise.all([supabase.auth.getUser(), supabase.auth.mfa.getAuthenticatorAssuranceLevel()]);
-  if (error || !data.user) throw Object.assign(error ?? new Error('Not authenticated'), { status: 401 });
-  if (assurance.error) throw assurance.error;
-  if (assurance.data.currentLevel !== 'aal2') throw Object.assign(new Error('AAL2 required'), { status: 403 });
-  return supabase;
+async function client(expectedAccountId: string) {
+  if (!isSupabaseConfigured) throw new Error('Live services are not configured.');
+  const accountClient = await createAccountBoundSupabaseClient(expectedAccountId);
+  if (!accountClient) throw Object.assign(new Error('Not authenticated'), { status: 401 });
+  return accountClient;
 }
 
 function fail<T>(error: unknown, fallback: string): BusinessMarketplaceResult<T> {
@@ -119,31 +117,31 @@ function fail<T>(error: unknown, fallback: string): BusinessMarketplaceResult<T>
   return { ok: false, code: 'UNKNOWN', reason: fallback };
 }
 
-export async function loadReportedChatMessages(): Promise<BusinessMarketplaceResult<ReportedChatMessage[]>> {
-  try { const c = await client(); const { data, error } = await c.rpc('list_reported_marketplace_messages_v2', { result_limit: 100, result_offset: 0 }); if (error) throw error; return { ok: true, data: mapReportedChatMessages(data) }; }
+export async function loadReportedChatMessages(expectedAccountId: string): Promise<BusinessMarketplaceResult<ReportedChatMessage[]>> {
+  try { const c = await client(expectedAccountId); const { data, error } = await c.rpc('list_reported_marketplace_messages_v2', { result_limit: 100, result_offset: 0 }); if (error) throw error; return { ok: true, data: mapReportedChatMessages(data) }; }
   catch (error) { return fail(error, 'Reported messages could not be loaded.'); }
 }
 
-export async function moderateReportedChatMessage(message: ReportedChatMessage, visibility: ChatVisibility, reason: string): Promise<BusinessMarketplaceResult<void>> {
+export async function moderateReportedChatMessage(expectedAccountId: string, message: ReportedChatMessage, visibility: ChatVisibility, reason: string): Promise<BusinessMarketplaceResult<void>> {
   try {
     const normalized = reason.normalize('NFKC').trim().toUpperCase().replace(/[^A-Z0-9_:-]+/g, '_').replace(/^_+|_+$/g, '');
     if (normalized.length < 3 || normalized.length > 80) return { ok: false, code: 'INVALID', reason: 'Use a concise internal reason code from 3 to 80 characters.' };
-    const c = await client(); const { error } = await c.rpc('moderate_marketplace_message_v2', { target_message_public_id: message.messagePublicId, expected_moderation_version: message.moderationVersion, next_visibility: visibility, moderation_reason: normalized, idempotency_key: createMarketplaceOperationsKey('moderate') }); if (error) throw error;
+    const c = await client(expectedAccountId); const { error } = await c.rpc('moderate_marketplace_message_v2', { target_message_public_id: message.messagePublicId, expected_moderation_version: message.moderationVersion, next_visibility: visibility, moderation_reason: normalized, idempotency_key: createMarketplaceOperationsKey('moderate') }); if (error) throw error;
     return { ok: true, data: undefined };
   } catch (error) { return fail(error, 'The chat decision could not be recorded.'); }
 }
 
-export async function loadPendingPickupSites(): Promise<BusinessMarketplaceResult<PendingPickupSite[]>> {
-  try { const c = await client(); const { data, error } = await c.rpc('list_pending_marketplace_pickup_sites', { result_limit: 100, result_offset: 0 }); if (error) throw error; return { ok: true, data: mapPendingPickupSites(data) }; }
+export async function loadPendingPickupSites(expectedAccountId: string): Promise<BusinessMarketplaceResult<PendingPickupSite[]>> {
+  try { const c = await client(expectedAccountId); const { data, error } = await c.rpc('list_pending_marketplace_pickup_sites', { result_limit: 100, result_offset: 0 }); if (error) throw error; return { ok: true, data: mapPendingPickupSites(data) }; }
   catch (error) { return fail(error, 'Pickup sites could not be loaded.'); }
 }
 
-export async function reviewPendingPickupSite(site: PendingPickupSite, state: 'approved' | 'rejected', reason: string, confirmedNonResidential: boolean): Promise<BusinessMarketplaceResult<void>> {
+export async function reviewPendingPickupSite(expectedAccountId: string, site: PendingPickupSite, state: 'approved' | 'rejected', reason: string, confirmedNonResidential: boolean): Promise<BusinessMarketplaceResult<void>> {
   try {
     const normalized = reason.normalize('NFKC').replace(/\s+/g, ' ').trim();
     if (normalized.length < 10 || normalized.length > 1000) return { ok: false, code: 'INVALID', reason: 'Record an internal review reason from 10 to 1,000 characters.' };
     if (state === 'approved' && !confirmedNonResidential) return { ok: false, code: 'INVALID', reason: 'Confirm this is a non-residential public or commercial site before approval.' };
-    const c = await client(); const { error } = await c.rpc('review_marketplace_pickup_site', { target_pickup_site_public_id: site.publicId, next_state: state, confirmed_non_residential: state === 'approved' && confirmedNonResidential, review_reason: normalized, idempotency_key: createMarketplaceOperationsKey('review-site') }); if (error) throw error;
+    const c = await client(expectedAccountId); const { error } = await c.rpc('review_marketplace_pickup_site', { target_pickup_site_public_id: site.publicId, next_state: state, confirmed_non_residential: state === 'approved' && confirmedNonResidential, review_reason: normalized, idempotency_key: createMarketplaceOperationsKey('review-site') }); if (error) throw error;
     return { ok: true, data: undefined };
   } catch (error) { return fail(error, 'The pickup site decision could not be recorded.'); }
 }

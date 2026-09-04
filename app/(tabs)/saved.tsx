@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { BrandMark } from '@/components/brand-mark';
 import { FocusAwareScreen } from '@/components/focus-aware-screen';
@@ -12,37 +12,100 @@ import { SectionHeading } from '@/components/section-heading';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
-import { featureFlags } from '@/lib/features';
+import { featureFlags, filterHomeKitchenPlaces } from '@/lib/features';
+import {
+  currentIanaTimeZone,
+  QUIET_HOURS_PRESETS,
+  quietHoursForPreset,
+  quietHoursSummaryForUpdate,
+  type NotificationPreferenceState,
+  type QuietHoursPresetId,
+  type QuietHoursSummary,
+} from '@/lib/notification-preferences';
+import {
+  registerPushNotificationDevice,
+  revokeAllPushNotificationDevices,
+  revokePushNotificationDevice,
+} from '@/lib/push-notifications';
 import {
   fetchFollowAlertPreferences,
   updateFollowAlertPreference,
+  updateFollowQuietHours,
 } from '@/lib/marketplace-api';
 
 type SavedFilter = 'all' | 'food_truck' | 'restaurant';
-type AlertPreference = 'live_nearby' | 'owner_update';
+type AlertPreference = 'owner_bundle';
+type PreferenceOperation = AlertPreference | 'quiet_hours';
+
+const QUIET_HOURS_OFF: QuietHoursSummary = {
+  state: 'off',
+  presetId: 'off',
+  start: null,
+  end: null,
+  timeZone: null,
+};
 
 export default function SavedScreen() {
-  const { followedIds, places, toggleFollow } = useMarketplaceStore();
+  const { followedIds, places, publicPlaces, toggleFollow } = useMarketplaceStore();
   const auth = useAuth();
+  const accountId = auth.status === 'authenticated' ? auth.account?.id : undefined;
   const [filter, setFilter] = useState<SavedFilter>('all');
-  const [nearbyAlerts, setNearbyAlerts] = useState(true);
-  const [ownerUpdates, setOwnerUpdates] = useState(true);
-  const [preferenceBusy, setPreferenceBusy] = useState<AlertPreference | 'loading' | null>(null);
+  const [ownerUpdatesState, setOwnerUpdatesState] = useState<NotificationPreferenceState>('none');
+  const [quietHours, setQuietHours] = useState<QuietHoursSummary>(QUIET_HOURS_OFF);
+  const [loadedPreferenceScope, setLoadedPreferenceScope] = useState<string | null>(null);
+  const [preferenceBusy, setPreferenceBusy] = useState<PreferenceOperation | 'loading' | null>(null);
   const [preferenceMessage, setPreferenceMessage] = useState('');
+  const [deliveryBusy, setDeliveryBusy] = useState(false);
+  const [deliveryMessage, setDeliveryMessage] = useState('');
+  const preferenceGeneration = useRef(0);
+  const deliveryGeneration = useRef(0);
+  const nativePushDeliveryAvailable =
+    featureFlags.pushNotifications && (Platform.OS === 'ios' || Platform.OS === 'android');
+  const webPushDeliveryAvailable = featureFlags.pushNotifications && Platform.OS === 'web' &&
+    typeof window !== 'undefined' && window.location.protocol === 'https:' &&
+    'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const pushDeliveryAvailable = nativePushDeliveryAvailable || webPushDeliveryAvailable;
+  const deviceTimeZone = useMemo(() => currentIanaTimeZone(), []);
 
-  const followedKey = followedIds.join(',');
+  const followedKey = [...followedIds].sort().join(',');
+  const hasFollowedPlaces = followedIds.length > 0;
+  const preferenceScope = accountId && hasFollowedPlaces ? `${accountId}:${followedKey}` : null;
+  const preferenceContext = useRef({ accountId, followedKey, preferenceScope });
+  const preferenceIsCurrent =
+    Boolean(preferenceScope) &&
+    loadedPreferenceScope === preferenceScope &&
+    preferenceBusy !== 'loading';
+  const visibleOwnerUpdatesState = preferenceIsCurrent ? ownerUpdatesState : 'none';
+  const visibleOwnerUpdates = visibleOwnerUpdatesState !== 'none';
+  const visibleQuietHours = preferenceIsCurrent ? quietHours : QUIET_HOURS_OFF;
 
   useEffect(() => {
-    if (!auth.isConfigured || auth.status !== 'authenticated' || !followedIds.length) return;
+    preferenceContext.current = { accountId, followedKey, preferenceScope };
+  }, [accountId, followedKey, preferenceScope]);
+
+  useEffect(() => {
+    const generation = ++preferenceGeneration.current;
     let active = true;
+    const requestedAccountId = accountId ?? '';
+    const requestedFollowedIds = [...followedIds];
+    const requestedScope = `${requestedAccountId}:${followedKey}`;
     const timer = setTimeout(() => {
-      if (!active) return;
+      if (!active || generation !== preferenceGeneration.current) return;
+      if (!auth.isConfigured || !accountId || !hasFollowedPlaces) {
+        setLoadedPreferenceScope(null);
+        setPreferenceBusy(null);
+        if (!hasFollowedPlaces) setPreferenceMessage('');
+        return;
+      }
+      setLoadedPreferenceScope(null);
       setPreferenceBusy('loading');
-      void fetchFollowAlertPreferences(followedIds).then((result) => {
-        if (!active) return;
+      setPreferenceMessage('');
+      void fetchFollowAlertPreferences(requestedFollowedIds, requestedAccountId).then((result) => {
+        if (!active || generation !== preferenceGeneration.current) return;
         if (result.ok && result.data) {
-          setNearbyAlerts(result.data.liveNearby);
-          setOwnerUpdates(result.data.ownerUpdates);
+          setOwnerUpdatesState(result.data.ownerUpdatesState);
+          setQuietHours(result.data.quietHours);
+          setLoadedPreferenceScope(requestedScope);
         } else if (!result.ok) {
           setPreferenceMessage(result.reason);
         }
@@ -55,7 +118,16 @@ export default function SavedScreen() {
     };
     // The stable key prevents a new request when only the array identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.isConfigured, auth.status, followedKey]);
+  }, [accountId, auth.isConfigured, followedKey, hasFollowedPlaces]);
+
+  useEffect(() => {
+    deliveryGeneration.current += 1;
+    const timer = setTimeout(() => {
+      setDeliveryBusy(false);
+      setDeliveryMessage('');
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [accountId, auth.assuranceLevel, auth.securityStatus]);
 
   const savePreference = async (field: AlertPreference, next: boolean) => {
     if (auth.isConfigured && auth.status !== 'authenticated') {
@@ -63,16 +135,33 @@ export default function SavedScreen() {
       return;
     }
 
-    const previous = field === 'live_nearby' ? nearbyAlerts : ownerUpdates;
-    if (field === 'live_nearby') setNearbyAlerts(next);
-    else setOwnerUpdates(next);
+    if (!accountId) {
+      router.push('/auth');
+      return;
+    }
+    const requestedScope = preferenceScope;
+    if (!requestedScope) return;
+    const requestedAccountId = accountId;
+    const requestedFollowedIds = [...followedIds];
+    const generation = ++preferenceGeneration.current;
+    const previous = visibleOwnerUpdatesState;
+    setOwnerUpdatesState(next ? 'all' : 'none');
+    setLoadedPreferenceScope(requestedScope);
     setPreferenceBusy(field);
     setPreferenceMessage('');
 
-    const result = await updateFollowAlertPreference(followedIds, field, next);
+    const result = await updateFollowAlertPreference(
+      requestedFollowedIds,
+      field,
+      next,
+      requestedAccountId,
+    );
+    if (
+      generation !== preferenceGeneration.current ||
+      preferenceContext.current.preferenceScope !== requestedScope
+    ) return;
     if (!result.ok) {
-      if (field === 'live_nearby') setNearbyAlerts(previous);
-      else setOwnerUpdates(previous);
+      setOwnerUpdatesState(previous);
       setPreferenceMessage(result.reason);
     } else {
       setPreferenceMessage(
@@ -84,9 +173,84 @@ export default function SavedScreen() {
     setPreferenceBusy(null);
   };
 
+  const saveQuietHours = async (presetId: QuietHoursPresetId) => {
+    if (auth.isConfigured && auth.status !== 'authenticated') {
+      router.push('/auth');
+      return;
+    }
+    if (!accountId) {
+      router.push('/auth');
+      return;
+    }
+    const requestedScope = preferenceScope;
+    if (!requestedScope) return;
+    const schedule = quietHoursForPreset(presetId, deviceTimeZone);
+    if (!schedule.ok) {
+      setPreferenceMessage(schedule.reason);
+      return;
+    }
+    const requestedAccountId = accountId;
+    const requestedFollowedIds = [...followedIds];
+    const generation = ++preferenceGeneration.current;
+    const previous = visibleQuietHours;
+    setQuietHours(quietHoursSummaryForUpdate(schedule.data));
+    setLoadedPreferenceScope(requestedScope);
+    setPreferenceBusy('quiet_hours');
+    setPreferenceMessage('');
+
+    const result = await updateFollowQuietHours(
+      requestedFollowedIds,
+      presetId,
+      deviceTimeZone,
+      requestedAccountId,
+    );
+    if (
+      generation !== preferenceGeneration.current ||
+      preferenceContext.current.preferenceScope !== requestedScope
+    ) return;
+    if (!result.ok) {
+      setQuietHours(previous);
+      setPreferenceMessage(result.reason);
+    } else {
+      setPreferenceMessage(
+        featureFlags.pushNotifications
+          ? 'Quiet hours saved for the places you follow.'
+          : 'Quiet hours saved to your account. Device push remains off for this release.'
+      );
+    }
+    setPreferenceBusy(null);
+  };
+
+  const changeDeviceDelivery = async (mode: 'enable' | 'disable_device' | 'unsubscribe') => {
+    if (auth.status !== 'authenticated' || !auth.account?.id) {
+      router.push('/auth');
+      return;
+    }
+    if (auth.assuranceLevel !== 'aal2') {
+      setDeliveryMessage('Verify a current authenticator code in Security first.');
+      router.push('/security');
+      return;
+    }
+    const requestedAccountId = auth.account.id;
+    const generation = ++deliveryGeneration.current;
+    setDeliveryBusy(true);
+    setDeliveryMessage('');
+    const result = mode === 'enable'
+      ? await registerPushNotificationDevice(requestedAccountId)
+      : mode === 'disable_device'
+        ? await revokePushNotificationDevice(requestedAccountId)
+        : await revokeAllPushNotificationDevices(requestedAccountId);
+    if (
+      generation !== deliveryGeneration.current ||
+      preferenceContext.current.accountId !== requestedAccountId
+    ) return;
+    setDeliveryMessage(result.ok ? result.message ?? 'Device alert setting updated.' : result.reason);
+    setDeliveryBusy(false);
+  };
+
   const followed = useMemo(
     () =>
-      places.filter(
+      filterHomeKitchenPlaces(places).filter(
         (place) =>
           followedIds.includes(place.id) &&
           (filter === 'all' || (filter === 'restaurant' ? place.category !== 'food_truck' : place.category === filter))
@@ -95,7 +259,7 @@ export default function SavedScreen() {
   );
 
   const followedWithUpdates = followed.filter((place) => place.update);
-  const recommendations = places
+  const recommendations = publicPlaces
     .filter((place) => !followedIds.includes(place.id))
     .sort((a, b) => b.trendingScore - a.trendingScore)
     .slice(0, 3);
@@ -154,7 +318,10 @@ export default function SavedScreen() {
             eyebrow="Following"
             title="Your saved places"
           />
-          <View style={styles.filterRow}>
+          <View
+            accessibilityLabel="Saved place category"
+            accessibilityRole="radiogroup"
+            style={styles.filterRow}>
             {(
               [
                 ['all', 'All'],
@@ -202,43 +369,170 @@ export default function SavedScreen() {
 
         <View style={styles.preferencePanel}>
           <SectionHeading
-            detail="Fine-grained controls prevent noisy alerts."
+            detail="Business choices and quiet hours are saved to your account. Delivery on this device is separate."
             eyebrow="Notifications"
-            title="Following alerts"
+            title="Alert settings"
           />
-          <View style={styles.preferenceRow}>
+          <View style={styles.deliveryRow}>
             <View style={styles.preferenceIcon}>
-              <FontAwesome6 color={palette.success} name="location-crosshairs" size={15} />
+              <FontAwesome6 color={palette.accent} name="bell" size={14} />
             </View>
             <View style={styles.preferenceCopy}>
-              <Text style={styles.preferenceTitle}>Goes live nearby</Text>
-              <Text style={styles.preferenceDetail}>Only when a followed business is within 5 miles.</Text>
+              <Text style={styles.preferenceTitle}>This device</Text>
+              <Text style={styles.preferenceDetail}>
+                {nativePushDeliveryAvailable
+                  ? 'Enable push for this signed device. Only product updates from places you follow are included.'
+                  : webPushDeliveryAvailable
+                    ? 'Enable push for this browser. Only product updates from places you follow are included.'
+                    : 'Push delivery is disabled for this release. Account preferences below are still saved.'}
+              </Text>
             </View>
-            <Switch
-              accessibilityLabel="Alert when followed businesses go live nearby"
-              disabled={preferenceBusy !== null || followedIds.length === 0}
-              onValueChange={(next) => void savePreference('live_nearby', next)}
-              thumbColor="#FFFFFF"
-              trackColor={{ false: palette.line, true: palette.success }}
-              value={nearbyAlerts}
-            />
+            {pushDeliveryAvailable ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={deliveryBusy}
+                onPress={() => void changeDeviceDelivery('enable')}
+                style={({ pressed }) => [styles.deliveryAction, pressed && styles.deliveryActionPressed]}>
+                <Text style={styles.deliveryActionText}>{deliveryBusy ? 'Working…' : 'Enable device'}</Text>
+              </Pressable>
+            ) : (
+              <View style={styles.inAppBadge}>
+                <Text style={styles.inAppBadgeText}>Push off</Text>
+              </View>
+            )}
           </View>
+          {pushDeliveryAvailable ? (
+            <View style={styles.deliveryDisableRow}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={deliveryBusy}
+                onPress={() => void changeDeviceDelivery('disable_device')}
+                style={styles.deliveryDisable}>
+                <Text style={styles.deliveryDisableText}>Remove this device</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={deliveryBusy}
+                onPress={() => void changeDeviceDelivery('unsubscribe')}
+                style={styles.deliveryDisable}>
+                <Text style={styles.deliveryDisableText}>Turn off account delivery</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {deliveryMessage ? (
+            <Text accessibilityLiveRegion="polite" style={styles.preferenceStatus}>
+              {deliveryMessage}
+            </Text>
+          ) : null}
           <View style={styles.preferenceRow}>
             <View style={styles.preferenceIcon}>
               <FontAwesome6 color={palette.accent} name="bullhorn" size={14} />
             </View>
             <View style={styles.preferenceCopy}>
-              <Text style={styles.preferenceTitle}>Owner updates</Text>
-              <Text style={styles.preferenceDetail}>Location changes, sold-out items, and extended hours.</Text>
+              <Text style={styles.preferenceTitle}>Places you follow</Text>
+              <Text style={styles.preferenceDetail}>
+                {visibleOwnerUpdatesState === 'all'
+                  ? 'All followed places can send location changes, menu returns, and owner updates. Turning this off applies to all.'
+                  : visibleOwnerUpdatesState === 'some'
+                    ? 'Some followed places or alert types are on. Changing this switch applies the new choice to all.'
+                    : 'Location changes, menu returns, and owner updates are off for every followed place.'}
+              </Text>
             </View>
             <Switch
-              accessibilityLabel="Alert for updates from followed business owners"
+              accessibilityHint="Changing this switch updates every followed business."
+              accessibilityLabel={`Account alerts for every followed business: ${visibleOwnerUpdatesState}`}
+              accessibilityValue={{ text: visibleOwnerUpdatesState }}
               disabled={preferenceBusy !== null || followedIds.length === 0}
-              onValueChange={(next) => void savePreference('owner_update', next)}
+              onValueChange={(next) => void savePreference('owner_bundle', next)}
               thumbColor="#FFFFFF"
               trackColor={{ false: palette.line, true: palette.success }}
-              value={ownerUpdates}
+              value={visibleOwnerUpdates}
             />
+          </View>
+          <View style={styles.quietHoursSection}>
+            <View style={styles.quietHoursHeader}>
+              <View style={styles.preferenceIcon}>
+                <FontAwesome6 color={palette.accentDeep} name="moon" size={14} />
+              </View>
+              <View style={styles.preferenceCopy}>
+                <Text style={styles.preferenceTitle}>Quiet hours</Text>
+                <Text style={styles.preferenceDetail}>
+                  {visibleQuietHours.state === 'mixed'
+                    ? 'Schedules currently vary by place. A preset aligns quiet hours without changing any business alert types.'
+                    : visibleQuietHours.presetId === 'custom'
+                      ? `A custom ${visibleQuietHours.start}–${visibleQuietHours.end} schedule is saved. Choose a preset to replace only quiet hours.`
+                      : 'Choose when future device alerts should pause. Business alert types stay unchanged.'}
+                </Text>
+              </View>
+              <View style={styles.inAppBadge}>
+                <Text style={styles.inAppBadgeText}>
+                  {visibleQuietHours.state === 'mixed'
+                    ? 'Varies'
+                    : visibleQuietHours.presetId === 'custom'
+                      ? 'Custom'
+                      : visibleQuietHours.state === 'off'
+                        ? 'Off'
+                        : 'Set'}
+                </Text>
+              </View>
+            </View>
+            <View
+              accessibilityLabel="Quiet hours presets"
+              accessibilityRole="radiogroup"
+              style={styles.quietHoursOptions}>
+              {QUIET_HOURS_PRESETS.map((preset) => {
+                const selected = visibleQuietHours.presetId === preset.id;
+                const timezoneRequired = preset.start !== null;
+                const disabled = preferenceBusy !== null || followedIds.length === 0 ||
+                  (timezoneRequired && !deviceTimeZone);
+                return (
+                  <Pressable
+                    accessibilityHint={timezoneRequired && deviceTimeZone
+                      ? `Uses ${deviceTimeZone}.`
+                      : undefined}
+                    accessibilityLabel={`${preset.label}. ${preset.detail}`}
+                    accessibilityRole="radio"
+                    aria-checked={selected}
+                    accessibilityState={{ checked: selected, disabled }}
+                    disabled={disabled}
+                    key={preset.id}
+                    onPress={() => void saveQuietHours(preset.id)}
+                    style={({ pressed }) => [
+                      styles.quietHoursOption,
+                      selected && styles.quietHoursOptionSelected,
+                      disabled && styles.quietHoursOptionDisabled,
+                      pressed && styles.quietHoursOptionPressed,
+                    ]}>
+                    <View style={[styles.radioOuter, selected && styles.radioOuterSelected]}>
+                      {selected ? <View style={styles.radioInner} /> : null}
+                    </View>
+                    <View style={styles.quietHoursOptionCopy}>
+                      <Text style={[styles.quietHoursOptionLabel, selected && styles.quietHoursOptionLabelSelected]}>
+                        {preset.label}
+                      </Text>
+                      <Text style={styles.quietHoursOptionDetail}>{preset.detail}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={styles.quietHoursTimezone}>
+              {deviceTimeZone
+                ? visibleQuietHours.timeZone && visibleQuietHours.timeZone !== deviceTimeZone
+                  ? `Saved schedule: ${visibleQuietHours.timeZone}. New presets use this device: ${deviceTimeZone}.`
+                  : visibleQuietHours.state === 'uniform' && !visibleQuietHours.timeZone
+                    ? `The saved schedule uses each registered device timezone. New presets use ${deviceTimeZone}.`
+                  : `Presets use ${deviceTimeZone}, including daylight-saving changes.`
+                : 'This device could not provide a verified IANA timezone. You can still turn quiet hours off.'}
+            </Text>
+          </View>
+          <View style={styles.preferenceNotice}>
+            <FontAwesome6 color={palette.muted} name="shield-halved" size={12} />
+            <Text style={styles.preferenceNoticeText}>
+              {pushDeliveryAvailable
+                ? 'Lock-screen messages stay generic. These controls do not request background location or opt you into marketing.'
+                : 'No notification provider is enabled in this release. These controls do not request background location or opt you into marketing.'}
+            </Text>
           </View>
           {preferenceBusy === 'loading' ? (
             <Text accessibilityLiveRegion="polite" style={styles.preferenceStatus}>
@@ -453,10 +747,139 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingTop: spacing.md,
   },
+  deliveryRow: {
+    alignItems: 'center',
+    borderTopColor: palette.line,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    paddingTop: spacing.md,
+  },
+  deliveryAction: {
+    backgroundColor: palette.ink,
+    borderRadius: radii.pill,
+    minHeight: 44,
+    paddingHorizontal: 15,
+    justifyContent: 'center',
+  },
+  deliveryActionPressed: {
+    opacity: 0.78,
+  },
+  deliveryActionText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  deliveryDisable: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  deliveryDisableRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+  },
+  deliveryDisableText: {
+    color: palette.accentDeep,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  quietHoursSection: {
+    borderTopColor: palette.line,
+    borderTopWidth: 1,
+    gap: spacing.md,
+    paddingTop: spacing.md,
+  },
+  quietHoursHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  quietHoursOptions: {
+    gap: spacing.sm,
+  },
+  quietHoursOption: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    minHeight: 56,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  quietHoursOptionSelected: {
+    backgroundColor: palette.accentSoft,
+    borderColor: palette.accent,
+  },
+  quietHoursOptionDisabled: {
+    opacity: 0.48,
+  },
+  quietHoursOptionPressed: {
+    opacity: 0.76,
+  },
+  quietHoursOptionCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  quietHoursOptionLabel: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  quietHoursOptionLabelSelected: {
+    color: palette.accentDeep,
+    fontWeight: '900',
+  },
+  quietHoursOptionDetail: {
+    color: palette.muted,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  quietHoursTimezone: {
+    color: palette.muted,
+    fontSize: 10,
+    lineHeight: 15,
+  },
+  radioOuter: {
+    alignItems: 'center',
+    borderColor: palette.line,
+    borderRadius: radii.pill,
+    borderWidth: 2,
+    height: 18,
+    justifyContent: 'center',
+    width: 18,
+  },
+  radioOuterSelected: {
+    borderColor: palette.accent,
+  },
+  radioInner: {
+    backgroundColor: palette.accent,
+    borderRadius: radii.pill,
+    height: 8,
+    width: 8,
+  },
+  inAppBadge: {
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.pill,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  inAppBadgeText: {
+    color: palette.accentDeep,
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
   preferenceIcon: {
     alignItems: 'center',
     backgroundColor: palette.bg,
     borderRadius: radii.md,
+    flexShrink: 0,
     height: 38,
     justifyContent: 'center',
     width: 38,
@@ -474,6 +897,20 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 11,
     lineHeight: 16,
+  },
+  preferenceNotice: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.bg,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  preferenceNoticeText: {
+    color: palette.muted,
+    flex: 1,
+    fontSize: 10,
+    lineHeight: 15,
   },
   preferenceStatus: {
     color: palette.muted,

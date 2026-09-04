@@ -24,6 +24,14 @@ export type MapFeature = PlaceMapFeature | ClusterMapFeature;
 const tileSize = 512;
 const maxMercatorLatitude = 85.05112878;
 
+export function mapPlaceIdentity(businessId: string, locationId?: string) {
+  return locationId ? `${businessId}:${locationId}` : businessId;
+}
+
+function mapPlaceFeatureId(place: Pick<Place, 'id' | 'locationId'>) {
+  return `place:${mapPlaceIdentity(place.id, place.locationId)}`;
+}
+
 export function normalizeLongitude(longitude: number) {
   if (!Number.isFinite(longitude)) return 0;
   return ((((longitude + 180) % 360) + 360) % 360) - 180;
@@ -40,6 +48,16 @@ export function viewportIsLiveInventoryEligible(bounds: {
     ? bounds.east - bounds.west
     : (180 - bounds.west) + (bounds.east + 180);
   return bounds.north > bounds.south && bounds.north - bounds.south <= 12 && longitudeSpan <= 12;
+}
+
+export function shouldRenderMapInventory({
+  viewportEligible,
+  inventorySuppressed,
+}: {
+  viewportEligible: boolean;
+  inventorySuppressed: boolean;
+}) {
+  return viewportEligible && !inventorySuppressed;
 }
 
 function worldPixel(latitude: number, longitude: number, zoom: number) {
@@ -60,63 +78,105 @@ function worldPixel(latitude: number, longitude: number, zoom: number) {
 export function clusterPlaces(
   places: Place[],
   zoom: number,
-  radiusPixels = 58
+  radiusPixels = 58,
+  maximumRenderedFeatures = Number.POSITIVE_INFINITY,
 ): MapFeature[] {
-  if (zoom >= 16 || places.length < 2) {
+  const renderedLimit = Number.isFinite(maximumRenderedFeatures)
+    ? Math.max(1, Math.floor(maximumRenderedFeatures))
+    : Number.POSITIVE_INFINITY;
+  if ((zoom >= 16 && places.length <= renderedLimit) || places.length < 2) {
     return places.map((place) => ({
       kind: 'place',
-      id: `place:${place.id}`,
+      id: mapPlaceFeatureId(place),
       latitude: place.latitude,
       longitude: place.longitude,
       place,
     }));
   }
 
-  const buckets = new Map<string, Place[]>();
-  for (const place of places) {
-    if (!Number.isFinite(place.latitude) || !Number.isFinite(place.longitude)) continue;
-    const pixel = worldPixel(place.latitude, place.longitude, zoom);
-    const key = `${Math.floor(pixel.x / radiusPixels)}:${Math.floor(pixel.y / radiusPixels)}`;
-    const bucket = buckets.get(key);
-    if (bucket) bucket.push(place);
-    else buckets.set(key, [place]);
-  }
+  let effectiveRadius = Math.max(1, radiusPixels);
+  let clustered: MapFeature[] = [];
+  do {
+    const buckets = new Map<string, Place[]>();
+    for (const place of places) {
+      if (!Number.isFinite(place.latitude) || !Number.isFinite(place.longitude)) continue;
+      const pixel = worldPixel(place.latitude, place.longitude, zoom);
+      const key = `${Math.floor(pixel.x / effectiveRadius)}:${Math.floor(pixel.y / effectiveRadius)}`;
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(place);
+      else buckets.set(key, [place]);
+    }
 
-  return [...buckets.entries()].map(([key, bucket]) => {
-    if (bucket.length === 1) {
-      const place = bucket[0];
+    clustered = [...buckets.entries()].map(([key, bucket]) => {
+      if (bucket.length === 1) {
+        const place = bucket[0];
+        return {
+          kind: 'place' as const,
+          id: mapPlaceFeatureId(place),
+          latitude: place.latitude,
+          longitude: place.longitude,
+          place,
+        };
+      }
+
+      const categories: Partial<Record<BusinessCategory, number>> = {};
+      let latitude = 0;
+      let sinLongitude = 0;
+      let cosLongitude = 0;
+      for (const place of bucket) {
+        categories[place.category] = (categories[place.category] ?? 0) + 1;
+        latitude += place.latitude;
+        const longitudeRadians = (place.longitude * Math.PI) / 180;
+        sinLongitude += Math.sin(longitudeRadians);
+        cosLongitude += Math.cos(longitudeRadians);
+      }
+
+      const longitude = (Math.atan2(sinLongitude, cosLongitude) * 180) / Math.PI;
       return {
-        kind: 'place' as const,
-        id: `place:${place.id}`,
-        latitude: place.latitude,
-        longitude: place.longitude,
-        place,
+        kind: 'cluster' as const,
+        id: `cluster:${zoom.toFixed(2)}:${Math.round(effectiveRadius)}:${key}`,
+        latitude: latitude / bucket.length,
+        longitude,
+        count: bucket.length,
+        categories,
+        places: bucket,
       };
-    }
+    });
+    effectiveRadius *= 1.6;
+  } while (clustered.length > renderedLimit);
 
-    const categories: Partial<Record<BusinessCategory, number>> = {};
-    let latitude = 0;
-    let sinLongitude = 0;
-    let cosLongitude = 0;
-    for (const place of bucket) {
-      categories[place.category] = (categories[place.category] ?? 0) + 1;
-      latitude += place.latitude;
-      const longitudeRadians = (place.longitude * Math.PI) / 180;
-      sinLongitude += Math.sin(longitudeRadians);
-      cosLongitude += Math.cos(longitudeRadians);
-    }
+  return clustered;
+}
 
-    const longitude = (Math.atan2(sinLongitude, cosLongitude) * 180) / Math.PI;
-    return {
-      kind: 'cluster' as const,
-      id: `cluster:${zoom.toFixed(2)}:${key}`,
-      latitude: latitude / bucket.length,
-      longitude,
-      count: bucket.length,
-      categories,
-      places: bucket,
-    };
-  });
+export function clusterPlacesWithSelection(
+  places: Place[],
+  zoom: number,
+  selectedId: string | undefined,
+  selectedLocationId: string | undefined,
+  maximumRenderedFeatures: number,
+  radiusPixels = 58,
+): MapFeature[] {
+  const selected = selectedId
+    ? places.find((place) =>
+        place.id === selectedId && (!selectedLocationId || place.locationId === selectedLocationId)
+      )
+    : undefined;
+  const renderedLimit = Math.max(2, Math.floor(maximumRenderedFeatures));
+  const clustered = clusterPlaces(
+    selected
+      ? places.filter((place) => mapPlaceFeatureId(place) !== mapPlaceFeatureId(selected))
+      : places,
+    zoom,
+    radiusPixels,
+    selected ? renderedLimit - 1 : renderedLimit,
+  );
+  return selected ? [...clustered, {
+    kind: 'place',
+    id: mapPlaceFeatureId(selected),
+    latitude: selected.latitude,
+    longitude: selected.longitude,
+    place: selected,
+  }] : clustered;
 }
 
 /**

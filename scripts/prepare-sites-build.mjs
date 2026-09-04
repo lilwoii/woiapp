@@ -1,23 +1,68 @@
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, rename } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const projectRoot = resolve(import.meta.dirname, '..');
-const outputDir = resolve(projectRoot, 'dist', 'server');
-const webOutputDir = resolve(projectRoot, 'dist');
-const hostingMetadataDir = resolve(webOutputDir, '.openai');
+export async function prepareSitesBuild(projectRoot = resolve(import.meta.dirname, '..')) {
+  const webOutputDir = resolve(projectRoot, 'dist');
+  const clientOutputDir = resolve(webOutputDir, 'client');
+  const serverOutputDir = resolve(webOutputDir, 'server');
+  const hostingMetadataDir = resolve(webOutputDir, '.openai');
+  const exportedEntries = await readdir(webOutputDir, { withFileTypes: true });
+  const reservedEntries = exportedEntries.filter((entry) =>
+    ['client', 'server', '.openai'].includes(entry.name)
+  );
 
-await mkdir(outputDir, { recursive: true });
-await mkdir(hostingMetadataDir, { recursive: true });
-await copyFile(resolve(projectRoot, 'hosting', 'worker.js'), resolve(outputDir, 'index.js'));
-await copyFile(
-  resolve(projectRoot, '.openai', 'hosting.json'),
-  resolve(hostingMetadataDir, 'hosting.json')
-);
-await copyFile(
-  resolve(projectRoot, 'assets', 'images', 'spottr-icon.png'),
-  resolve(webOutputDir, 'spottr-icon.png')
-);
-await copyFile(
-  resolve(projectRoot, 'assets', 'images', 'spottr-icon-maskable.png'),
-  resolve(webOutputDir, 'spottr-icon-maskable.png')
-);
+  if (reservedEntries.length) {
+    throw new Error(
+      `Refusing to package an ambiguous Sites export; reserved output already exists: ${reservedEntries
+        .map((entry) => entry.name)
+        .join(', ')}.`,
+    );
+  }
+
+  await mkdir(clientOutputDir, { recursive: false });
+  for (const entry of exportedEntries) {
+    await rename(resolve(webOutputDir, entry.name), resolve(clientOutputDir, entry.name));
+  }
+
+  await mkdir(serverOutputDir, { recursive: false });
+  await mkdir(hostingMetadataDir, { recursive: false });
+  await copyFile(resolve(projectRoot, 'hosting', 'worker.js'), resolve(serverOutputDir, 'index.js'));
+  await copyFile(
+    resolve(projectRoot, 'hosting', 'wrangler.json'),
+    resolve(serverOutputDir, 'wrangler.json'),
+  );
+  await copyFile(
+    resolve(projectRoot, 'hosting', 'assetsignore'),
+    resolve(clientOutputDir, '.assetsignore'),
+  );
+  await copyFile(
+    resolve(projectRoot, 'hosting', 'headers'),
+    resolve(clientOutputDir, '_headers'),
+  );
+  // Sites currently preprocesses archive-root static metadata before binding
+  // dist/client. Keep the canonical client copy as well for direct Workers deploys.
+  await copyFile(
+    resolve(projectRoot, 'hosting', 'headers'),
+    resolve(webOutputDir, '_headers'),
+  );
+  await copyFile(
+    resolve(projectRoot, '.openai', 'hosting.json'),
+    resolve(hostingMetadataDir, 'hosting.json'),
+  );
+  await copyFile(
+    resolve(projectRoot, 'assets', 'images', 'spottr-icon.png'),
+    resolve(clientOutputDir, 'spottr-icon.png'),
+  );
+  await copyFile(
+    resolve(projectRoot, 'assets', 'images', 'spottr-icon-maskable.png'),
+    resolve(clientOutputDir, 'spottr-icon-maskable.png'),
+  );
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  prepareSitesBuild().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

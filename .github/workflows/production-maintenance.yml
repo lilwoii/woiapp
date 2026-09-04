@@ -24,11 +24,16 @@ jobs:
         with:
           node-version: 22.13.1
 
-      - name: Run bounded deletion, media, and privacy cleanup
+      - name: Run bounded production maintenance
         env:
           SPOTTR_MAINTENANCE_SUPABASE_URL: ${{ secrets.SPOTTR_MAINTENANCE_SUPABASE_URL }}
           SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY: ${{ secrets.SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY }}
           SPOTTR_ACCOUNT_DELETE_WORKER_SECRET: ${{ secrets.SPOTTR_ACCOUNT_DELETE_WORKER_SECRET }}
           SPOTTR_MEDIA_CLEANUP_SECRET: ${{ secrets.SPOTTR_MEDIA_CLEANUP_SECRET }}
+          SPOTTR_MAINTENANCE_PUSH_ENABLED: ${{ vars.SPOTTR_MAINTENANCE_PUSH_ENABLED || 'false' }}
+          SPOTTR_PUSH_DISPATCH_SECRET: ${{ secrets.SPOTTR_PUSH_DISPATCH_SECRET }}
+          SPOTTR_PUSH_RECEIPT_SECRET: ${{ secrets.SPOTTR_PUSH_RECEIPT_SECRET }}
+          SPOTTR_MAINTENANCE_PAYMENTS_ENABLED: ${{ vars.SPOTTR_MAINTENANCE_PAYMENTS_ENABLED || 'false' }}
+          SPOTTR_PAYMENT_REFUND_WORKER_SECRET: ${{ secrets.SPOTTR_PAYMENT_REFUND_WORKER_SECRET }}
           SPOTTR_MAINTENANCE_HEARTBEAT_URL: ${{ secrets.SPOTTR_MAINTENANCE_HEARTBEAT_URL }}
         run: node scripts/production-maintenance.mjs

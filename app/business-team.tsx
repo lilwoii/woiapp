@@ -40,6 +40,14 @@ type Feedback = {
   tone: 'error' | 'success';
   message: string;
 };
+type BusinessTeamContentProps = {
+  businessId: string;
+  expectedUserId: string | null;
+};
+type TeamMutationOptions = {
+  confirmation?: Parameters<typeof confirmAction>[0];
+  onSuccess?: () => void;
+};
 
 const roleDescriptions: Record<AssignableBusinessTeamRole, string> = {
   manager:
@@ -83,9 +91,35 @@ function initials(value: string) {
 export default function BusinessTeamScreen() {
   const auth = useAuth();
   const params = useLocalSearchParams<{ businessId?: string | string[] }>();
-  const businessId = Array.isArray(params.businessId)
-    ? params.businessId[0] ?? ''
-    : params.businessId ?? '';
+  const businessId = (
+    Array.isArray(params.businessId)
+      ? (params.businessId[0] ?? '')
+      : (params.businessId ?? '')
+  ).trim();
+  const accountId =
+    auth.status === 'authenticated' && auth.account?.id ? auth.account.id : null;
+  const accountScope = accountId ? `account:${accountId}` : `session:${auth.status}`;
+  const accessScope =
+    auth.securityStatus === 'ready' &&
+    auth.mfaEnrolled &&
+    auth.assuranceLevel === 'aal2'
+      ? 'aal2'
+      : 'locked';
+
+  return (
+    <BusinessTeamContent
+      businessId={businessId}
+      expectedUserId={accountId}
+      key={`${accountScope}:${accessScope}:business-team:${businessId}`}
+    />
+  );
+}
+
+function BusinessTeamContent({
+  businessId,
+  expectedUserId,
+}: BusinessTeamContentProps) {
+  const auth = useAuth();
   const { width } = useWindowDimensions();
   const wide = width >= 920;
   const [team, setTeam] = useState<BusinessTeamWorkspace | null>(null);
@@ -103,17 +137,33 @@ export default function BusinessTeamScreen() {
   const requestSequence = useRef(0);
   const inviteRequestKey = useRef<string | null>(null);
   const transferRequestKeys = useRef<Record<string, string>>({});
+  const mounted = useRef(true);
+  const mutationGeneration = useRef(0);
+  const mutationBusy = useRef(false);
 
   const secureSession =
+    Boolean(expectedUserId) &&
     auth.isConfigured &&
     auth.status === 'authenticated' &&
     auth.securityStatus === 'ready' &&
     auth.mfaEnrolled &&
     auth.assuranceLevel === 'aal2';
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      requestSequence.current += 1;
+      mutationGeneration.current += 1;
+      mutationBusy.current = false;
+      inviteRequestKey.current = null;
+      transferRequestKeys.current = {};
+    };
+  }, []);
+
   const refresh = useCallback(
     async (quiet = false) => {
-      if (!secureSession || !businessId) return;
+      if (!secureSession || !businessId || !expectedUserId) return false;
       const request = requestSequence.current + 1;
       requestSequence.current = request;
       if (!quiet) setLoading(true);
@@ -121,10 +171,10 @@ export default function BusinessTeamScreen() {
       setInboxError(null);
 
       const [teamResult, inboxResult] = await Promise.all([
-        loadBusinessTeam(businessId),
-        loadMyBusinessInvitations(),
+        loadBusinessTeam(businessId, expectedUserId),
+        loadMyBusinessInvitations(expectedUserId),
       ]);
-      if (requestSequence.current !== request) return;
+      if (!mounted.current || requestSequence.current !== request) return false;
 
       if (teamResult.ok) {
         setTeam(teamResult.data);
@@ -141,8 +191,9 @@ export default function BusinessTeamScreen() {
         setInboxError(inboxResult.reason);
       }
       setLoading(false);
+      return true;
     },
-    [businessId, secureSession]
+    [businessId, expectedUserId, secureSession]
   );
 
   useEffect(() => {
@@ -164,45 +215,76 @@ export default function BusinessTeamScreen() {
   const runMutation = async (
     key: string,
     action: () => Promise<BusinessTeamResult>,
-    onSuccess?: () => void
+    options: TeamMutationOptions = {}
   ) => {
-    if (busyKey) return;
+    if (!secureSession || !expectedUserId || mutationBusy.current) return false;
+    mutationBusy.current = true;
+    const generation = mutationGeneration.current + 1;
+    mutationGeneration.current = generation;
+    const isCurrent = () =>
+      mounted.current && mutationGeneration.current === generation;
+    const release = () => {
+      mutationBusy.current = false;
+      setBusyKey(null);
+    };
     setBusyKey(key);
     setFeedback(null);
+    if (options.confirmation) {
+      const confirmed = await confirmAction(options.confirmation);
+      if (!isCurrent()) return false;
+      if (!confirmed) {
+        release();
+        return false;
+      }
+    }
     const result = await action();
+    if (!isCurrent()) return false;
     if (!result.ok) {
-      setBusyKey(null);
+      release();
       setFeedback({ tone: 'error', message: result.reason });
       return false;
     }
-    onSuccess?.();
+    options.onSuccess?.();
     setFeedback({
       tone: 'success',
       message: result.message ?? 'Team access updated.',
     });
     await refresh(true);
-    setBusyKey(null);
+    if (!isCurrent()) return false;
+    release();
     return true;
   };
 
   const sendInvitation = async () => {
-    if (!team || !inviteTarget.trim() || busyKey) return;
+    if (
+      !team ||
+      !expectedUserId ||
+      !inviteTarget.trim() ||
+      mutationBusy.current
+    ) {
+      return;
+    }
     const key =
       inviteRequestKey.current ?? createTeamIdempotencyKey('invite');
     inviteRequestKey.current = key;
     await runMutation(
       'invite',
       () =>
-        inviteBusinessTeamMember({
-          businessId: team.businessId,
-          target: inviteTarget,
-          role: inviteRole,
-          idempotencyKey: key,
-        }),
-      () => {
-        inviteRequestKey.current = null;
-        setInviteTarget('');
-        setInviteRole('staff');
+        inviteBusinessTeamMember(
+          {
+            businessId: team.businessId,
+            target: inviteTarget,
+            role: inviteRole,
+            idempotencyKey: key,
+          },
+          expectedUserId
+        ),
+      {
+        onSuccess: () => {
+          inviteRequestKey.current = null;
+          setInviteTarget('');
+          setInviteRole('staff');
+        },
       }
     );
   };
@@ -211,66 +293,90 @@ export default function BusinessTeamScreen() {
     member: BusinessTeamMember,
     nextRole: AssignableBusinessTeamRole
   ) => {
-    if (!team || member.role === nextRole || busyKey) return;
+    if (
+      !team ||
+      !expectedUserId ||
+      member.role === nextRole ||
+      mutationBusy.current
+    ) {
+      return;
+    }
     const demotion = member.role === 'manager' && nextRole === 'staff';
-    const confirmed = await confirmAction({
-      title: `${demotion ? 'Reduce' : 'Change'} ${member.displayName}'s access?`,
-      message: `${member.displayName} will become ${roleLabel(nextRole)}. ${roleDescriptions[nextRole]}`,
-      confirmLabel: demotion ? 'Change to staff' : 'Change to manager',
-      destructive: demotion,
-    });
-    if (!confirmed) return;
-    await runMutation(`role:${member.memberPublicId}`, () =>
-      changeBusinessMemberRole({
-        businessId: team.businessId,
-        memberPublicId: member.memberPublicId,
-        role: nextRole,
-      })
+    await runMutation(
+      `role:${member.memberPublicId}`,
+      () =>
+        changeBusinessMemberRole(
+          {
+            businessId: team.businessId,
+            memberPublicId: member.memberPublicId,
+            role: nextRole,
+          },
+          expectedUserId
+        ),
+      {
+        confirmation: {
+          title: `${demotion ? 'Reduce' : 'Change'} ${member.displayName}'s access?`,
+          message: `${member.displayName} will become ${roleLabel(nextRole)}. ${roleDescriptions[nextRole]}`,
+          confirmLabel: demotion ? 'Change to staff' : 'Change to manager',
+          destructive: demotion,
+        },
+      }
     );
   };
 
   const removeMember = async (member: BusinessTeamMember) => {
-    if (!team || busyKey) return;
-    const confirmed = await confirmAction({
-      title: `Remove ${member.displayName}?`,
-      message:
-        'Their business access ends immediately. Their personal Spottr account is not deleted.',
-      confirmLabel: 'Remove access',
-      destructive: true,
-    });
-    if (!confirmed) return;
-    await runMutation(`revoke:${member.memberPublicId}`, () =>
-      revokeBusinessTeamAccess({
-        businessId: team.businessId,
-        memberPublicId: member.memberPublicId,
-      })
+    if (!team || !expectedUserId || mutationBusy.current) return;
+    await runMutation(
+      `revoke:${member.memberPublicId}`,
+      () =>
+        revokeBusinessTeamAccess(
+          {
+            businessId: team.businessId,
+            memberPublicId: member.memberPublicId,
+          },
+          expectedUserId
+        ),
+      {
+        confirmation: {
+          title: `Remove ${member.displayName}?`,
+          message:
+            'Their business access ends immediately. Their personal Spottr account is not deleted.',
+          confirmLabel: 'Remove access',
+          destructive: true,
+        },
+      }
     );
   };
 
   const transferOwnership = async (member: BusinessTeamMember) => {
-    if (!team || busyKey) return;
-    const confirmed = await confirmAction({
-      title: `Transfer ownership to ${member.displayName}?`,
-      message:
-        'This takes effect immediately. They will control team roles and future ownership transfers. Your role will become manager.',
-      confirmLabel: 'Transfer ownership',
-      destructive: true,
-    });
-    if (!confirmed) return;
-    const key =
-      transferRequestKeys.current[member.memberPublicId] ??
-      createTeamIdempotencyKey('transfer');
-    transferRequestKeys.current[member.memberPublicId] = key;
+    if (!team || !expectedUserId || mutationBusy.current) return;
     await runMutation(
       `transfer:${member.memberPublicId}`,
-      () =>
-        transferBusinessOwnership({
-          businessId: team.businessId,
-          memberPublicId: member.memberPublicId,
-          idempotencyKey: key,
-        }),
       () => {
-        delete transferRequestKeys.current[member.memberPublicId];
+        const key =
+          transferRequestKeys.current[member.memberPublicId] ??
+          createTeamIdempotencyKey('transfer');
+        transferRequestKeys.current[member.memberPublicId] = key;
+        return transferBusinessOwnership(
+          {
+            businessId: team.businessId,
+            memberPublicId: member.memberPublicId,
+            idempotencyKey: key,
+          },
+          expectedUserId
+        );
+      },
+      {
+        confirmation: {
+          title: `Transfer ownership to ${member.displayName}?`,
+          message:
+            'This takes effect immediately. They will control team roles and future ownership transfers. Your role will become manager.',
+          confirmLabel: 'Transfer ownership',
+          destructive: true,
+        },
+        onSuccess: () => {
+          delete transferRequestKeys.current[member.memberPublicId];
+        },
       }
     );
   };
@@ -279,41 +385,61 @@ export default function BusinessTeamScreen() {
     invitation: BusinessTeamInvitation,
     decision: 'accept' | 'decline'
   ) => {
-    if (busyKey) return;
-    if (decision === 'decline') {
-      const confirmed = await confirmAction({
-        title: `Decline ${invitation.businessName}'s invitation?`,
-        message: 'The business can send another invitation later.',
-        confirmLabel: 'Decline invitation',
-        destructive: true,
-      });
-      if (!confirmed) return;
-    }
-    await runMutation(`invitation:${invitation.invitationId}`, () =>
-      respondToBusinessInvitation({
-        invitationId: invitation.invitationId,
-        decision,
-      })
+    if (!expectedUserId || mutationBusy.current) return;
+    await runMutation(
+      `invitation:${invitation.invitationId}`,
+      () =>
+        respondToBusinessInvitation(
+          {
+            invitationId: invitation.invitationId,
+            decision,
+          },
+          expectedUserId
+        ),
+      {
+        confirmation:
+          decision === 'decline'
+            ? {
+                title: `Decline ${invitation.businessName}'s invitation?`,
+                message: 'The business can send another invitation later.',
+                confirmLabel: 'Decline invitation',
+                destructive: true,
+              }
+            : undefined,
+      }
     );
   };
 
   const cancelBusinessInvitation = async (
     invitation: BusinessTeamInvitation
   ) => {
-    if (!team || busyKey || invitation.state !== 'pending') return;
-    const confirmed = await confirmAction({
-      title: `Cancel invitation for ${invitation.targetHint}?`,
-      message:
-        'The invitation will stop working immediately. You can send a new invitation later.',
-      confirmLabel: 'Cancel invitation',
-      destructive: true,
-    });
-    if (!confirmed) return;
-    await runMutation(`revoke-invite:${invitation.invitationId}`, () =>
-      revokeBusinessTeamInvitation({
-        businessId: team.businessId,
-        invitationId: invitation.invitationId,
-      })
+    if (
+      !team ||
+      !expectedUserId ||
+      mutationBusy.current ||
+      invitation.state !== 'pending'
+    ) {
+      return;
+    }
+    await runMutation(
+      `revoke-invite:${invitation.invitationId}`,
+      () =>
+        revokeBusinessTeamInvitation(
+          {
+            businessId: team.businessId,
+            invitationId: invitation.invitationId,
+          },
+          expectedUserId
+        ),
+      {
+        confirmation: {
+          title: `Cancel invitation for ${invitation.targetHint}?`,
+          message:
+            'The invitation will stop working immediately. You can send a new invitation later.',
+          confirmLabel: 'Cancel invitation',
+          destructive: true,
+        },
+      }
     );
   };
 

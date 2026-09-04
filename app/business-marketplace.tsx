@@ -1,6 +1,6 @@
 import FontAwesome6 from "@expo/vector-icons/FontAwesome6";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -29,12 +29,40 @@ import { confirmAction } from "@/lib/platform-dialog";
 
 type Notice = { tone: "error" | "success"; text: string };
 
+type BusinessMarketplaceWorkspaceProps = {
+  businessId: string;
+  expectedAccountId: string | null;
+};
+
 export default function BusinessMarketplaceScreen() {
   const auth = useAuth();
   const params = useLocalSearchParams<{ businessId?: string | string[] }>();
   const businessId = Array.isArray(params.businessId)
     ? params.businessId[0] ?? ""
     : params.businessId ?? "";
+  const expectedAccountId = auth.status === "authenticated"
+    ? auth.account?.id ?? null
+    : null;
+  const workspaceKey = auth.status === "authenticated"
+    ? `${expectedAccountId ?? "missing"}:${auth.securityStatus}:${
+      auth.assuranceLevel ?? "none"
+    }:${auth.mfaEnrolled}:${businessId}`
+    : `${auth.status}:${businessId}`;
+
+  return (
+    <BusinessMarketplaceWorkspace
+      businessId={businessId}
+      expectedAccountId={expectedAccountId}
+      key={workspaceKey}
+    />
+  );
+}
+
+function BusinessMarketplaceWorkspace({
+  businessId,
+  expectedAccountId,
+}: BusinessMarketplaceWorkspaceProps) {
+  const auth = useAuth();
   const [controls, setControls] = useState<MarketplaceControls | null>(null);
   const [settings, setSettings] = useState<NeighborhoodPickupSettings | null>(
     null,
@@ -44,20 +72,35 @@ export default function BusinessMarketplaceScreen() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const secureSession = auth.status === "authenticated" &&
+  const requestGeneration = useRef(0);
+  const mounted = useRef(true);
+  const secureSession = Boolean(expectedAccountId) &&
+    auth.status === "authenticated" &&
     auth.securityStatus === "ready" &&
     auth.mfaEnrolled &&
     auth.assuranceLevel === "aal2";
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      requestGeneration.current += 1;
+    };
+  }, []);
+
   const load = useCallback(async () => {
-    if (!secureSession || !businessId) return;
+    if (!secureSession || !businessId || !expectedAccountId) return;
+    const generation = ++requestGeneration.current;
     setLoading(true);
     setNotice(null);
-    const result = await loadBusinessMarketplace(businessId);
+    const result = await loadBusinessMarketplace(expectedAccountId, businessId);
+    if (!mounted.current || generation !== requestGeneration.current) return;
     setLoading(false);
     if (!result.ok) {
       setControls(null);
+      setSettings(null);
       setSuggestions([]);
+      setSelectedRoutes([]);
       setNotice({ tone: "error", text: result.reason });
       return;
     }
@@ -70,21 +113,29 @@ export default function BusinessMarketplaceScreen() {
         .sort((a, b) => (a.selectedOrdinal ?? 9) - (b.selectedOrdinal ?? 9))
         .map((entry) => entry.publicId),
     );
-  }, [businessId, secureSession]);
+  }, [businessId, expectedAccountId, secureSession]);
 
   useEffect(() => {
+    if (!secureSession || !businessId || !expectedAccountId) {
+      requestGeneration.current += 1;
+      return;
+    }
     const timer = setTimeout(() => void load(), 0);
     return () => clearTimeout(timer);
-  }, [load]);
+  }, [businessId, expectedAccountId, load, secureSession]);
 
   const toggleChat = async (enabled: boolean) => {
-    if (!controls || busy) return;
+    if (!controls || busy || !secureSession || !expectedAccountId) return;
+    const generation = ++requestGeneration.current;
+    setLoading(false);
     setBusy("chat");
     setNotice(null);
     const result = await setBusinessMarketplaceChat(
+      expectedAccountId,
       controls.businessId,
       enabled,
     );
+    if (!mounted.current || generation !== requestGeneration.current) return;
     setBusy(null);
     if (!result.ok) {
       setNotice({ tone: "error", text: result.reason });
@@ -109,13 +160,17 @@ export default function BusinessMarketplaceScreen() {
     ));
 
   const saveRoutes = async () => {
-    if (!controls || busy) return;
+    if (!controls || busy || !secureSession || !expectedAccountId) return;
+    const generation = ++requestGeneration.current;
+    setLoading(false);
     setBusy("routes");
     setNotice(null);
     const result = await setBusinessMeetingRoutes(
+      expectedAccountId,
       controls.businessId,
       selectedRoutes,
     );
+    if (!mounted.current || generation !== requestGeneration.current) return;
     setBusy(null);
     if (!result.ok) {
       setNotice({ tone: "error", text: result.reason });
@@ -129,7 +184,10 @@ export default function BusinessMarketplaceScreen() {
   };
 
   const toggleResidence = async (enabled: boolean) => {
-    if (!controls || !settings || busy) return;
+    if (!controls || !settings || busy || !secureSession || !expectedAccountId) {
+      return;
+    }
+    const intentGeneration = requestGeneration.current;
     if (
       enabled && !(await confirmAction({
         title: "Enable residence pickup?",
@@ -138,12 +196,22 @@ export default function BusinessMarketplaceScreen() {
         confirmLabel: "Enable carefully",
       }))
     ) return;
+    if (
+      !mounted.current ||
+      intentGeneration !== requestGeneration.current ||
+      !secureSession ||
+      !expectedAccountId
+    ) return;
+    const generation = ++requestGeneration.current;
+    setLoading(false);
     setBusy("residence");
     setNotice(null);
     const result = await setNeighborhoodResidencePickup(
+      expectedAccountId,
       controls.businessId,
       enabled,
     );
+    if (!mounted.current || generation !== requestGeneration.current) return;
     setBusy(null);
     if (!result.ok) {
       setNotice({ tone: "error", text: result.reason });

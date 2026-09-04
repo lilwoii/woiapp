@@ -110,8 +110,23 @@ begin
   where p.schemaname = 'public'
     and p.tablename = 'weekly_hours'
     and p.policyname = 'active members manage weekly hours';
-  if policy_expression not like '%can_manage_business_draft%' then
+  if policy_expression is null
+    or policy_expression not like '%can_manage_business_draft%'
+  then
     raise exception 'Weekly-hours mutation policy is not draft/AAL2 constrained';
+  end if;
+
+  select p.qual
+  into policy_expression
+  from pg_catalog.pg_policies p
+  where p.schemaname = 'public'
+    and p.tablename = 'home_kitchen_permits'
+    and p.policyname = 'owners and managers read permit status';
+  if policy_expression is null
+    or policy_expression not like '%has_aal2%'
+    or policy_expression not like '%is_business_member%'
+  then
+    raise exception 'Home-kitchen permit reads are not member/AAL2 constrained';
   end if;
 
   if not exists (
@@ -203,9 +218,17 @@ begin
     from unnest(array[
       'submit_business_update',
       'submit_business_response',
+      'set_business_live_status',
+      'set_menu_item_availability',
       'list_pending_content_moderation',
       'decide_content_moderation',
       'nominate_business_logo',
+      'create_business_draft',
+      'submit_business_claim',
+      'submit_business_revision',
+      'submit_business_for_review',
+      'schedule_mobile_stop',
+      'cancel_mobile_stop',
       'get_business_team',
       'invite_business_member',
       'list_my_business_invitations',
@@ -228,6 +251,39 @@ begin
     null;
   else
     raise exception 'A required privileged business RPC is missing AAL2';
+  end if;
+
+  if exists (
+    select 1
+    from unnest(array[
+      'invite_business_member',
+      'respond_business_invitation',
+      'set_business_member_role',
+      'revoke_business_member',
+      'revoke_business_invitation',
+      'transfer_business_ownership',
+      'nominate_business_logo',
+      'submit_business_revision',
+      'submit_business_for_review',
+      'schedule_mobile_stop',
+      'cancel_mobile_stop',
+      'submit_business_update',
+      'submit_business_response',
+      'set_business_live_status',
+      'set_menu_item_availability'
+    ]) required(name)
+    where not exists (
+      select 1
+      from pg_catalog.pg_proc p
+      join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+        and p.proname = required.name
+        and p.prosecdef
+        and pg_catalog.pg_get_functiondef(p.oid) like '%from public.businesses%'
+        and pg_catalog.pg_get_functiondef(p.oid) like '%for update%'
+    )
+  ) then
+    raise exception 'A privileged business mutation is missing authority serialization';
   end if;
 
   if not exists (
@@ -378,6 +434,38 @@ begin
       and pg_catalog.pg_get_functiondef(p.oid) not like '%confirmed_by%'
   ) then
     raise exception 'Account export omits owned business data or leaks staff attribution';
+  end if;
+
+  if private.content_is_professional('f.u.c.k')
+    or private.content_is_professional('f!u!c!k')
+    or private.content_is_professional('sh1t')
+    or private.content_is_professional('m0therfuuucker')
+    or not private.content_is_professional('Bastille pastries and classical bass')
+  then
+    raise exception 'Professional-content enforcement is bypassable or over-broad';
+  end if;
+
+  if pg_catalog.pg_get_functiondef(
+    'public.submit_business_claim(uuid,text,text)'::regprocedure
+  ) not like '%CLAIM_VERIFICATION_SERVICE_REQUIRED%'
+  then
+    raise exception 'Business ownership claims do not fail closed without verification proof';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_trigger trigger_row
+    join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
+    join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
+    where schema_row.nspname = 'public'
+      and table_row.relname = 'business_claims'
+      and trigger_row.tgname = 'require_business_claim_verification_receipt'
+      and not trigger_row.tgisinternal
+  ) or pg_catalog.pg_get_functiondef(
+    'private.require_business_claim_verification_receipt()'::regprocedure
+  ) not like '%CLAIM_VERIFICATION_RECEIPT_REQUIRED%'
+  then
+    raise exception 'Legacy business claims can still be approved without proof';
   end if;
 end;
 $contract$;

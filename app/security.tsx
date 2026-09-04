@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -21,7 +21,6 @@ import {
   getMfaOverview,
   MfaOverview,
   removeTotp,
-  signOutAllSessions,
   TotpEnrollment,
   verifyTotp,
 } from '@/lib/account-security';
@@ -37,22 +36,31 @@ export default function SecurityScreen() {
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
 
-  const load = useCallback(async () => {
-    if (auth.status !== 'authenticated') return;
-    setBusy(true);
-    const result = await getMfaOverview();
-    setBusy(false);
-    if (!result.ok) {
-      setFeedback({ type: 'error', text: result.reason });
-      return;
-    }
-    setOverview(result.data ?? null);
-  }, [auth.status]);
-
   useEffect(() => {
-    const timer = setTimeout(() => void load(), 0);
-    return () => clearTimeout(timer);
-  }, [load]);
+    let cancelled = false;
+    const expectedUserId = auth.account?.id;
+    const timer = setTimeout(() => {
+      if (auth.status !== 'authenticated' || !expectedUserId) {
+        setOverview(null);
+        setBusy(false);
+        return;
+      }
+      setBusy(true);
+      void getMfaOverview(expectedUserId).then((result) => {
+        if (cancelled) return;
+        setBusy(false);
+        if (!result.ok) {
+          setFeedback({ type: 'error', text: result.reason });
+          return;
+        }
+        setOverview(result.data ?? null);
+      });
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [auth.account?.id, auth.status]);
 
   const beginEnrollment = async () => {
     setBusy(true);
@@ -134,13 +142,20 @@ export default function SecurityScreen() {
     });
     if (!confirmed) return;
     setBusy(true);
-    const result = await signOutAllSessions();
+    const result = await auth.signOutAllSessions();
     setBusy(false);
     if (!result.ok) {
       setFeedback({ type: 'error', text: result.reason });
       return;
     }
-    router.replace('/auth');
+    if (result.data?.signedOutCurrentSession) {
+      router.replace('/auth');
+      return;
+    }
+    setFeedback({
+      type: 'success',
+      text: result.message ?? 'The prior account sessions were revoked.',
+    });
   };
 
   const openAuthenticator = async () => {

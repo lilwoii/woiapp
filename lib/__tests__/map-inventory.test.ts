@@ -1,5 +1,10 @@
 import { seedPlaces } from '@/data/places';
-import { filterMapInventoryCategories, filterPlacesForEnabledCategories } from '@/lib/map-inventory';
+import {
+  filterMapInventoryCategories,
+  filterPlacesForEnabledCategories,
+  mapLogoPaths,
+  MAX_MAP_LOGO_URLS,
+} from '@/lib/map-inventory';
 import type { MapInventoryFeature } from '@/types/map';
 
 describe('map inventory category gates', () => {
@@ -44,5 +49,19 @@ describe('map inventory category gates', () => {
       [foodTruck!, homeKitchen!],
       new Set(['food_truck']),
     )).toEqual([foodTruck]);
+  });
+
+  it('bounds map logo signing to the rendered marker budget', () => {
+    const paths = mapLogoPaths([
+      { logo_path: 'first.png' },
+      { logo_path: 'first.png' },
+      ...Array.from({ length: MAX_MAP_LOGO_URLS + 10 }, (_, index) => ({
+        logo_path: `logo-${index}.png`,
+      })),
+    ]);
+
+    expect(paths).toHaveLength(MAX_MAP_LOGO_URLS);
+    expect(paths[0]).toBe('first.png');
+    expect(new Set(paths).size).toBe(paths.length);
   });
 });

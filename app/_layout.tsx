@@ -1,8 +1,6 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { StatusBar } from 'expo-status-bar';
 import { DefaultTheme, Stack, ThemeProvider } from 'expo-router';
-import Head from 'expo-router/head';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { useEffect } from 'react';
@@ -35,7 +33,6 @@ const theme = {
 export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    ...FontAwesome.font,
     ...FontAwesome6.font,
   });
 
@@ -59,9 +56,6 @@ export default function RootLayout() {
         <AuthProvider>
           <MarketplaceStoreProvider>
             <ThemeProvider value={theme}>
-              <Head>
-                <title>Spottr · Live local food, mapped</title>
-              </Head>
               <StatusBar style="dark" />
               <RouteFocusManager />
               <Stack
@@ -74,8 +68,15 @@ export default function RootLayout() {
                 }}>
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="place/[id]" options={{ headerShown: false }} />
+                <Stack.Screen name="profile/[id]" options={{ headerShown: false }} />
+                <Stack.Screen name="profile-edit" options={{ headerShown: false }} />
+                <Stack.Screen name="creator-invite" options={{ headerShown: false }} />
+                <Stack.Screen name="creator-invitations" options={{ headerShown: false }} />
+                <Stack.Screen name="promotion-studio" options={{ headerShown: false }} />
                 <Stack.Screen name="navigation/[id]" options={{ headerShown: false }} />
                 <Stack.Screen name="order/[id]" options={{ headerShown: false }} />
+                <Stack.Screen name="pickup/[id]" options={{ headerShown: false }} />
+                <Stack.Screen name="orders" options={{ headerShown: false }} />
                 <Stack.Screen name="messages/index" options={{ headerShown: false }} />
                 <Stack.Screen name="messages/[id]" options={{ headerShown: false }} />
                 <Stack.Screen name="auth" options={{ headerShown: false, presentation: 'modal' }} />
@@ -83,7 +84,9 @@ export default function RootLayout() {
                 <Stack.Screen name="business-setup" options={{ headerShown: false }} />
                 <Stack.Screen name="business-team" options={{ headerShown: false }} />
                 <Stack.Screen name="business-profile" options={{ headerShown: false }} />
+                <Stack.Screen name="business-posts" options={{ headerShown: false }} />
                 <Stack.Screen name="business-marketplace" options={{ headerShown: false }} />
+                <Stack.Screen name="badges" options={{ headerShown: false }} />
                 <Stack.Screen name="report" options={{ headerShown: false, presentation: 'modal' }} />
                 <Stack.Screen name="privacy" options={{ headerShown: false }} />
                 <Stack.Screen name="safety" options={{ headerShown: false }} />
@@ -93,6 +96,7 @@ export default function RootLayout() {
                 <Stack.Screen name="security" options={{ headerShown: false }} />
                 <Stack.Screen name="moderation" options={{ headerShown: false }} />
                 <Stack.Screen name="marketplace-moderation" options={{ headerShown: false }} />
+                <Stack.Screen name="business-submission-moderation" options={{ headerShown: false }} />
               </Stack>
             </ThemeProvider>
           </MarketplaceStoreProvider>

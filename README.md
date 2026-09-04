@@ -15,7 +15,7 @@ account, safety, review, claim, or business mutations.
 
 - Foreground-location or city/ZIP discovery, with no fabricated live-area
   fallback
-- Food-truck-first categories, map markers, and nearby ordering
+- Food-truck-first categories, distinctive map markers, and a gated employee-only zero-money pickup pilot
 - Nearby, Popular, and Trending views
 - Server-computed effective status from timezone-aware hours, special hours,
   mobile stops, and expiring owner overrides
@@ -26,7 +26,7 @@ account, safety, review, claim, or business mutations.
 - Email/password accounts, case-insensitive unique usernames, PKCE recovery,
   TOTP enrollment/challenge, and global sign-out
 - AAL2-gated business onboarding, draft configuration, claims, mobile-stop
-  scheduling, account export, and account deletion
+  scheduling, protected pickup fulfillment, account export, and account deletion
 - Safe public database projections for directory, contact, location, review,
   aggregate, status, update, and approved-media reads
 - Report and block flows, server-controlled moderation states, rate limits,
@@ -100,11 +100,24 @@ that a production project has received or safely exercised it.
   provider agreement. Spottr must not scrape or clone Yelp, Google, DoorDash,
   Facebook Marketplace, or restaurant sites.
 - Home kitchens remain disabled until each jurisdiction has documented legal
-  approval, permit operations, privacy review, and incident ownership.
+  approval, permit operations, privacy review, and incident ownership. The
+  `EXPO_PUBLIC_HOME_KITCHENS_ENABLED` flag only controls client presentation;
+  migration `20260929000000_home_kitchen_global_launch_gate.sql` adds the
+  authoritative private, default-false server gate that also protects direct
+  place links, discovery projections, and marketplace chat. Only the
+  service-role launch-gate boundary may read or change that state.
 - Photo uploads remain disabled until scanning, re-encoding, moderation,
   retention, appeals, and deletion are operational.
-- Push remains disabled until APNs/FCM credentials, consent, preference
-  enforcement, and delivery/opt-out evidence exist.
+- Push remains disabled. The repository contains a private encrypted-token,
+  explicit-consent, event-reference outbox, bounded delivery, preference RPC,
+  sign-out revocation, fail-closed Expo dispatch/receipt adapter, and an
+  independently gated production-maintenance scheduler path. Production
+  credentials, scheduler activation and alerts, key-rotation drills, web VAPID,
+  signed-device tests, legal review, and delivery/opt-out evidence are still
+  required.
+- Sponsored placements remain disabled and shadow-only until advertiser terms,
+  payment/store-policy review, fraud operations, and finance reconciliation are
+  approved for the exact production deployment.
 - Production legal, privacy, safety, and support contacts must be supplied and
   reviewed; the repository does not invent them.
 - Signed iOS/Android builds, store metadata, privacy declarations, reviewer
@@ -118,4 +131,14 @@ The connected web project is identified by
 Sites workflow; do not create a duplicate project. See [RELEASE.md](docs/RELEASE.md)
 for the exact evidence and deployment checklist, [PRODUCT.md](docs/PRODUCT.md)
 for scope, [GLOBAL_DIRECTORY.md](docs/GLOBAL_DIRECTORY.md) for worldwide food
-inventory and map clustering, and [SECURITY.md](docs/SECURITY.md) for security boundaries.
+inventory and map clustering, [MAP_PLATFORM.md](docs/MAP_PLATFORM.md) for the
+licensed 3D/routing provider plan, and [SECURITY.md](docs/SECURITY.md) for security boundaries.
+
+The ordinary Quality workflow exports only the fail-closed release-candidate
+shell. A public-launch web artifact must come from the manual **Production web
+release artifact** workflow at the exact approved commit. Configure its
+`production-web` GitHub Environment with required reviewers, the publishable
+variables named in `.env.example`, and only the two restricted client keys used
+by that workflow. Server-role, provider-service, scanner, and worker secrets
+must never enter the client build. High-risk feature flags remain disabled in
+that workflow until their separate release evidence is approved.

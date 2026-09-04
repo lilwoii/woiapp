@@ -1,4 +1,3 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -25,18 +24,36 @@ import { PageShell } from '@/components/page-shell';
 import { Rating } from '@/components/rating';
 import { SectionHeading } from '@/components/section-heading';
 import { StatusPill } from '@/components/status-pill';
+import { TrustBadgeStrip } from '@/components/trust-badge-strip';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
-import { featureFlags } from '@/lib/features';
-import { phoneHref, placeShareUrl, safeHttpsUrl } from '@/lib/links';
+import {
+  featureFlags,
+  HOME_KITCHEN_UNAVAILABLE_REASON,
+  isHomeKitchenBlocked,
+  publicListingRouteUnavailableReason,
+} from '@/lib/features';
+import {
+  parsePublicLocationRouteParam,
+  phoneHref,
+  placeLocationRouteParams,
+  placeShareUrl,
+  safePublicHttpsUrl,
+} from '@/lib/links';
 import { isMarketplaceChatAvailable, startMarketplaceConversation } from '@/lib/marketplace-chat';
+import { externalDirectionsUrl } from '@/lib/navigation';
 import {
   blockUser,
   createMarketplaceIdempotencyKey,
+  fetchBusinessReviewsPage,
+  type ReviewSort,
 } from '@/lib/marketplace-api';
 import { confirmAction, showMessage } from '@/lib/platform-dialog';
-import { ReviewPhotoInput } from '@/types/marketplace';
+import { fetchBusinessBadges, fetchBusinessPosts } from '@/lib/social-feed';
+import type { PublicBadge } from '@/lib/trust-badges';
+import type { FeedItem } from '@/types/feed';
+import { ReviewPhotoInput, type Review } from '@/types/marketplace';
 
 const currency = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -46,7 +63,32 @@ const currency = new Intl.NumberFormat('en-US', {
 });
 
 export default function PlaceDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{
+    id?: string | string[];
+    location?: string | string[];
+  }>();
+  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const parsedLocationId = parsePublicLocationRouteParam(params.location);
+  const locationId = parsedLocationId ?? undefined;
+  const locationParamInvalid = parsedLocationId === null;
+  const { scopeKey } = useMarketplaceStore();
+  return <ScopedPlaceDetailScreen
+    id={id}
+    key={`${scopeKey}:place:${id ?? ''}:${locationId ?? ''}:${locationParamInvalid}`}
+    locationId={locationId}
+    locationParamInvalid={locationParamInvalid}
+  />;
+}
+
+function ScopedPlaceDetailScreen({
+  id,
+  locationId,
+  locationParamInvalid,
+}: {
+  id?: string;
+  locationId?: string;
+  locationParamInvalid: boolean;
+}) {
   const auth = useAuth();
   const {
     addReview,
@@ -58,8 +100,21 @@ export default function PlaceDetailScreen() {
   } = useMarketplaceStore();
   const { width } = useWindowDimensions();
   const wide = width >= 920;
-  const place = places.find((entry) => entry.id === id);
-  const chatEligibleCategory = place?.category === 'home_kitchen' || place?.category === 'pop_up';
+  // Detail routes may resolve a deep-link-only place kept in the account/
+  // detail cache. Public discovery remains filtered by provenance in the
+  // marketplace store, while this route still has the loaded record.
+  const loadedPlace = places.find((entry) =>
+    entry.id === id && (!locationId || entry.locationId === locationId)
+  );
+  const placeBlockedReason = locationParamInvalid
+    ? 'This location link is invalid.'
+    : publicListingRouteUnavailableReason(loadedPlace);
+  const placeBlocked = Boolean(placeBlockedReason);
+  // A managed home-kitchen record may remain in the account-scoped store for
+  // Studio. Never let that private cache become a public detail route.
+  const place = placeBlocked ? undefined : loadedPlace;
+  const chatEligibleCategory = place?.category === 'pop_up' ||
+    (place?.category === 'home_kitchen' && featureFlags.homeKitchens);
   const [rating, setRating] = useState(5);
   const [review, setReview] = useState('');
   const [reviewPhotos, setReviewPhotos] = useState<ReviewPhotoInput[]>([]);
@@ -68,11 +123,16 @@ export default function PlaceDetailScreen() {
   const [activeMenuSection, setActiveMenuSection] = useState(0);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [moreReviewsLoading, setMoreReviewsLoading] = useState(false);
+  const [reviewSort, setReviewSort] = useState<ReviewSort>('recent');
+  const [reviewView, setReviewView] = useState<{ reviews: Review[]; hasMore: boolean } | null>(null);
   const [chatAvailable, setChatAvailable] = useState(false);
   const [chatStarting, setChatStarting] = useState(false);
+  const [businessPosts, setBusinessPosts] = useState<FeedItem[]>([]);
+  const [businessBadges, setBusinessBadges] = useState<PublicBadge[]>([]);
+  const mounted = useRef(true);
   const reviewIntent = useRef<{ fingerprint: string; key: string } | null>(null);
   const [listingLoading, setListingLoading] = useState(
-    !place || (auth.isConfigured && !place.detailsLoaded)
+    !placeBlocked && (!place || (auth.isConfigured && !place.detailsLoaded))
   );
   const [listingError, setListingError] = useState<string | null>(null);
   const [reviewMessage, setReviewMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
@@ -80,17 +140,29 @@ export default function PlaceDetailScreen() {
   );
 
   useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     let active = true;
     const ready = Boolean(place && (!auth.isConfigured || place.detailsLoaded));
     const timer = setTimeout(() => {
       if (!active) return;
+      if (placeBlocked || locationParamInvalid) {
+        setListingLoading(false);
+        setListingError(placeBlockedReason);
+        return;
+      }
       if (!id || ready) {
         setListingLoading(false);
         return;
       }
       setListingLoading(true);
       setListingError(null);
-      void ensurePlace(id).then((result) => {
+      void ensurePlace(id, locationId).then((result) => {
         if (!active) return;
         setListingLoading(false);
         if (!result.ok) setListingError(result.reason);
@@ -100,16 +172,27 @@ export default function PlaceDetailScreen() {
       active = false;
       clearTimeout(timer);
     };
-  }, [auth.isConfigured, ensurePlace, id, place]);
+  }, [auth.isConfigured, ensurePlace, id, locationId, locationParamInvalid, place, placeBlocked, placeBlockedReason]);
 
   useEffect(() => {
     let active = true;
     if (!place || !chatEligibleCategory) return () => { active = false; };
-    void isMarketplaceChatAvailable(place.id).then((available) => {
+    void isMarketplaceChatAvailable(place.id, place.category).then((available) => {
       if (active) setChatAvailable(available);
     });
     return () => { active = false; };
   }, [chatEligibleCategory, place]);
+
+  useEffect(() => {
+    let active = true;
+    if (!place) return () => { active = false; };
+    void Promise.all([fetchBusinessPosts(place.id), fetchBusinessBadges(place.id)]).then(([postResult, badgeResult]) => {
+      if (!active) return;
+      if (postResult.ok && postResult.data) setBusinessPosts(postResult.data.items.slice(0, 5));
+      if (badgeResult.ok && badgeResult.data) setBusinessBadges(badgeResult.data);
+    });
+    return () => { active = false; };
+  }, [place]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined' || !place) return;
@@ -119,7 +202,7 @@ export default function PlaceDetailScreen() {
       ['meta[name="description"]', `${place.name}: ${place.description}`],
       ['meta[property="og:title"]', `${place.name} | Spottr`],
       ['meta[property="og:description"]', place.description],
-      ['meta[property="og:url"]', placeShareUrl(place.id)],
+      ['meta[property="og:url"]', placeShareUrl(place.id, place.locationId)],
     ] as const;
     const previous = values.map(([selector, value]) => {
       const element = document.querySelector<HTMLMetaElement>(selector);
@@ -161,23 +244,29 @@ export default function PlaceDetailScreen() {
   const followed = followedIds.includes(place.id);
   const selectedSection = place.menu[activeMenuSection] ?? place.menu[0];
   const callablePhone = phoneHref(place.phone);
-  const safeWebsite = safeHttpsUrl(place.websiteUrl);
+  const safeWebsite = safePublicHttpsUrl(place.websiteUrl);
   const canOpenPublicDirections = place.category !== 'home_kitchen';
 
   const openDirections = () => {
-    const url =
-      Platform.OS === 'ios'
-        ? `maps://?daddr=${place.latitude},${place.longitude}`
-        : `https://www.google.com/maps/dir/?api=1&destination=${place.latitude},${place.longitude}`;
-    void Linking.openURL(url);
+    const url = externalDirectionsUrl(place, Platform.OS);
+    if (!url) {
+      showMessage('Directions unavailable', 'This listing does not have a valid public destination.');
+      return;
+    }
+    void Linking.openURL(url).catch(() => {
+      showMessage('Directions unavailable', 'Your maps app could not open this destination.');
+    });
   };
 
   const openSpottrNavigation = () => {
-    router.push({ pathname: '/navigation/[id]', params: { id: place.id } } as Href);
+    router.push({
+      pathname: '/navigation/[id]',
+      params: placeLocationRouteParams(place.id, place.locationId),
+    } as Href);
   };
 
   const shareListing = async () => {
-    const url = placeShareUrl(place.id);
+    const url = placeShareUrl(place.id, place.locationId);
     try {
       await Share.share({
         message: `${place.name} on Spottr — ${place.todayHours}\n${url}`,
@@ -190,12 +279,18 @@ export default function PlaceDetailScreen() {
   };
 
   const openChat = async () => {
-    if (auth.status !== 'authenticated') {
+    if (isHomeKitchenBlocked(place.category)) {
+      showMessage('Chat unavailable', HOME_KITCHEN_UNAVAILABLE_REASON);
+      return;
+    }
+    const expectedUserId = auth.status === 'authenticated' ? auth.account?.id : null;
+    if (!expectedUserId) {
       router.push('/auth');
       return;
     }
     setChatStarting(true);
-    const result = await startMarketplaceConversation(place.id);
+    const result = await startMarketplaceConversation(place.id, expectedUserId, place.category);
+    if (!mounted.current) return;
     setChatStarting(false);
     if (!result.ok || !result.data) {
       showMessage('Chat unavailable', result.ok ? 'This conversation could not be opened.' : result.reason);
@@ -211,6 +306,7 @@ export default function PlaceDetailScreen() {
         message: 'Blocking is tied to your account so it applies across devices.',
         confirmLabel: 'Sign in',
       });
+      if (!mounted.current) return;
       if (continueToAuth) router.push('/auth');
       return;
     }
@@ -221,9 +317,10 @@ export default function PlaceDetailScreen() {
       confirmLabel: 'Block member',
       destructive: true,
     });
-    if (!confirmed) return;
+    if (!mounted.current || !confirmed) return;
 
-    const result = await blockUser(authorId);
+    const result = await blockUser(authorId, auth.account?.id);
+    if (!mounted.current) return;
     if (!result.ok) {
       showMessage('Could not block member', result.reason);
       return;
@@ -234,6 +331,7 @@ export default function PlaceDetailScreen() {
 
   const handleFollow = async () => {
     const result = await toggleFollow(place.id);
+    if (!mounted.current) return;
     if (!result.ok) {
       if (result.code === 'AUTH_REQUIRED') {
         const confirmed = await confirmAction({
@@ -241,6 +339,7 @@ export default function PlaceDetailScreen() {
           message: result.reason,
           confirmLabel: 'Sign in',
         });
+        if (!mounted.current) return;
         if (confirmed) router.push('/auth');
       } else {
         showMessage('Could not update this follow', result.reason);
@@ -263,6 +362,7 @@ export default function PlaceDetailScreen() {
     }
 
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!mounted.current) return;
     if (!permission.granted) {
       showMessage('Photo access needed', 'Allow photo access to attach images to your review.');
       return;
@@ -274,7 +374,7 @@ export default function PlaceDetailScreen() {
       quality: 0.8,
     });
 
-    if (result.canceled || !result.assets[0]?.uri) return;
+    if (!mounted.current || result.canceled || !result.assets[0]?.uri) return;
     const asset = result.assets[0];
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (asset.mimeType && !allowedTypes.includes(asset.mimeType)) {
@@ -326,6 +426,7 @@ export default function PlaceDetailScreen() {
       photoUploads: reviewPhotos,
       idempotencyKey: reviewIntent.current.key,
     });
+    if (!mounted.current) return;
     setReviewSubmitting(false);
     if (!result.ok) {
       setReviewMessage({ type: 'error', text: result.reason });
@@ -335,6 +436,7 @@ export default function PlaceDetailScreen() {
           message: result.reason,
           confirmLabel: 'Sign in',
         });
+        if (!mounted.current) return;
         if (confirmed) router.push('/auth');
       }
       return;
@@ -353,10 +455,54 @@ export default function PlaceDetailScreen() {
   const showMoreReviews = async () => {
     if (moreReviewsLoading) return;
     setMoreReviewsLoading(true);
+    if (reviewView) {
+      const result = await fetchBusinessReviewsPage(
+        place.id,
+        reviewView.reviews.length,
+        auth.account?.id,
+        reviewSort
+      );
+      if (!mounted.current) return;
+      setMoreReviewsLoading(false);
+      if (!result.ok || !result.data) {
+        showMessage('Reviews could not load', result.ok ? 'More reviews are unavailable.' : result.reason);
+        return;
+      }
+      setReviewView((current) => {
+        if (!current) return current;
+        const byId = new Map(current.reviews.map((review) => [review.id, review]));
+        for (const review of result.data?.reviews ?? []) byId.set(review.id, review);
+        return { reviews: [...byId.values()], hasMore: result.data?.hasMore ?? false };
+      });
+      return;
+    }
     const result = await loadMoreReviews(place.id);
+    if (!mounted.current) return;
     setMoreReviewsLoading(false);
     if (!result.ok) showMessage('Reviews could not load', result.reason);
   };
+
+  const changeReviewSort = async (nextSort: ReviewSort) => {
+    if (moreReviewsLoading || nextSort === reviewSort) return;
+    setReviewSort(nextSort);
+    if (nextSort === 'recent') {
+      setReviewView(null);
+      return;
+    }
+    setMoreReviewsLoading(true);
+    const result = await fetchBusinessReviewsPage(place.id, 0, auth.account?.id, nextSort);
+    if (!mounted.current) return;
+    setMoreReviewsLoading(false);
+    if (!result.ok || !result.data) {
+      setReviewSort('recent');
+      showMessage('Top reviews unavailable', result.ok ? 'Top reviews could not be loaded.' : result.reason);
+      return;
+    }
+    setReviewView({ reviews: result.data.reviews, hasMore: result.data.hasMore });
+  };
+
+  const displayedReviews = reviewView?.reviews ?? place.reviews;
+  const displayedReviewsHaveMore = reviewView?.hasMore ?? place.hasMoreReviews;
 
   return (
     <ScrollView
@@ -410,6 +556,7 @@ export default function PlaceDetailScreen() {
               </View>
             </View>
             <Text style={[styles.heroTitle, wide && styles.heroTitleWide]}>{place.name}</Text>
+            <TrustBadgeStrip badges={businessBadges} limit={4} showLabels />
             <Text style={styles.heroCategory}>
               {place.categoryLabel} · {place.cuisines.join(' · ')} · {'$'.repeat(place.priceLevel)}
             </Text>
@@ -428,21 +575,23 @@ export default function PlaceDetailScreen() {
         </ImageBackground>
 
         <View style={styles.actionBar}>
-          {featureFlags.pickupOrdering && place.pickup?.enabled && place.pickup.orderingMode === 'spottr' ? (
+          {featureFlags.pickupOrdering &&
+          place.verified &&
+          (place.category === 'restaurant' || place.category === 'food_truck') ? (
             <Pressable
-              accessibilityLabel="Pickup pilot"
+              accessibilityLabel={`Order pickup from ${place.name}`}
               accessibilityRole="button"
               onPress={() =>
                 router.push(
                   {
-                    pathname: '/order/[id]',
-                    params: { id: place.id },
+                    pathname: '/pickup/[id]',
+                    params: placeLocationRouteParams(place.id, place.locationId),
                   } as unknown as Href
                 )
               }
               style={styles.primaryAction}>
               <FontAwesome6 color="#FFFFFF" name="bag-shopping" size={14} />
-              <Text style={styles.primaryActionText}>Pickup pilot</Text>
+              <Text style={styles.primaryActionText}>Order pickup</Text>
             </Pressable>
           ) : null}
           {canOpenPublicDirections && featureFlags.inAppNavigation ? (
@@ -452,7 +601,11 @@ export default function PlaceDetailScreen() {
             </Pressable>
           ) : null}
           {canOpenPublicDirections ? (
-            <Pressable accessibilityLabel="Open directions in external maps" accessibilityRole="link" onPress={openDirections} style={styles.secondaryAction}>
+            <Pressable
+              accessibilityLabel={place.mobility ? 'Open directions to the next public stop' : 'Open directions in external maps'}
+              accessibilityRole="link"
+              onPress={openDirections}
+              style={styles.secondaryAction}>
               <FontAwesome6 color={palette.ink} name="arrow-up-right-from-square" size={13} />
               <Text style={styles.secondaryActionText}>Open in Maps</Text>
             </Pressable>
@@ -517,6 +670,30 @@ export default function PlaceDetailScreen() {
                   }
                   update={place.update}
                 />
+              </View>
+            ) : null}
+
+            {businessPosts.length ? (
+              <View style={styles.section}>
+                <SectionHeading detail="Photos and notes published by this business." eyebrow="From the business" title="Latest posts" />
+                <View style={styles.businessPosts}>
+                  {businessPosts.map((post) => (
+                    <View key={post.id} style={styles.businessPost}>
+                      <View style={styles.businessPostMeta}>
+                        <Text style={styles.businessPostName}>{place.name}</Text>
+                        <View style={styles.businessPostMetaActions}>
+                          <Text style={styles.businessPostTime}>{post.createdLabel} · {post.createdDateTimeLabel}</Text>
+                          <Pressable accessibilityLabel={`Report post from ${place.name}`} accessibilityRole="button" onPress={() => router.push({ pathname: '/report', params: { targetId: post.id, targetType: 'business_post' } } as never)} style={styles.businessPostReport}>
+                            <FontAwesome6 color={palette.muted} name="flag" size={8} />
+                            <Text style={styles.businessPostReportText}>Report</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                      {post.body ? <Text style={styles.businessPostBody}>{post.body}</Text> : null}
+                      {post.photos.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}><View style={styles.businessPostPhotos}>{post.photos.map((photo) => <Image key={photo} source={{ uri: photo }} style={styles.businessPostPhoto} />)}</View></ScrollView> : null}
+                    </View>
+                  ))}
+                </View>
               </View>
             ) : null}
 
@@ -640,7 +817,7 @@ export default function PlaceDetailScreen() {
                   <Text style={styles.reviewScore}>{place.rating.toFixed(1)}</Text>
                   <View style={styles.stars}>
                     {[1, 2, 3, 4, 5].map((star) => (
-                      <FontAwesome
+                      <FontAwesome6
                         color={star <= Math.round(place.rating) ? palette.sun : palette.line}
                         key={star}
                         name="star"
@@ -654,8 +831,28 @@ export default function PlaceDetailScreen() {
                   <Text style={styles.reliabilityLabel}>Updated {place.lastConfirmedAt.toLowerCase()}</Text>
                 </View>
               </View>
+              <View style={styles.reviewOrdering}>
+                <Text style={styles.reviewOrderingLabel}>ORDER</Text>
+                <View accessibilityLabel="Review order" accessibilityRole="tablist" style={styles.reviewOrderTabs}>
+                  {(['recent', 'top'] as const).map((item) => {
+                    const selected = reviewSort === item;
+                    return (
+                      <Pressable
+                        accessibilityRole="tab"
+                        accessibilityState={{ selected, busy: moreReviewsLoading && selected }}
+                        disabled={moreReviewsLoading}
+                        key={item}
+                        onPress={() => void changeReviewSort(item)}
+                        style={[styles.reviewOrderTab, selected && styles.reviewOrderTabActive]}>
+                        <Text style={[styles.reviewOrderText, selected && styles.reviewOrderTextActive]}>{item === 'recent' ? 'Recent' : 'Top'}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+              {reviewSort === 'top' ? <Text style={styles.reviewOrderNote}>Top weighs eligible helpful votes and earned reviewer badges. Sponsored placement is never included.</Text> : null}
               <View style={styles.reviewList}>
-                {place.reviews
+                {displayedReviews
                   .filter((item) => !item.authorId || !blockedAuthorIds.includes(item.authorId))
                   .map((item) => (
                   <View key={item.id} style={styles.reviewCard}>
@@ -664,7 +861,16 @@ export default function PlaceDetailScreen() {
                         <Text style={styles.reviewerInitial}>{item.displayName.charAt(0)}</Text>
                       </View>
                       <View style={styles.reviewerCopy}>
-                        <Text style={styles.reviewerName}>{item.displayName}</Text>
+                        <View style={styles.reviewerIdentity}>
+                          <Pressable
+                            accessibilityLabel={`View ${item.displayName} profile`}
+                            accessibilityRole={item.authorId ? 'link' : undefined}
+                            disabled={!item.authorId}
+                            onPress={() => item.authorId && router.push({ pathname: '/profile/[id]', params: { id: item.authorId } })}>
+                            <Text style={styles.reviewerName}>{item.displayName}</Text>
+                          </Pressable>
+                          <TrustBadgeStrip badges={item.badges ?? []} />
+                        </View>
                         <Text style={styles.reviewerMeta}>
                           @{item.username} · {item.createdAt}
                         </Text>
@@ -753,7 +959,7 @@ export default function PlaceDetailScreen() {
                     ) : null}
                   </View>
                 ))}
-                {place.hasMoreReviews ? (
+                {displayedReviewsHaveMore ? (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityState={{ busy: moreReviewsLoading }}
@@ -770,7 +976,7 @@ export default function PlaceDetailScreen() {
                     </Text>
                   </Pressable>
                 ) : null}
-                {!place.reviews.length ? (
+                {!displayedReviews.length ? (
                   <View style={styles.inlineEmpty}>
                     <FontAwesome6 color={palette.muted} name="comment" size={16} />
                     <Text style={styles.inlineEmptyText}>No approved reviews yet. Be the first to share a visit.</Text>
@@ -795,7 +1001,7 @@ export default function PlaceDetailScreen() {
                     key={value}
                     onPress={() => setRating(value)}
                     style={styles.ratingOption}>
-                    <FontAwesome color={value <= rating ? palette.sun : palette.line} name="star" size={25} />
+                    <FontAwesome6 color={value <= rating ? palette.sun : palette.line} name="star" size={25} />
                   </Pressable>
                 ))}
                 <Text style={styles.ratingPickerText}>{rating}.0</Text>
@@ -877,6 +1083,28 @@ export default function PlaceDetailScreen() {
                 <Text style={styles.infoTitle}>Location & hours</Text>
                 <Text style={styles.infoFresh}>Updated {place.lastConfirmedAt}</Text>
               </View>
+              {place.mobility ? (
+                <View accessibilityLiveRegion="polite" style={styles.movingNotice}>
+                  <View style={styles.movingNoticeIcon}>
+                    <FontAwesome6 color={palette.warning} name="truck-fast" size={15} />
+                  </View>
+                  <View style={styles.movingNoticeCopy}>
+                    <Text style={styles.movingNoticeLabel}>{place.mobility.label}</Text>
+                    <Text style={styles.movingNoticeAddress}>
+                      {[
+                        place.mobility.nextStop.address,
+                        place.mobility.nextStop.city,
+                        place.mobility.nextStop.region,
+                        place.mobility.nextStop.postalCode,
+                      ].filter(Boolean).join(', ')}
+                    </Text>
+                    <Text style={styles.movingNoticeWindow}>{place.mobility.nextStop.timeWindow}</Text>
+                    <Text style={styles.movingNoticePrivacy}>
+                      Destination schedule only — no live vehicle location is shared.
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
               <View style={styles.infoRow}>
                 <View style={styles.infoIcon}>
                   <FontAwesome6 color={palette.accent} name="location-dot" size={14} solid />
@@ -911,7 +1139,7 @@ export default function PlaceDetailScreen() {
                   ))}
                 </View>
               ) : null}
-              {place.nextStop ? (
+              {place.nextStop && !place.mobility ? (
                 <View style={styles.nextStop}>
                   <FontAwesome6 color={palette.accent} name="truck-fast" size={13} />
                   <View style={styles.nextStopCopy}>
@@ -931,7 +1159,7 @@ export default function PlaceDetailScreen() {
             </View>
 
             <View style={styles.infoPanel}>
-              <Text style={styles.infoTitle}>Accepted payments</Text>
+              <Text style={styles.infoTitle}>Ways to pay the business</Text>
               <View style={styles.paymentGrid}>
                 {place.payments.map((payment) => (
                   <View key={payment} style={styles.paymentChip}>
@@ -942,8 +1170,8 @@ export default function PlaceDetailScreen() {
               </View>
               <Text style={styles.paymentCaveat}>
                 {place.verified
-                  ? 'Payment details confirmed by the verified business.'
-                  : 'Payment details come from the listing source; confirm before ordering.'}
+                  ? 'Confirmed by the verified business. Spottr does not process these listing-level payment methods.'
+                  : 'Provided by the listing source; confirm directly. Spottr does not process these listing-level payment methods.'}
               </Text>
             </View>
 
@@ -976,7 +1204,8 @@ export default function PlaceDetailScreen() {
                 <FontAwesome6 color={palette.muted} name="flag" size={11} />
                 <Text style={styles.sourceReportText}>Report listing</Text>
               </Pressable>
-              {place.sourceLabel === 'Licensed provider' || place.sourceLabel === 'Community added' ? (
+              {featureFlags.businessClaims &&
+              (place.sourceLabel === 'Licensed provider' || place.sourceLabel === 'Community added') ? (
                 <Pressable
                   accessibilityLabel={`Are you the owner of ${place.name}? Claim this place`}
                   accessibilityRole="button"
@@ -1304,6 +1533,17 @@ const styles = StyleSheet.create({
     height: 220,
     width: 300,
   },
+  businessPosts: { borderTopColor: palette.line, borderTopWidth: 1 },
+  businessPost: { borderBottomColor: palette.line, borderBottomWidth: 1, gap: spacing.md, paddingVertical: spacing.lg },
+  businessPostMeta: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  businessPostMetaActions: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
+  businessPostName: { color: palette.ink, fontSize: 11, fontWeight: '900' },
+  businessPostTime: { color: palette.muted, fontSize: 8 },
+  businessPostReport: { alignItems: 'center', flexDirection: 'row', gap: 4, minHeight: 34, paddingHorizontal: spacing.xs },
+  businessPostReportText: { color: palette.muted, fontSize: 8, fontWeight: '800' },
+  businessPostBody: { color: palette.ink, fontSize: 12, lineHeight: 19 },
+  businessPostPhotos: { flexDirection: 'row', gap: spacing.sm },
+  businessPostPhoto: { borderRadius: radii.md, height: 164, width: 220 },
   reviewSummary: {
     alignItems: 'center',
     backgroundColor: palette.surface,
@@ -1337,6 +1577,21 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 10,
   },
+  reviewOrdering: {
+    alignItems: 'center',
+    borderBottomColor: palette.line,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingBottom: spacing.sm,
+  },
+  reviewOrderingLabel: { color: palette.muted, fontSize: 8, fontWeight: '900', letterSpacing: 1.1 },
+  reviewOrderTabs: { flexDirection: 'row', gap: 2 },
+  reviewOrderTab: { borderRadius: radii.pill, justifyContent: 'center', minHeight: 36, paddingHorizontal: 14 },
+  reviewOrderTabActive: { backgroundColor: palette.dark },
+  reviewOrderText: { color: palette.muted, fontSize: 10, fontWeight: '900', textTransform: 'capitalize' },
+  reviewOrderTextActive: { color: '#FFFFFF' },
+  reviewOrderNote: { color: palette.muted, fontSize: 9, lineHeight: 15, marginTop: -spacing.sm },
   reviewList: {
     gap: spacing.md,
   },
@@ -1385,6 +1640,12 @@ const styles = StyleSheet.create({
   reviewerCopy: {
     flex: 1,
     gap: 2,
+  },
+  reviewerIdentity: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
   },
   reviewerName: {
     color: palette.ink,
@@ -1623,6 +1884,48 @@ const styles = StyleSheet.create({
     color: palette.success,
     fontSize: 9,
     fontWeight: '800',
+  },
+  movingNotice: {
+    alignItems: 'flex-start',
+    backgroundColor: palette.warningSoft,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  movingNoticeIcon: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: radii.pill,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  movingNoticeCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  movingNoticeLabel: {
+    color: palette.warning,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  movingNoticeAddress: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
+    lineHeight: 16,
+  },
+  movingNoticeWindow: {
+    color: palette.ink,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  movingNoticePrivacy: {
+    color: palette.muted,
+    fontSize: 9,
+    lineHeight: 14,
+    marginTop: 2,
   },
   infoRow: {
     alignItems: 'flex-start',

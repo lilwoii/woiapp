@@ -1,5 +1,9 @@
 # Spottr release and operations runbook
 
+The current evidence snapshot and unresolved owner/external requirements are in
+[LAUNCH_STATUS.md](LAUNCH_STATUS.md). This runbook remains the authoritative
+acceptance procedure.
+
 Spottr is release-ready only when every required item below is supported by
 evidence for the exact source commit and target environment. A green local
 build, preview URL, schema file, or unsigned native export is not sufficient on
@@ -20,6 +24,9 @@ Required client-visible production values:
 - `EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY`, restricted to the release package and
   signing certificate
 - `EXPO_PUBLIC_MAP_STYLE_URL`
+- `EXPO_PUBLIC_MAP_CSP_ORIGINS`, containing every exact public HTTPS style,
+  tile, glyph, and sprite origin referenced by the licensed map style; it must
+  include the style document's origin
 - `EXPO_PUBLIC_MAP_ATTRIBUTION`
 - `EXPO_PUBLIC_MAP_ATTRIBUTION_URL`
 
@@ -27,9 +34,11 @@ Required client-visible production values:
 All client feature gates in [.env.example](../.env.example) remain false until
 their separate acceptance evidence exists.
 
-Configure Sites Worker values through Sites:
+Configure Sites Worker values through Sites. Set
+`EXPO_PUBLIC_MAP_CSP_ORIGINS` to the exact same value used by the verified web
+build so the HTML meta policy and HTTP header policy intersect without blocking
+licensed map resources. Also configure:
 
-- `SPOTTR_MAP_CSP_ORIGINS`
 - `SPOTTR_APPLE_TEAM_ID`
 - `SPOTTR_IOS_BUNDLE_ID`
 - `SPOTTR_ANDROID_PACKAGE`
@@ -41,8 +50,10 @@ Supabase. Service-role, scanner, moderation, provider, SMTP, and push
 credentials must never enter an `EXPO_PUBLIC_*` value or a committed `.env`.
 
 The production configuration gate in [app.config.ts](../app.config.ts) rejects
-missing/placeholder Supabase, app URL, EAS, Android map, web-map style, and
-attribution values.
+missing/placeholder Supabase, app URL, EAS, Android map, web-map style, map CSP,
+and attribution values. Map CSP entries must be exact public HTTPS origins with
+no credentials, path, query, fragment, custom port, wildcard, or private host;
+one malformed entry invalidates the full list.
 
 ## 2. Source-quality evidence
 
@@ -80,6 +91,10 @@ map response, real password sign-in, customer hydration, synthetic AAL2 owner-se
 hydration, Studio, and private-conversation listing. These are application-integration
 fixtures, not proof of an MFA ceremony or database RLS;
 populated production data and authorization still require live staging evidence.
+Both web and native release verifiers reject the fixture host, synthetic key,
+test credentials, test accounts, fixture role, and refresh-token markers if
+they appear in a production artifact. A fixture-contaminated export cannot
+satisfy the release gate or be deployed as Spottr.
 
 Two separate least-privilege CI jobs add baseline supply-chain evidence. One
 downloads a checksum-pinned TruffleHog binary and scans the complete reachable
@@ -97,6 +112,15 @@ preserve the SBOM artifact with the release record. This automation does not
 inspect unreachable/deleted Git
 objects, rotate credentials, determine exploitability, review licenses, or
 replace an independent security and dependency review.
+
+The separate CodeQL workflow analyzes JavaScript/TypeScript application code
+and GitHub Actions workflow code on pull requests, main-branch pushes, a weekly
+schedule, and manual dispatch. It uses the extended security query suite and
+uploads findings through GitHub's code-scanning channel with no repository
+secrets. Its actions are immutable-commit pinned and the main quality workflow
+tests those controls. A green CodeQL run is static-analysis evidence for the
+exact commit; it does not replace authenticated runtime penetration testing,
+business-logic review, mobile binary analysis, or target-environment testing.
 
 Required independent evidence before public launch:
 
@@ -163,9 +187,30 @@ Deploy and test:
 - `media-scan`
 - `media-cleanup`
 - `route-plan`
+- `public-discovery`
 
-Migration `20260810000000_media_lifecycle_serialization.sql` and the last four
-functions above are one controlled release unit. Keep both media gates false,
+Configure `SPOTTR_DISCOVERY_RATE_SECRET` as a dedicated 32+-character random
+server secret. Deploy the gateway while no client depends on it, apply
+`20260823000000_public_discovery_guard.sql` and
+`20260824000000_global_map_geography_bbox_repair.sql` in the same reviewed
+database change, smoke-test the gateway, and only then publish the matching
+clients. Do not revoke the direct RPC grants while a
+supported production client still calls them; use an explicitly reviewed
+compatibility rollout if that condition ever exists. Verify in the target
+project that `cf-connecting-ip` is supplied
+by the trusted Edge platform, that a missing header fails closed, and that raw
+IP addresses never appear in application tables or logs. Run map/nearby/search
+quota, concurrency, timeout, malformed-response, and lease-release drills under
+staging load before accepting the endpoint. Prove that timed-out PostgREST
+requests stop consuming database capacity under the target project's timeout
+and cancellation policy; the Edge HTTP abort alone is not that proof. The
+repository guard does not
+replace an external WAF, capacity evidence, or review of Supabase platform-log
+retention.
+
+Migration `20260810000000_media_lifecycle_serialization.sql` plus `media-stage`,
+`media-scan`, `media-cleanup`, and `route-plan` are one controlled release unit.
+Keep both media gates false,
 pause cleanup and deletion workers, drain legacy signed URLs for their full TTL
 plus scanner grace (or invalidate them), apply the migrations, deploy all
 matching functions, configure the internal deletion worker on a five-minute or
@@ -177,6 +222,22 @@ not acceptance evidence until its production secrets, heartbeat, and failure ale
 are verified.
 The media functions may be deployed while their gates remain false; deployment
 does not authorize uploads.
+
+The Quality workflow's disposable Supabase database intentionally seeds an
+account-deletion conflict immediately before the claim-evidence retention
+migration. It requires the unchanged migration to abort with the documented
+preflight conflict and verifies that preceding private DDL rolled back while the
+legacy claim, deletion marker, and object remain unchanged. A second fixture
+appends a test-only terminal failure after the exact migration body, proving the
+completed backfill, public-path clear, retirement constraint, and private DDL all
+roll back under the release harness's single transaction. The migration is then
+applied normally. The same isolated run uses two database sessions with an
+explicit ready/release handshake to prove that cleanup's shared storage barrier
+blocks the migration's exclusive barrier and that the exclusive barrier blocks
+cleanup. This is repository-level concurrency evidence only. The first live
+rollout must still pause and drain cleanup and deletion workers because a legacy
+worker may already hold an external Storage request after its database
+transaction has ended.
 
 Keep `EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED=false` and
 `SPOTTR_ROUTING_ENABLED=false` until the server-only
@@ -216,6 +277,17 @@ Every Sites deployment URL is production. Do not describe it as live-backend
 production if it was built without real backend/runtime configuration. Record
 the version ID, commit SHA, access level, URL, deployment result, UTC timestamp,
 and post-deploy QA evidence.
+
+The connected owner-only Sites preview currently serves static assets ahead of
+the checked-in Worker and ignores both the packaged `_headers` policy and the
+Worker-first setting. The exported HTML therefore includes a browser-enforced
+Content Security Policy and referrer-policy fallback, but the host does not emit
+the required CSP, HSTS, anti-framing, content-type, or permissions response
+headers. This is an environment limitation, not a passed security control.
+Before public access is allowed, deploy the exact approved artifact behind a
+host or custom edge that emits the complete policy in `hosting/headers`, then
+retain live response-header and browser evidence for every public route. Keep
+the Sites project owner-only until that evidence passes.
 
 ## 5. Signed mobile release
 
@@ -265,20 +337,156 @@ caching, refresh, correction, user deletion, termination, and geographic scope.
 Imported listings and menus remain drafts until reviewed. Never scrape or clone
 third-party directories, marketplaces, reviews, photos, or menus.
 
+### Business ownership claims
+
+Keep `EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED=false` until the production claim
+service issues single-use, expiring challenge receipts for a contact already
+bound to the imported listing, or accepts private document evidence through the
+clean-media pipeline. Before enabling it, prove receipt signature, audience,
+listing, claimant, method, expiry, replay prevention, rate limits, recovery,
+withdrawal, evidence deletion, audit history, and ownership-conflict handling
+against the target environment. A checked authorization statement, matching
+email domain, listed phone selection, uploaded path, or administrator click is
+not ownership proof by itself. The public claim RPC deliberately rejects every
+method until this contract and its operational review path are deployed. The
+database also blocks approval of legacy pending claims. Before deploying to an
+existing environment, export and investigate every previously approved claim
+and the owner memberships it created; do not automatically revoke a legitimate
+owner or accept a historical approval as proof.
+
+Migrations `20261002000000_business_claim_approval_serialization.sql`,
+`20261003000000_business_claim_recovery_boundary.sql`, and
+`20261005000000_business_claim_acl_drift_hardening.sql` provide business-row
+approval serialization, terminal-decision idempotency, one-approved-claim and
+one-live-claim invariants, an account-only safe status projection,
+business-before-claim withdrawal locking, and an explicit final table/RPC ACL
+reset. They do not make claims launchable.
+Provider account/source, permit, and jurisdiction eligibility is still a
+point-in-time predicate; keep claims disabled until claim review and provider
+ingestion/lifecycle share a tested lock or signed-epoch protocol. A legally
+approved, claim-specific evidence retention/hold/purge policy and worker must
+also exist before document evidence is accepted.
+
+Migration `20261004000000_business_claim_evidence_retention_foundation.sql`
+moves legacy evidence references into private metadata, defaults them to legal
+hold, retires the public raw-path column, protects retained paths from generic
+media cleanup, direct authenticated quarantine deletion, and account-deletion
+storage manifests, and records an account-deletion preservation exception.
+Evidence intake and purge both default off. The bounded purge RPC is only a
+disabled receipt boundary; it is not authorization to release a hold or a
+retention schedule. The migration takes the exclusive side of the global
+storage-mutation barrier before inspecting legacy paths; updated cleanup,
+purge, and account-deletion prepare/finalize RPCs take the shared side before
+their other locks. Its preflight aborts when a legacy evidence path has a
+pending or deleted account-deletion item instead of erasing that receipt. Pause
+and fully drain media-cleanup and account-deletion workers before the first
+rollout anyway: a legacy worker can already be between its database claim and
+external Storage request, which a database advisory lock cannot cancel.
+Investigate every fail-closed legacy-path preflight error, and do not enable
+either gate until counsel and the security reviewer approve the exact
+production policy and worker.
+
 ### Home kitchens
 
 Keep `EXPO_PUBLIC_HOME_KITCHENS_ENABLED=false` until each enabled jurisdiction
 has signed legal approval, permit verification/renewal, allowed-food rules,
 privacy testing, food-safety escalation, suspension-on-expiry, insurance/tax
 review, and a named operator. Public residence addresses and precise coordinates
-are prohibited.
+are prohibited. The client flag is presentation-only. Migration
+`20260929000000_home_kitchen_global_launch_gate.sql` creates the private
+`home_kitchen_runtime_settings` singleton, defaults it to disabled, and makes
+the server-side eligibility helper authoritative for discovery projections,
+map/nearby/search RPCs, direct place links, and marketplace chat. The toggle
+and status RPCs are service-role-only; do not grant application roles access to
+the table or expose the flag through a public client endpoint.
+
+Before enabling, run the migration and its staged runtime contract against the
+target PostgreSQL version, record the legal/permit evidence for the exact
+jurisdiction, then call `public.set_home_kitchen_launch_gate(true, reason)`
+from the protected service operation. Disabling the gate is the kill switch:
+it immediately hides eligible home kitchens, blocks new and existing
+participant chat reads/writes, cancels pending or authorized home-kitchen
+pickup requests, and destroys exact pickup disclosures while preserving
+conversations for moderation and account export. Re-enabling may expose
+previously approved records again, so treat it as a reviewed operational
+change rather than a client feature-flag flip.
 
 ### Push
 
-Keep `EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED=false` until APNs/FCM credentials,
-permission/consent UX, quiet hours, per-business preferences, unsubscribe, token
-deletion, delivery telemetry, abuse controls, and incident revocation are
-verified.
+Keep `EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED=false` until APNs/FCM and VAPID
+credentials, permission/consent UX, quiet hours, per-business preferences,
+unsubscribe, token/subscription deletion, delivery telemetry, abuse controls,
+and incident revocation are verified.
+
+Migration `20260917000000_push_notification_foundation.sql` establishes private
+encrypted device registrations, explicit product-versus-marketing consent,
+event-reference-only outbox rows, bounded leases, delivery deduplication, a
+narrow followed-business preference RPC, and sign-out revocation contracts.
+Migration `20260918000000_push_notification_dispatch.sql` adds service-role-only
+dispatch wrappers, delayed receipt-check leases, receipt finalization, and
+invalid-token retirement. The Edge adapter uses fixed Expo endpoints, enhanced
+push authentication, generic lock-screen copy, a versioned AES-GCM key ring,
+and `unknown` rather than blind retry after ambiguous sends.
+Migration `20260919000000_notification_session_binding.sql` retires every legacy
+unbound registration, binds new devices to the verified Auth JWT `session_id`,
+and requires that session to remain present and unexpired both when a delivery
+is claimed and immediately before provider handoff. An ended session revokes
+the device and cancels queued work. Native auth links also refuse to replace an
+account that is already signed in; the user must complete the existing
+fail-closed sign-out flow first. If the native Auth SDK nevertheless reports a
+direct authenticated A-to-B replacement, Spottr uses the prior token only from
+memory to detach that device and attempt prior-session revocation, rejects the
+replacement, and requires a new explicit sign-in. A non-secret quarantine
+marker prevents a rejected identity from being restored after restart until
+Spottr proves the local replacement was cleared.
+
+Migration `20261020000000_notification_provider_lock_order.sql` makes delivery
+eligibility join the provider-lifecycle advisory barrier before business row
+locks, removing the historical business-to-provider/provider-to-business lock
+cycle. Migration `20261021000000_notification_quiet_hours_settings.sql` adds a
+narrow followed-business RPC that changes only quiet-hour/timezone columns and
+leaves alert types, consent, runtime gates, and leased delivery state untouched.
+The settings UI distinguishes account preferences from this-device delivery;
+none of these controls activates a push provider.
+
+Migration `20261023000000_web_push_delivery.sql` extends the private device and
+delivery contracts to standards-based Web Push. Browser subscriptions receive
+the same keyed-HMAC deduplication, AES-GCM storage, Auth-session binding,
+cross-account revocation, consent revalidation, and queued-delivery cancellation
+as native devices. Web registration requires the exact VAPID public key and an
+allowlisted HTTPS push-service origin. The service worker accepts only generic
+copy and canonical same-origin place routes; the dispatch adapter retires
+HTTP 404/410 subscriptions, retries explicit throttling, and leaves ambiguous
+network/provider outcomes `unknown` without a blind resend.
+
+Database enqueue/delivery, native and web registration, Expo and Web Push
+provider access, dispatch, the Expo receipt worker, and the client remain
+independently gated and default false.
+The production-maintenance client also has a separate default-false
+`SPOTTR_MAINTENANCE_PUSH_ENABLED` repository-variable gate. When enabled, it
+uses different dispatch and receipt secrets, submits fixed bounded commands,
+validates all outcome counters, and withholds its heartbeat on either worker
+failure, a saturated batch, or an inconsistent response. This is executable
+scheduler wiring, not evidence that production scheduling or alerting is active.
+Do not enable enqueueing merely to test credentials in production. Validate the
+full chain in isolated staging with a fake provider, then the real provider and
+receipts, key-rotation/rollback, scheduler, alerts, and signed devices.
+
+The legacy `live_nearby` preference does not prove five-mile proximity: Spottr
+does not retain customer coordinates or request background location. Production
+copy and delivery must not promise proximity until a separate privacy-reviewed,
+explicitly chosen location design exists. Never infer it from IP address.
+
+Delivery claims must re-check current consent, the current bundled business-
+update preference, device revocation and freshness, event expiry, and timezone-
+aware quiet hours in the same database statement. Preference, consent, and
+device revocation cancel queued leases. Confirmed device/all-device revocation
+is a precondition of app-initiated sign-out once a registration exists. The
+delivery worker independently rejects registrations whose bound Auth session
+was removed or reached `not_after`; signed-device acceptance is still required
+before push can be activated. A provider request already marked `sending` is an
+irreversible network-boundary case: revocation blocks future claims but cannot
+promise recall of that one already-handed-off notification.
 
 ### UGC
 
@@ -307,17 +515,51 @@ plain-language explanation controls. Consumer food checkout and merchant digital
 purchases have different Apple/Google payment-policy boundaries; the exact
 regional implementation requires current store and legal review.
 
-The phase-O1 shadow-order migration is deliberately zero-money and employee
+The phase-O1 shadow-order migrations are deliberately zero-money and employee
 only. Apply and review
-`supabase/migrations/20260802000000_shadow_ordering_foundation.sql` after the
-baseline schema. Do not change `pilot_mode` to `shadow` outside an internal
-operations environment until its RLS/runtime/concurrency tests have passed
-against the target Postgres instance. This migration does not authorize or
-implement prepaid checkout.
+`supabase/migrations/20260802000000_shadow_ordering_foundation.sql`, followed by
+`supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql`,
+`supabase/migrations/20260901000000_shadow_order_merchant_queue.sql`, and
+`supabase/migrations/20260902000000_shadow_order_transition_maintenance_hardening.sql`
+after the baseline schema. Together they provide the server-owned
+menu/quote/place/pending-cancel flow plus the bounded, customer-identity-free
+merchant fulfillment queue used by the staff pilot UI. Do not change
+`pilot_mode` to `shadow` outside an internal operations environment until its
+RLS/runtime/concurrency tests have passed against the target Postgres instance.
+No migration in this chain authorizes or implements prepaid checkout.
 
-Keep `EXPO_PUBLIC_PICKUP_ORDERING_ENABLED=false` in every customer build until
-the full ordering program is approved. The flag exposes only the staff pilot
-surface; it is not authorization to accept customer orders or money.
+Migration `20261019000000_business_pickup_ordering_preferences.sql` lets an
+AAL2 owner/manager of a verified, published restaurant or food truck record a
+pickup preference. `20261024000000_pay_in_person_pickup_orders.sql` implements
+the production customer menu, server pricing, exact public pickup binding,
+idempotent order creation, customer receipts, and merchant state machine for
+pay-in-person orders. It is protected by a database runtime gate and
+`EXPO_PUBLIC_PICKUP_ORDERING_ENABLED`, both default false.
+
+Migration `20261025000000_stripe_connect_prepaid_pickup.sql` adds private
+merchant payment accounts, immutable checkout drafts, line snapshots, signed
+webhook deduplication, captured-payment orders, automatic refund enqueueing,
+bounded refund leases, and sanitized export metadata. `payment-connect` uses
+hosted Stripe Connect onboarding; `payment-checkout` creates a server-priced
+hosted Checkout Session; `payment-webhook` is the only payment-completion
+authority; and `payment-refund-worker` performs idempotent bounded refunds.
+No client amount, card number, provider secret, or return URL is authoritative.
+Keep `EXPO_PUBLIC_PREPAID_PICKUP_ENABLED=false`, the matching database/Edge
+gate false, and the refund worker disabled until live Stripe, tax, webhook,
+refund, dispute, payout, and signed-device acceptance evidence is complete.
+
+The zero-money placement and pending-cancellation client persists only the
+opaque operation IDs, versions, fixed reason, and original idempotency key before
+calling either mutation. A killed app must replay and clear that exact operation
+before another ordering mutation is enabled. Activate and verify the
+service-role-only `expire_shadow_order_quotes` and `expire_shadow_orders`
+production-maintenance passes before any internal pilot; a checked-in schedule
+is not evidence that their production secret, heartbeat, or alert is configured.
+
+Keep `EXPO_PUBLIC_PICKUP_ORDERING_ENABLED=false` and
+`EXPO_PUBLIC_PREPAID_PICKUP_ENABLED=false` in every public build until each
+ordering rail's server gate and acceptance program are approved. Client flags
+are presentation controls, never authorization to create an order or charge.
 
 ## 7. Account export and deletion drill
 
@@ -342,7 +584,15 @@ conversation with a clean attachment and expired pickup disclosure.
 5. Inject a storage or Auth failure and prove the response does not claim
    completion, the same idempotency key can safely retry, and duplicate calls do
    not create contradictory outcomes.
-6. Verify the private deletion receipt expires and the public/privacy copy
+6. Inject a final-receipt persistence failure after Auth deletion. Verify the
+   user-facing endpoint returns `202` instead of claiming completion, local Auth
+   state is cleared, and the recurring worker changes the sealed orphan receipt
+   from `storage_deleted` to `completed` exactly once.
+7. Inject an ambiguous Auth-provider response after the deletion request is
+   sealed. Verify neither Edge path changes the receipt to `failed`; the next
+   worker run either retries the still-present Auth user or finalizes the
+   FK-orphaned receipt.
+8. Verify the private deletion receipt expires and the public/privacy copy
    matches the observed retention behavior.
 
 Record database queries with personal data redacted, storage/Auth checks,
@@ -377,6 +627,35 @@ Run and record:
 Each drill needs a date, participants, environment, scenario, commands/actions,
 observed outcome, RTO/RPO or response target, gaps, owners, and due dates.
 
+### Production web artifact boundary
+
+The ordinary Quality workflow validates and exports the fail-closed
+release-candidate shell. It is not evidence of a live backend configuration.
+The exact public-launch web artifact must be created manually by
+`.github/workflows/production-web-release.yml` from the approved commit.
+
+Before running it, create a protected `production-web` GitHub Environment with
+required reviewers. Configure the public values named by the workflow as
+environment variables, and configure only the restricted Supabase publishable
+key and Android Maps client key as environment secrets. The build fails when
+required origins, app links, legal policies, attribution, or identifiers are
+missing or placeholders. It emits a commit-bound `dist/` artifact only after
+the configured build and production dependency audit succeed.
+
+Home kitchens, media uploads, push notifications, pickup ordering, in-app
+navigation, business ownership claims, and sponsored placements remain
+hard-disabled in this production workflow. Enabling any one
+requires its own exact-environment acceptance evidence, reviewed workflow
+change, and a new artifact. Never add a service-role key, routing/provider
+service credential, scanner secret, maintenance secret, or other server-only
+credential to this client workflow.
+
+After downloading the artifact, configure the Sites Worker runtime values
+separately, save one version at the same commit, deploy with the existing
+access policy, and verify the deployed URL. A configured artifact plus a green
+workflow still does not replace the production backend, legal, operations,
+mobile-store, or independent-review evidence below.
+
 ## 9. External launch blockers
 
 The repository cannot supply or invent:
@@ -388,6 +667,8 @@ The repository cannot supply or invent:
 - APNs/FCM, email-provider, map-provider, or observability credentials;
 - Apple/Google developer accounts, signing keys, signed builds, store review, or
   approval;
+- a public web host or custom edge proven to emit the checked-in CSP, HSTS,
+  anti-framing, content-type, referrer, and permissions response headers;
 - independent penetration, legal, privacy, accessibility, and load-test
   sign-off.
 

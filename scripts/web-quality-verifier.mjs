@@ -3,17 +3,33 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { validateProductionArtifactContent } from './production-artifact-purity.mjs';
+
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MAX_ROUTE_BYTES = 64 * 1024;
-// Static rendering repeats the shared route shell per route. Keep a narrow
-// aggregate allowance for the required navigation route while the 64 KB
-// per-route ceiling continues to prevent an individual route regression.
-const MAX_ALL_ROUTES_BYTES = 1_750_000;
-const MAX_ENTRY_BYTES = 3_200_000;
+const MAX_ROUTE_BYTES = 68 * 1024;
+const MAX_ROUTE_GZIP_BYTES = 17 * 1024;
+// Static rendering repeats the shared application shell in every route. Cap
+// both the largest route and the average route so adding a required workflow
+// cannot exhaust a fixed global allowance while per-route growth stays bounded.
+// The 40-route launch artifact averages 62,101.6 raw bytes after adding the
+// accessible, lazy protected-review shell. Keep less than 100 bytes of average
+// headroom; compressed transfer remains governed by the tighter gzip ceiling.
+const MAX_AVERAGE_ROUTE_BYTES = 62_200;
+const MAX_AVERAGE_ROUTE_GZIP_BYTES = 15_000;
+// The uncompressed entry is a development/build diagnostic; transfer cost is
+// enforced separately by the tighter gzip cap. Leave modest headroom for
+// required account workflows without weakening the production wire budget.
+// The provider-hosted prepaid pickup workflow brings the verified raw entry
+// baseline to 3,282,728 bytes. Keep narrow diagnostic headroom while the gzip
+// transfer ceiling remains unchanged.
+const MAX_ENTRY_BYTES = 3_300_000;
 const MAX_ENTRY_GZIP_BYTES = 800_000;
 const MAX_MAP_BYTES = 1_100_000;
 const MAX_MAP_GZIP_BYTES = 320_000;
-const MAX_ALL_JS_BYTES = 4_300_000;
+// The same required workflow brings the verified raw aggregate baseline to
+// 4,340,663 bytes. Compressed transfer remains governed by the unchanged gzip
+// ceiling below.
+const MAX_ALL_JS_BYTES = 4_350_000;
 const MAX_ALL_JS_GZIP_BYTES = 1_100_000;
 const MAX_ALL_CSS_BYTES = 100_000;
 
@@ -21,15 +37,25 @@ const REQUIRED_ROUTES = [
   'index.html',
   'auth.html',
   'saved.html',
+  'feed.html',
   'studio.html',
   'profile.html',
+  'profile/[id].html',
+  'profile-edit.html',
+  'creator-invite.html',
+  'creator-invitations.html',
+  'promotion-studio.html',
   'place/[id].html',
+  'order/[id].html',
+  'pickup/[id].html',
+  'orders.html',
   'navigation/[id].html',
   'messages/index.html',
   'messages/[id].html',
   'business-onboarding.html',
   'business-setup.html',
   'business-profile.html',
+  'business-posts.html',
   'business-team.html',
   'business-marketplace.html',
   'privacy.html',
@@ -48,6 +74,15 @@ export function validateRouteHtml(relativePath, html) {
     errors.push(`${relativePath}: viewport must not disable zoom.`);
   }
   if (!/<meta\s+name="description"/i.test(html)) errors.push(`${relativePath}: missing description metadata.`);
+  if (!/<meta\s+http-equiv="Content-Security-Policy"/i.test(html)) {
+    errors.push(`${relativePath}: missing browser-enforced content security policy.`);
+  }
+  if (!/content="[^"]*object-src (?:'|&#x27;)none(?:'|&#x27;)/i.test(html)) {
+    errors.push(`${relativePath}: content security policy must disable object embedding.`);
+  }
+  if (!/<meta\s+name="referrer"\s+content="strict-origin-when-cross-origin"/i.test(html)) {
+    errors.push(`${relativePath}: missing strict referrer policy metadata.`);
+  }
   if (!/<main\s+role="main"/i.test(html)) errors.push(`${relativePath}: missing main landmark.`);
   if (!/<h1(?:\s|>)/i.test(html)) errors.push(`${relativePath}: missing route-level H1.`);
   const semanticlessFocusableDivs = html.match(/<div(?=[^>]*tabindex="0")(?![^>]*\srole=)[^>]*>/gi) ?? [];
@@ -62,6 +97,8 @@ export function validateRouteHtml(relativePath, html) {
 
 export function validateBundleBudgets(metrics) {
   const errors = [];
+  const validRouteCount = Number.isInteger(metrics.routeCount) && metrics.routeCount > 0;
+  if (!validRouteCount) errors.push('route count must be a positive integer.');
   const checks = [
     ['entry JavaScript', metrics.entryBytes, MAX_ENTRY_BYTES],
     ['entry JavaScript gzip', metrics.entryGzipBytes, MAX_ENTRY_GZIP_BYTES],
@@ -71,7 +108,17 @@ export function validateBundleBudgets(metrics) {
     ['all JavaScript gzip', metrics.allJsGzipBytes, MAX_ALL_JS_GZIP_BYTES],
     ['all CSS', metrics.allCssBytes, MAX_ALL_CSS_BYTES],
     ['largest route HTML', metrics.largestRouteBytes, MAX_ROUTE_BYTES],
-    ['all route HTML', metrics.allRouteBytes, MAX_ALL_ROUTES_BYTES],
+    ['largest route HTML gzip', metrics.largestRouteGzipBytes, MAX_ROUTE_GZIP_BYTES],
+    [
+      'all route HTML',
+      metrics.allRouteBytes,
+      validRouteCount ? metrics.routeCount * MAX_AVERAGE_ROUTE_BYTES : 0,
+    ],
+    [
+      'all route HTML gzip',
+      metrics.allRouteGzipBytes,
+      validRouteCount ? metrics.routeCount * MAX_AVERAGE_ROUTE_GZIP_BYTES : 0,
+    ],
   ];
   for (const [label, actual, maximum] of checks) {
     if (!Number.isFinite(actual) || actual > maximum) {
@@ -81,42 +128,108 @@ export function validateBundleBudgets(metrics) {
   return errors;
 }
 
-async function collectFiles(root, extension) {
+export function validateStaticHeaderPolicy(policy) {
+  const requiredDirectives = [
+    "Content-Security-Policy: default-src 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    'Permissions-Policy: camera=(), geolocation=(self), microphone=()',
+    'Referrer-Policy: strict-origin-when-cross-origin',
+    'Strict-Transport-Security: max-age=31536000; includeSubDomains',
+    'Cross-Origin-Opener-Policy: same-origin',
+    'Origin-Agent-Cluster: ?1',
+    'X-Content-Type-Options: nosniff',
+    'X-Frame-Options: DENY',
+    '/manifest.webmanifest',
+    '/register-sw.js',
+    '/sw.js',
+    '/_expo/static/*',
+    'Cache-Control: public, max-age=31536000, immutable',
+  ];
+  return requiredDirectives
+    .filter((directive) => !policy.includes(directive))
+    .map((directive) => `Static asset header policy is missing: ${directive}.`);
+}
+
+async function collectFiles(root, extension = null) {
   const files = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
     const target = path.join(root, entry.name);
     if (entry.isDirectory()) files.push(...await collectFiles(target, extension));
-    else if (entry.isFile() && entry.name.endsWith(extension)) files.push(target);
+    else if (entry.isFile() && (!extension || entry.name.endsWith(extension))) files.push(target);
   }
   return files;
 }
 
+export async function validateProductionArtifactTree(root) {
+  const errors = [];
+  for (const file of await collectFiles(root)) {
+    errors.push(...validateProductionArtifactContent(
+      path.relative(root, file).replaceAll('\\', '/'),
+      await readFile(file),
+    ));
+  }
+  return errors;
+}
+
 export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
   const dist = path.join(projectRoot, 'dist');
+  const staticRoot = path.join(dist, 'client');
   const errors = [];
+  for (const requiredFile of [
+    'server/index.js',
+    'server/wrangler.json',
+    'client/.assetsignore',
+    'client/_headers',
+    '_headers',
+    '.openai/hosting.json',
+  ]) {
+    try {
+      if (!(await stat(path.join(dist, ...requiredFile.split('/')))).isFile()) throw new Error('not a file');
+    } catch {
+      errors.push(`Missing required Sites runtime file: ${requiredFile}.`);
+    }
+  }
+  try {
+    if (!(await stat(staticRoot)).isDirectory()) throw new Error('not a directory');
+  } catch {
+    throw new Error([...errors, 'Missing required Sites static asset directory: client.'].join('\n'));
+  }
+  try {
+    errors.push(...validateStaticHeaderPolicy(await readFile(path.join(staticRoot, '_headers'), 'utf8')));
+  } catch {
+    errors.push('Static asset header policy could not be read.');
+  }
   for (const route of REQUIRED_ROUTES) {
     try {
-      if (!(await stat(path.join(dist, ...route.split('/')))).isFile()) throw new Error('not a file');
+      if (!(await stat(path.join(staticRoot, ...route.split('/')))).isFile()) throw new Error('not a file');
     } catch {
       errors.push(`Missing required static route: ${route}.`);
     }
   }
 
-  const htmlFiles = await collectFiles(dist, '.html');
+  const htmlFiles = await collectFiles(staticRoot, '.html');
   let allRouteBytes = 0;
+  let allRouteGzipBytes = 0;
   let largestRouteBytes = 0;
+  let largestRouteGzipBytes = 0;
   for (const file of htmlFiles) {
     const buffer = await readFile(file);
-    const relative = path.relative(dist, file).replaceAll('\\', '/');
+    const relative = path.relative(staticRoot, file).replaceAll('\\', '/');
     allRouteBytes += buffer.length;
+    const compressedBytes = gzipSync(buffer, { level: 9 }).length;
+    allRouteGzipBytes += compressedBytes;
     largestRouteBytes = Math.max(largestRouteBytes, buffer.length);
+    largestRouteGzipBytes = Math.max(largestRouteGzipBytes, compressedBytes);
     errors.push(...validateRouteHtml(relative, buffer.toString('utf8')));
   }
 
-  const jsRoot = path.join(dist, '_expo', 'static', 'js', 'web');
+  errors.push(...await validateProductionArtifactTree(dist));
+
+  const jsRoot = path.join(staticRoot, '_expo', 'static', 'js', 'web');
   const jsFiles = await collectFiles(jsRoot, '.js');
-  const cssFiles = await collectFiles(path.join(dist, '_expo', 'static', 'css'), '.css');
-  const sourceMapFiles = await collectFiles(dist, '.map');
+  const cssFiles = await collectFiles(path.join(staticRoot, '_expo', 'static', 'css'), '.css');
+  const sourceMapFiles = await collectFiles(staticRoot, '.map');
   if (sourceMapFiles.length) errors.push('Production web output must not include source maps.');
   const entryFile = jsFiles.find((file) => path.basename(file).startsWith('entry-'));
   const mapFile = jsFiles.find((file) => path.basename(file).startsWith('maplibre-map-'));
@@ -149,7 +262,9 @@ export async function verifyWebQuality(projectRoot = PROJECT_ROOT) {
   const metrics = {
     routeCount: htmlFiles.length,
     allRouteBytes,
+    allRouteGzipBytes,
     largestRouteBytes,
+    largestRouteGzipBytes,
     entryBytes,
     entryGzipBytes,
     mapBytes,

@@ -18,8 +18,14 @@ const acceptanceRoutes = [
   '/',
   '/auth',
   '/saved',
+  '/feed',
   '/studio',
   '/profile',
+  '/profile-edit',
+  '/badges',
+  '/creator-invite',
+  '/creator-invitations',
+  '/promotion-studio',
   '/place/acceptance-place',
   '/navigation/acceptance-place',
   '/order/acceptance-order',
@@ -28,6 +34,7 @@ const acceptanceRoutes = [
   '/business-onboarding',
   '/business-setup',
   '/business-profile',
+  '/business-posts',
   '/business-team',
   '/business-marketplace',
   '/privacy',
@@ -56,6 +63,24 @@ for (const route of acceptanceRoutes) {
   });
 }
 
+test('business onboarding cold load focuses and names the loaded screen', async ({ page }) => {
+  await page.goto('/business-onboarding', { waitUntil: 'networkidle' });
+  const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toHaveCount(1);
+  await expect(heading).toBeFocused();
+  await expect(page).toHaveTitle(`${await heading.textContent()} · Spottr`);
+});
+
+test('business onboarding contains a failed screen chunk', async ({ page }) => {
+  await page.route('**/business-onboarding-screen-*.js', (route) => route.abort());
+  await page.goto('/business-onboarding', { waitUntil: 'networkidle' });
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Business verification is temporarily unavailable' })
+  ).toBeVisible();
+  await expect(page.getByText('Your information has not been submitted.')).toBeVisible();
+  await expect(page.getByRole('main')).toHaveCount(1);
+});
+
 test('route hydration focuses and names the active screen', async ({ page }) => {
   await page.goto('/privacy', { waitUntil: 'networkidle' });
   await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe('H1');
@@ -80,7 +105,7 @@ test('back navigation restores focus to the control that opened the route', asyn
 
 test('unconfigured discovery shell is explicit and keeps keyboard traversal bounded', async ({ page }) => {
   await page.goto('/', { waitUntil: 'networkidle' });
-  await expect(page.getByText(/live spottr services are not configured/i).first()).toBeVisible();
+  await expect(page.getByText(/private preview is not connected to the verified listing database/i).first()).toBeVisible();
   const sequentialFocusTargetCount = await page
     .locator('a[href], button, input, select, textarea, [tabindex]')
     .evaluateAll((elements) => elements.filter((element) => {

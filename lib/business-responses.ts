@@ -1,5 +1,9 @@
 import { checkProfessionalText } from '@/lib/moderation';
-import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import {
+  createAccountBoundSupabaseClient,
+  isSupabaseConfigured,
+  supabase,
+} from '@/lib/supabase';
 
 export const BUSINESS_RESPONSE_MAX_LENGTH = 1000;
 
@@ -259,29 +263,23 @@ export function prepareBusinessResponseAttempt(
   };
 }
 
-async function authorizedClient(businessId: string) {
+async function authorizedClient(businessId: string, expectedUserId: string) {
   assertUuid(businessId, 'This business link');
+  assertUuid(expectedUserId, 'The active account');
   if (!isSupabaseConfigured || !supabase) {
     throw Object.assign(new Error('Live services are not configured.'), {
       code: 'CONFIG_REQUIRED',
     });
   }
 
-  const [{ data: userData, error: userError }, assurance] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
-  ]);
-  if (userError || !userData.user) {
-    throw Object.assign(userError ?? new Error('Not authenticated'), { status: 401 });
-  }
-  if (assurance.error) throw assurance.error;
-  if (assurance.data.currentLevel !== 'aal2') {
-    throw Object.assign(new Error('AAL2 authenticator verification required'), {
-      status: 403,
+  const client = await createAccountBoundSupabaseClient(expectedUserId);
+  if (!client) {
+    throw Object.assign(new Error('The active account changed.'), {
+      status: 401,
     });
   }
 
-  const { data: allowed, error: accessError } = await supabase.rpc('is_business_member', {
+  const { data: allowed, error: accessError } = await client.rpc('is_business_member', {
     target_business_id: businessId,
     allowed_roles: ['owner', 'manager'],
   });
@@ -292,14 +290,15 @@ async function authorizedClient(businessId: string) {
       status: 403,
     });
   }
-  return supabase;
+  return client;
 }
 
 export async function loadBusinessResponseQueue(
-  businessId: string
+  businessId: string,
+  expectedUserId: string
 ): Promise<BusinessResponseResult<BusinessResponseRecord[]>> {
   try {
-    const client = await authorizedClient(businessId);
+    const client = await authorizedClient(businessId, expectedUserId);
     const { data, error } = await client
       .from('business_responses')
       .select('review_id,business_id,body,moderation,created_at,updated_at')
@@ -314,7 +313,8 @@ export async function loadBusinessResponseQueue(
 
 export async function submitBusinessResponse(
   businessId: string,
-  attempt: BusinessResponseAttempt
+  attempt: BusinessResponseAttempt,
+  expectedUserId: string
 ): Promise<BusinessResponseResult<BusinessResponseRecord>> {
   try {
     assertUuid(attempt.reviewId, 'This review link');
@@ -327,7 +327,7 @@ export async function submitBusinessResponse(
       throw new BusinessResponseValidationError('Create a new response submission and try again.');
     }
 
-    const client = await authorizedClient(businessId);
+    const client = await authorizedClient(businessId, expectedUserId);
     const { data, error } = await client.rpc('submit_business_response', {
       target_review_id: attempt.reviewId,
       response_body: body,

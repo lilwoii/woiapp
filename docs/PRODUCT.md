@@ -19,20 +19,28 @@ Venue types:
 2. Restaurants
 3. Pop-ups and market vendors
 4. Cafes and bakeries
-5. Home kitchens, hidden unless a server-controlled jurisdiction is legally
-   approved and the business has a current verified permit
+5. Home kitchens, hidden unless the global server launch gate is enabled, the
+   server-controlled jurisdiction is legally approved, and the business has a
+   current verified permit
 
 The universal client currently supports:
 
-- foreground-location and city/ZIP/business/cuisine discovery;
+- foreground-location and city/ZIP/business/cuisine discovery over currently
+  published inventory, with
+  diacritic-safe token relevance over already-public names, cuisines, features,
+  and loaded menu fields; an independent licensed geocoder is not active;
 - map/list results with visually distinct truck markers;
 - open-only, venue, cuisine, dietary, payment, price, distance, rating, pickup,
   Nearby, Popular, Trending, and Top rated controls;
 - timezone-aware weekly and special hours, mobile stops, expiring status
-  overrides, and short owner updates;
+  overrides, short owner updates, and a food-truck-only “Moving to next
+  location” state backed by the next approved exact public stop rather than
+  vehicle tracking;
 - published menus with integer minor-unit prices, availability, dietary tags,
   and payment methods;
-- follows, saved places, alert preferences, reviews, reports, and blocks;
+- follows, saved places, per-business alert preferences, account quiet-hours
+  presets, reviews, reports, and blocks; device push remains a separate gated
+  capability;
 - customer workflows plus AAL2-protected business draft, claim, and scheduling
   workflows in one account;
 - draft business setup, claims, staged published-listing revisions, and mobile
@@ -75,8 +83,15 @@ organic results.
   the live directory.
 - Food-truck locations are deliberate public business stops, not background
   tracking.
+- A moving marker represents the next approved destination and schedule, never
+  the truck's current GPS position. Clients re-fetch both the listing and map
+  inventory when that schedule boundary arrives.
 - Home-kitchen public coordinates are approximate and street/postal details are
   withheld.
+- `EXPO_PUBLIC_HOME_KITCHENS_ENABLED` is a client presentation flag only. The
+  database-authoritative launch gate defaults false and protects discovery,
+  deep links, public projections, and marketplace chat until a reviewed
+  service operation enables the exact launch scope.
 
 ## Launch boundary
 
@@ -90,16 +105,27 @@ organic results.
 - Report/block controls and staffed safety escalation
 - In-app account export and deletion
 
-This phase does **not** include automated restaurant ingestion, ordering,
+This phase does **not** enable automated restaurant ingestion, ordering,
 payments, delivery, customer background tracking, home kitchens, photo uploads,
-or push delivery unless their separate gates are complete.
+or push delivery unless their separate gates are complete. Production
+pay-in-person pickup and Stripe-hosted prepaid pickup are implemented as gated
+expansions; neither is active merely because the client screens exist.
 
 ### Gated expansion
 
 - Moderated review, logo, menu, and gallery photos after scanner/operations
   acceptance
-- Push notifications after consent, delivery, quiet-hours, unsubscribe, and
-  credential evidence
+- Push notifications after the private encrypted-device/outbox foundation is
+  deployed and consent, provider receipts where available, quiet hours,
+  unsubscribe, signed-device/browser behavior, credentials, and operational
+  evidence are accepted. Fail-closed Expo and standards-based Web Push adapters
+  exist, but every provider, worker, database, scheduler, and client gate remains
+  disabled pending live acceptance. The checked-in maintenance control plane
+  can invoke the bounded dispatch and Expo-receipt phases once its separate
+  protected gate is explicitly enabled. Registrations are Auth-session-bound
+  and are rejected by the delivery path after that session ends; this is defense
+  in depth and not a substitute for signed-device, browser, and live-provider
+  acceptance.
 - Licensed provider inventory with contractual attribution, field-level
   provenance, refresh, correction, caching, and deletion rules
 - Owner-authorized menu OCR into review-before-publish drafts
@@ -109,8 +135,10 @@ or push delivery unless their separate gates are complete.
   incident review
 
 Ordering, payments, delivery, tax, insurance, and marketplace-liability
-features require a separate product and legal program; they are not implied by
-the listing application.
+features require a separate product and legal program. The repository now
+contains production-shaped pay-in-person and hosted prepaid-pickup code, but
+activation still requires the live provider, tax, legal, operations, and
+acceptance program defined in the ordering architecture.
 
 [ORDERING_ARCHITECTURE.md](ORDERING_ARCHITECTURE.md) defines the versioned
 catalog, quote, order, payment, refund, capacity, fraud, and future-delivery

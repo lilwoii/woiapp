@@ -3,6 +3,7 @@
 create extension if not exists pgcrypto;
 do $$ begin create role anon nologin; exception when duplicate_object then null; end $$;
 do $$ begin create role authenticated nologin; exception when duplicate_object then null; end $$;
+do $$ begin create role service_role nologin bypassrls; exception when duplicate_object then null; end $$;
 create schema if not exists auth;
 create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
@@ -20,6 +21,10 @@ create or replace function auth.jwt()
 returns jsonb language sql stable as $$
   select jsonb_build_object('aal', coalesce(nullif(current_setting('request.jwt.claim.aal', true), ''), 'aal1'));
 $$;
+create or replace function auth.role()
+returns text language sql stable as $$
+  select nullif(current_setting('request.jwt.claim.role', true), '');
+$$;
 
 create table public.profiles (
   user_id uuid primary key references auth.users(id),
@@ -29,7 +34,8 @@ create table public.profiles (
 create table public.businesses (
   id uuid primary key,
   state text not null,
-  kind text not null
+  kind text not null,
+  timezone text not null default 'UTC'
 );
 create table public.business_members (
   business_id uuid not null references public.businesses(id),
@@ -41,6 +47,11 @@ create table public.business_members (
 create table public.business_locations (
   id uuid primary key,
   business_id uuid not null references public.businesses(id),
+  label text not null default 'Test pickup site',
+  address_line text,
+  city text not null default 'Test City',
+  region text not null default 'CA',
+  postal_code text,
   unique (id, business_id)
 );
 create table public.mobile_stops (

@@ -27,7 +27,7 @@ const reasons = [
   ['other', 'Something else'],
 ] as const;
 
-type TargetType = 'business' | 'review' | 'response' | 'update' | 'media' | 'user';
+type TargetType = 'business' | 'business_post' | 'review' | 'review_comment' | 'response' | 'update' | 'media' | 'user';
 
 export default function ReportScreen() {
   const params = useLocalSearchParams<{ targetId?: string; targetType?: TargetType }>();
@@ -41,7 +41,7 @@ export default function ReportScreen() {
       Boolean(
         params.targetId &&
           params.targetType &&
-          ['business', 'review', 'response', 'update', 'media', 'user'].includes(params.targetType)
+          ['business', 'business_post', 'review', 'review_comment', 'response', 'update', 'media', 'user'].includes(params.targetType)
       ),
     [params.targetId, params.targetType]
   );

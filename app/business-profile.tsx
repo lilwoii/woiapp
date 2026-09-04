@@ -1,7 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -20,6 +20,7 @@ import { BrandMark } from '@/components/brand-mark';
 import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { PageShell } from '@/components/page-shell';
 import { palette, radii, spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import {
   type BusinessLogoSelection,
   type BusinessProfileValues,
@@ -35,14 +36,122 @@ import { featureFlags } from '@/lib/features';
 import { confirmAction } from '@/lib/platform-dialog';
 
 type Notice = { tone: 'error' | 'success'; text: string };
+type BusinessProfileContentProps = {
+  businessId: string;
+  expectedUserId: string;
+};
+type BusinessProfileAccessGateProps = {
+  actionLabel?: string;
+  detail: string;
+  loading?: boolean;
+  onAction?: () => void;
+  title: string;
+};
 
 const fieldAccessibility = { accessibilityLabelledBy: undefined };
 
 export default function BusinessProfileScreen() {
+  const auth = useAuth();
   const params = useLocalSearchParams<{ businessId?: string | string[] }>();
-  const businessId = Array.isArray(params.businessId)
-    ? params.businessId[0]
-    : params.businessId;
+  const businessId = (
+    Array.isArray(params.businessId)
+      ? (params.businessId[0] ?? '')
+      : (params.businessId ?? '')
+  ).trim();
+  const accountId =
+    auth.status === 'authenticated' && auth.account?.id ? auth.account.id : null;
+
+  if (!auth.isConfigured) {
+    return (
+      <BusinessProfileAccessGate
+        detail="Connect Spottr live services before opening private business contact and profile controls."
+        title="Business profiles need live services."
+      />
+    );
+  }
+  if (auth.status === 'loading') {
+    return (
+      <BusinessProfileAccessGate
+        detail="Spottr is confirming the account allowed to view this business."
+        loading
+        title="Checking protected access…"
+      />
+    );
+  }
+  if (!accountId) {
+    return (
+      <BusinessProfileAccessGate
+        actionLabel="Sign in"
+        detail="Sign in with an active owner or manager account to view private business details."
+        onAction={() => router.replace('/auth')}
+        title="Sign in to continue."
+      />
+    );
+  }
+  if (
+    auth.securityStatus !== 'ready' ||
+    !auth.mfaEnrolled ||
+    auth.assuranceLevel !== 'aal2'
+  ) {
+    return (
+      <BusinessProfileAccessGate
+        actionLabel="Verify security"
+        detail="Connect an authenticator and verify a current code before reading or changing private business details."
+        loading={auth.securityStatus === 'loading'}
+        onAction={() => router.push('/security')}
+        title="Secure verification required."
+      />
+    );
+  }
+
+  return (
+    <BusinessProfileContent
+      businessId={businessId}
+      expectedUserId={accountId}
+      key={`${accountId}:business-profile:${businessId}`}
+    />
+  );
+}
+
+function BusinessProfileAccessGate({
+  actionLabel,
+  detail,
+  loading = false,
+  onAction,
+  title,
+}: BusinessProfileAccessGateProps) {
+  return (
+    <FocusAwareScreen>
+      <View role="main" style={styles.accessGate}>
+        <BrandMark />
+        <View style={styles.accessGateIcon}>
+          {loading ? (
+            <ActivityIndicator color={palette.accentDeep} />
+          ) : (
+            <FontAwesome6 color={palette.accentDeep} name="shield-halved" size={19} />
+          )}
+        </View>
+        <Text accessibilityRole="header" style={styles.accessGateTitle}>
+          {title}
+        </Text>
+        <Text style={styles.accessGateDetail}>{detail}</Text>
+        {actionLabel && onAction && !loading ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={onAction}
+            style={styles.accessGateButton}>
+            <Text style={styles.accessGateButtonText}>{actionLabel}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </FocusAwareScreen>
+  );
+}
+
+function BusinessProfileContent({
+  businessId,
+  expectedUserId,
+}: BusinessProfileContentProps) {
   const [workspace, setWorkspace] = useState<BusinessProfileWorkspace | null>(null);
   const [values, setValues] = useState<BusinessProfileValues | null>(null);
   const [cuisineText, setCuisineText] = useState('');
@@ -52,20 +161,44 @@ export default function BusinessProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const mounted = useRef(true);
+  const loadGeneration = useRef(0);
+  const mutationGeneration = useRef(0);
+  const pickerGeneration = useRef(0);
+  const mutationBusy = useRef(false);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      loadGeneration.current += 1;
+      mutationGeneration.current += 1;
+      pickerGeneration.current += 1;
+      mutationBusy.current = false;
+    };
+  }, []);
+
+  const load = useCallback(async (options?: { preserveNotice?: boolean }) => {
+    const generation = loadGeneration.current + 1;
+    loadGeneration.current = generation;
     if (!businessId) {
       setNotice({ tone: 'error', text: 'This business profile link is incomplete.' });
       setLoading(false);
-      return;
+      return false;
     }
     setLoading(true);
-    setNotice(null);
-    const result = await loadBusinessProfileWorkspace(businessId);
+    if (!options?.preserveNotice) setNotice(null);
+    setWorkspace(null);
+    setValues(null);
+    setCuisineText('');
+    setLogoSelection(null);
+    setLogoPreview(null);
+    const result = await loadBusinessProfileWorkspace(businessId, expectedUserId);
+    if (!mounted.current || loadGeneration.current !== generation) return false;
     setLoading(false);
     if (!result.ok) {
       setNotice({ tone: 'error', text: result.reason });
-      return;
+      return false;
     }
     const proposed = proposedBusinessProfileValues(result.data);
     setWorkspace(result.data);
@@ -73,7 +206,8 @@ export default function BusinessProfileScreen() {
     setCuisineText(proposed.cuisines.join(', '));
     setLogoPreview(result.data.currentLogoUrl);
     setLogoSelection(null);
-  }, [businessId]);
+    return true;
+  }, [businessId, expectedUserId]);
 
   useEffect(() => {
     const timer = setTimeout(() => void load(), 0);
@@ -86,6 +220,10 @@ export default function BusinessProfileScreen() {
   ) => setValues((current) => (current ? { ...current, [key]: value } : current));
 
   const pickLogo = async () => {
+    const generation = pickerGeneration.current + 1;
+    pickerGeneration.current = generation;
+    const isCurrent = () =>
+      mounted.current && pickerGeneration.current === generation;
     if (!featureFlags.mediaUploads) {
       setNotice({
         tone: 'error',
@@ -94,6 +232,7 @@ export default function BusinessProfileScreen() {
       return;
     }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!isCurrent()) return;
     if (!permission.granted) {
       setNotice({ tone: 'error', text: 'Allow photo access to choose a business logo.' });
       return;
@@ -104,6 +243,7 @@ export default function BusinessProfileScreen() {
       mediaTypes: ['images'],
       quality: 0.9,
     });
+    if (!isCurrent()) return;
     const asset = result.canceled ? null : result.assets[0];
     if (!asset) return;
     setLogoSelection({
@@ -118,13 +258,19 @@ export default function BusinessProfileScreen() {
   };
 
   const save = async () => {
-    if (!businessId || !workspace || !values || saving) return;
+    if (!businessId || !workspace || !values || mutationBusy.current) return;
+    mutationBusy.current = true;
+    const generation = mutationGeneration.current + 1;
+    mutationGeneration.current = generation;
+    const isCurrent = () =>
+      mounted.current && mutationGeneration.current === generation;
     setSaving(true);
     setNotice(null);
     let nextValues = values;
     try {
       nextValues = { ...values, cuisines: cuisineLabelsFromText(cuisineText) };
     } catch (error) {
+      mutationBusy.current = false;
       setSaving(false);
       setNotice({
         tone: 'error',
@@ -137,9 +283,12 @@ export default function BusinessProfileScreen() {
       const logoResult = await stageBusinessProfileLogo(
         businessId,
         workspace.state,
-        logoSelection
+        logoSelection,
+        expectedUserId
       );
+      if (!isCurrent()) return;
       if (!logoResult.ok) {
+        mutationBusy.current = false;
         setSaving(false);
         setNotice({ tone: 'error', text: logoResult.reason });
         return;
@@ -147,36 +296,64 @@ export default function BusinessProfileScreen() {
       nextValues = { ...nextValues, logoAssetId: logoResult.data.assetId };
     }
 
-    const result = await saveBusinessProfile(businessId, workspace.state, nextValues);
+    const result = await saveBusinessProfile(
+      businessId,
+      workspace.state,
+      nextValues,
+      expectedUserId
+    );
+    if (!isCurrent()) return;
+    mutationBusy.current = false;
     setSaving(false);
     if (!result.ok) {
       setNotice({ tone: 'error', text: result.reason });
       return;
     }
-    setNotice({ tone: 'success', text: result.message ?? 'Business profile saved.' });
-    await load();
+    setLogoSelection(null);
+    const refreshed = await load({ preserveNotice: true });
+    if (!isCurrent()) return;
+    if (refreshed) {
+      setNotice({ tone: 'success', text: result.message ?? 'Business profile saved.' });
+    }
   };
 
   const withdraw = async () => {
     const revision = workspace?.pendingRevision;
-    if (!revision || withdrawing) return;
+    if (!revision || mutationBusy.current) return;
+    mutationBusy.current = true;
+    const generation = mutationGeneration.current + 1;
+    mutationGeneration.current = generation;
+    const isCurrent = () =>
+      mounted.current && mutationGeneration.current === generation;
     const confirmed = await confirmAction({
       title: 'Withdraw pending changes?',
       message: 'The live listing will stay unchanged. You can submit a new revision afterward.',
       confirmLabel: 'Withdraw changes',
       destructive: true,
     });
-    if (!confirmed) return;
+    if (!isCurrent()) return;
+    if (!confirmed) {
+      mutationBusy.current = false;
+      return;
+    }
     setWithdrawing(true);
     setNotice(null);
-    const result = await withdrawBusinessProfileRevision(revision.revisionId);
+    const result = await withdrawBusinessProfileRevision(
+      revision.revisionId,
+      expectedUserId
+    );
+    if (!isCurrent()) return;
+    mutationBusy.current = false;
     setWithdrawing(false);
     if (!result.ok) {
       setNotice({ tone: 'error', text: result.reason });
       return;
     }
-    setNotice({ tone: 'success', text: result.message ?? 'Pending changes withdrawn.' });
-    await load();
+    const refreshed = await load({ preserveNotice: true });
+    if (!isCurrent()) return;
+    if (refreshed) {
+      setNotice({ tone: 'success', text: result.message ?? 'Pending changes withdrawn.' });
+    }
   };
 
   return (
@@ -240,10 +417,16 @@ export default function BusinessProfileScreen() {
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityState={{ busy: withdrawing, disabled: withdrawing }}
-                  disabled={withdrawing}
+                  accessibilityState={{
+                    busy: withdrawing,
+                    disabled: withdrawing || saving,
+                  }}
+                  disabled={withdrawing || saving}
                   onPress={() => void withdraw()}
-                  style={styles.withdrawButton}>
+                  style={[
+                    styles.withdrawButton,
+                    (withdrawing || saving) && styles.disabled,
+                  ]}>
                   {withdrawing ? <ActivityIndicator color={palette.accentDeep} size="small" /> : null}
                   <Text style={styles.withdrawText}>Withdraw</Text>
                 </Pressable>
@@ -265,10 +448,17 @@ export default function BusinessProfileScreen() {
                     <Text style={styles.help}>Square JPEG, PNG, or WebP · 512–2048 px · under 5 MB.</Text>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityState={{ disabled: !featureFlags.mediaUploads }}
-                      disabled={!featureFlags.mediaUploads}
+                      accessibilityState={{
+                        disabled:
+                          !featureFlags.mediaUploads || saving || withdrawing,
+                      }}
+                      disabled={!featureFlags.mediaUploads || saving || withdrawing}
                       onPress={() => void pickLogo()}
-                      style={[styles.secondaryButton, !featureFlags.mediaUploads && styles.disabled]}>
+                      style={[
+                        styles.secondaryButton,
+                        (!featureFlags.mediaUploads || saving || withdrawing) &&
+                          styles.disabled,
+                      ]}>
                       <FontAwesome6 color={palette.ink} name="image" size={11} />
                       <Text style={styles.secondaryButtonText}>{featureFlags.mediaUploads ? 'Choose logo' : 'Upload gated'}</Text>
                     </Pressable>
@@ -292,7 +482,10 @@ export default function BusinessProfileScreen() {
                   </View>
                   <View style={styles.field}>
                     <Text style={styles.label}>Price level</Text>
-                    <View accessibilityRole="radiogroup" style={styles.priceRow}>
+                    <View
+                      accessibilityLabel="Business price level"
+                      accessibilityRole="radiogroup"
+                      style={styles.priceRow}>
                       {([1, 2, 3, 4] as const).map((level) => (
                         <Pressable accessibilityLabel={`${level} dollar price level`} accessibilityRole="radio" aria-checked={values.priceLevel === level} accessibilityState={{ checked: values.priceLevel === level }} key={level} onPress={() => update('priceLevel', level)} style={[styles.priceButton, values.priceLevel === level && styles.priceButtonActive]}>
                           <Text style={[styles.priceText, values.priceLevel === level && styles.priceTextActive]}>{'$'.repeat(level)}</Text>
@@ -333,10 +526,16 @@ export default function BusinessProfileScreen() {
 
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityState={{ busy: saving, disabled: saving }}
-                  disabled={saving}
+                  accessibilityState={{
+                    busy: saving,
+                    disabled: saving || withdrawing,
+                  }}
+                  disabled={saving || withdrawing}
                   onPress={() => void save()}
-                  style={[styles.saveButton, saving && styles.disabled]}>
+                  style={[
+                    styles.saveButton,
+                    (saving || withdrawing) && styles.disabled,
+                  ]}>
                   {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : <FontAwesome6 color="#FFFFFF" name="shield-halved" size={12} />}
                   <Text style={styles.saveText}>{workspace.state === 'published' ? 'Submit changes for review' : 'Save private draft'}</Text>
                 </Pressable>
@@ -352,6 +551,47 @@ export default function BusinessProfileScreen() {
 }
 
 const styles = StyleSheet.create({
+  accessGate: {
+    alignItems: 'center',
+    backgroundColor: palette.bg,
+    flex: 1,
+    gap: spacing.md,
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  accessGateIcon: {
+    alignItems: 'center',
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.xl,
+    height: 52,
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    width: 52,
+  },
+  accessGateTitle: {
+    color: palette.ink,
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: -0.6,
+    textAlign: 'center',
+  },
+  accessGateDetail: {
+    color: palette.muted,
+    fontSize: 12,
+    lineHeight: 19,
+    maxWidth: 460,
+    textAlign: 'center',
+  },
+  accessGateButton: {
+    alignItems: 'center',
+    backgroundColor: palette.accentDeep,
+    borderRadius: radii.pill,
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+    minHeight: 48,
+    paddingHorizontal: 20,
+  },
+  accessGateButtonText: { color: '#FFFFFF', fontSize: 11, fontWeight: '900' },
   keyboard: { flex: 1 },
   screen: { backgroundColor: palette.bg, flex: 1 },
   content: { paddingBottom: 88 },

@@ -1,25 +1,96 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { ImageBackground, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { AppState, ImageBackground, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { palette, radii, spacing } from '@/constants/theme';
-import type { Place } from '@/types/marketplace';
+import type { SponsoredPlace } from '@/types/marketplace';
 
 type Props = {
-  place: Place;
+  interactionReady: boolean;
+  place: SponsoredPlace;
   reasonOpen: boolean;
   onHide: () => void;
+  onImpression: () => void;
   onOpen: () => void;
   onToggleReason: () => void;
 };
 
-export function SponsoredLane({ place, reasonOpen, onHide, onOpen, onToggleReason }: Props) {
+const MINIMUM_VISIBLE_RATIO = 0.5;
+const MINIMUM_VISIBLE_DURATION_MS = 1_000;
+const VISIBILITY_POLL_MS = 250;
+
+export function SponsoredLane({
+  interactionReady,
+  place,
+  reasonOpen,
+  onHide,
+  onImpression,
+  onOpen,
+  onToggleReason,
+}: Props) {
   const placement = place.sponsoredPlacement;
-  const { width } = useWindowDimensions();
-  const wide = width >= 900;
+  const { height: viewportHeight, width: viewportWidth } = useWindowDimensions();
+  const containerRef = useRef<View>(null);
+  const impressionCallback = useRef(onImpression);
+  const impressionSent = useRef(false);
+  const wide = viewportWidth >= 900;
+  useEffect(() => {
+    impressionCallback.current = onImpression;
+  }, [onImpression]);
+  useEffect(() => {
+    impressionSent.current = false;
+    let mounted = true;
+    let foreground = AppState.currentState === 'active';
+    let visibleSince: number | null = null;
+    const measureVisibility = () => {
+      if (!mounted || !foreground || impressionSent.current) return;
+      containerRef.current?.measureInWindow((x, y, measuredWidth, measuredHeight) => {
+        if (!mounted || !foreground || impressionSent.current) return;
+        if (measuredWidth <= 0 || measuredHeight <= 0) {
+          visibleSince = null;
+          return;
+        }
+        const visibleWidth = Math.max(
+          0,
+          Math.min(x + measuredWidth, viewportWidth) - Math.max(x, 0),
+        );
+        const visibleHeight = Math.max(
+          0,
+          Math.min(y + measuredHeight, viewportHeight) - Math.max(y, 0),
+        );
+        const visibleRatio = (visibleWidth * visibleHeight) / (measuredWidth * measuredHeight);
+        if (visibleRatio < MINIMUM_VISIBLE_RATIO) {
+          visibleSince = null;
+          return;
+        }
+        const now = Date.now();
+        visibleSince ??= now;
+        if (now - visibleSince >= MINIMUM_VISIBLE_DURATION_MS) {
+          impressionSent.current = true;
+          impressionCallback.current();
+        }
+      });
+    };
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      foreground = state === 'active';
+      if (!foreground) visibleSince = null;
+    });
+    const visibilityTimer = setInterval(measureVisibility, VISIBILITY_POLL_MS);
+    measureVisibility();
+    return () => {
+      mounted = false;
+      clearInterval(visibilityTimer);
+      appStateSubscription.remove();
+    };
+  }, [placement.id, viewportHeight, viewportWidth]);
   if (!placement) return null;
 
   return (
-    <View accessibilityLabel="Sponsored nearby" style={styles.section}>
+    <View
+      ref={containerRef}
+      accessibilityLabel="Sponsored nearby"
+      collapsable={false}
+      style={styles.section}>
       <View style={styles.headingRow}>
         <Text accessibilityRole="header" style={styles.heading}>Sponsored nearby</Text>
         <Text style={styles.headingDetail}>A separate paid placement</Text>
@@ -59,8 +130,10 @@ export function SponsoredLane({ place, reasonOpen, onHide, onOpen, onToggleReaso
             <Pressable
               accessibilityLabel={`View sponsored listing for ${place.name}`}
               accessibilityRole="button"
+              accessibilityState={{ disabled: !interactionReady }}
+              disabled={!interactionReady}
               onPress={onOpen}
-              style={styles.openButton}>
+              style={[styles.openButton, !interactionReady && styles.openButtonDisabled]}>
               <Text style={styles.openText}>View menu</Text>
               <FontAwesome6 color="#FFFFFF" name="arrow-right" size={10} />
             </Pressable>
@@ -100,6 +173,7 @@ const styles = StyleSheet.create({
   quietButton: { alignItems: 'center', flexDirection: 'row', gap: 6, minHeight: 44, paddingHorizontal: 6 },
   quietText: { color: palette.muted, fontSize: 9, fontWeight: '800' },
   openButton: { alignItems: 'center', backgroundColor: palette.ink, borderRadius: radii.pill, flexDirection: 'row', gap: 7, justifyContent: 'center', marginLeft: 'auto', minHeight: 44, paddingHorizontal: 15 },
+  openButtonDisabled: { opacity: 0.5 },
   openText: { color: '#FFFFFF', fontSize: 10, fontWeight: '900' },
   reason: { backgroundColor: palette.bg, borderRadius: radii.md, padding: spacing.md },
   reasonText: { color: palette.muted, fontSize: 10, lineHeight: 16 },

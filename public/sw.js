@@ -1,4 +1,4 @@
-const CACHE_NAME = 'spottr-shell-v0.2.0-r3';
+const CACHE_NAME = 'spottr-shell-v0.2.0-r5';
 const SHELL = ['/', '/manifest.webmanifest', '/spottr-icon.png', '/spottr-icon-maskable.png'];
 const REVALIDATE = new Set(['/manifest.webmanifest', '/register-sw.js', '/sw.js']);
 const PRIVATE_NAVIGATION_PATHS = new Set([
@@ -8,9 +8,16 @@ const PRIVATE_NAVIGATION_PATHS = new Set([
   '/business-setup',
   '/business-team',
   '/profile',
+  '/orders',
   '/reset-password',
   '/security',
   '/studio',
+]);
+const PLACE_ROUTE = /^\/place\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAFE_NOTIFICATION_BODIES = new Set([
+  'A place you follow has a new update.',
+  'A place you follow updated its location.',
+  'Something is available again at a place you follow.',
 ]);
 
 function isPrivateNavigation(url) {
@@ -87,4 +94,67 @@ self.addEventListener('fetch', (event) => {
   if (/\.(?:css|js|json|png|jpg|jpeg|webp|svg|woff2?)$/i.test(url.pathname)) {
     event.respondWith(staticResponse(request));
   }
+});
+
+function safePushPayload(event) {
+  const fallback = {
+    body: 'A place you follow has a new update.',
+    eventId: null,
+    route: '/',
+  };
+  if (!event.data) return fallback;
+  try {
+    const value = event.data.json();
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback;
+    const data = value.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return fallback;
+    if (
+      value.title !== 'Spottr' || !SAFE_NOTIFICATION_BODIES.has(value.body) ||
+      typeof data.route !== 'string' || !PLACE_ROUTE.test(data.route) ||
+      typeof data.eventId !== 'string' || !/^[1-9][0-9]{0,18}$/.test(data.eventId)
+    ) return fallback;
+    return { body: value.body, eventId: data.eventId, route: data.route };
+  } catch {
+    return fallback;
+  }
+}
+
+self.addEventListener('push', (event) => {
+  const payload = safePushPayload(event);
+  event.waitUntil(self.registration.showNotification('Spottr', {
+    body: payload.body,
+    icon: '/spottr-icon.png',
+    badge: '/spottr-icon-maskable.png',
+    tag: payload.eventId ? `spottr-event-${payload.eventId}` : 'spottr-update',
+    renotify: false,
+    data: { route: payload.route },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const requestedRoute = event.notification.data?.route;
+  const route = typeof requestedRoute === 'string' && PLACE_ROUTE.test(requestedRoute)
+    ? requestedRoute
+    : '/';
+  const destination = new URL(route, self.location.origin).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const exact = windows.find((client) => client.url === destination);
+    if (exact) return exact.focus();
+    const existing = windows.find((client) => new URL(client.url).origin === self.location.origin);
+    if (existing) {
+      if ('navigate' in existing) await existing.navigate(destination);
+      return existing.focus();
+    }
+    return self.clients.openWindow(destination);
+  })());
+});
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) =>
+      Promise.all(clients.map((client) => client.postMessage({ type: 'spottr:push-subscription-changed' })))
+    )
+  );
 });

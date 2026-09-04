@@ -310,6 +310,26 @@ Production rollout also requires:
 - key rotation and provider offboarding drills;
 - a kill switch that leaves the public directory on last-known-good data.
 
+The checked-in operator client signs and submits an already-normalized batch
+without putting the provider secret on the command line or in request logs. It
+restricts the destination to the exact Supabase `provider-ingest` endpoint,
+preserves the original bytes and idempotency key across bounded transient
+retries, rejects oversized or malformed receipts, and supports an offline
+validation pass:
+
+```powershell
+$env:SPOTTR_PROVIDER_INGEST_URL='https://PROJECT.supabase.co/functions/v1/provider-ingest'
+$env:SPOTTR_PROVIDER_INGEST_KEY_ID='primary-2026'
+$env:SPOTTR_PROVIDER_INGEST_SECRET='<unpadded-base64url-secret>'
+npm run provider:ingest -- --batch .private-data/provider/batch-000001.json --dry-run
+npm run provider:ingest -- --batch .private-data/provider/batch-000001.json
+```
+
+The secret must be injected by the protected job or secret manager and cleared
+after the run. A successful receipt proves only that the named batch committed;
+snapshot completion, reconciliation, freshness, and public materialization
+still require their separate monitored evidence.
+
 Never log or send to telemetry the signature, signing registry, authorization
 headers, raw request body, provider URLs containing licensed identifiers,
 business contact details, or SQL error text. The implementation returns stable
@@ -318,16 +338,23 @@ error codes and intentionally logs none of those values.
 ## Current limitations
 
 - The private source, snapshot, receipt, rate-limit, history, and field-
-  precedence tables and the transactional RPC migration are checked in. The
-  migration has static contract coverage, but it has not yet been applied and
-  exercised against a production-equivalent PostgreSQL/Supabase instance in
-  this workspace. Until deployment applies it, the Edge Function returns
-  `INGESTION_STORE_UNAVAILABLE` and performs no writes.
+  precedence tables and the transactional RPC migration are checked in. CI
+  applies the baseline and every migration to its pinned Supabase runtime and
+  runs post-chain security contracts. That proves fresh-chain compatibility,
+  not provider-ingestion behavior in the target staging or production project.
+  Until the approved deployment applies this migration, the Edge Function
+  returns `INGESTION_STORE_UNAVAILABLE` and performs no writes.
 - Runtime evidence is still required for concurrent same-key calls, full
   rollback, source-order conflicts, paginated snapshot recovery, owner-edit
   hash detection, PostGIS materialization, and query plans at the contractual
   maximum batch size. Static SQL assertions are not a substitute for those
   database tests.
+- The checked-in lifecycle worker hides non-active licensed sources, marks old
+  missing sources stale, and archives only unclaimed provider-owned listings
+  after all source grace periods. Production still requires staged evidence for
+  multi-provider grace timing, active-owner and approved-claim preservation,
+  advisory-lock contention, bounded backlog draining, audit receipts, and the
+  missed-heartbeat alert before provider ingestion may be enabled.
 - `supabase/config.toml` delegates gateway authentication to the checked-in HMAC
   contract. The server environment and provider-specific secrets still require
   controlled production configuration after migration approval.

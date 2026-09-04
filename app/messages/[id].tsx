@@ -20,7 +20,13 @@ import { FocusAwareScreen } from "@/components/focus-aware-screen";
 import { PageShell } from "@/components/page-shell";
 import { palette, radii, spacing } from "@/constants/theme";
 import { useAuth } from "@/context/auth-context";
+import { useMarketplaceStore } from "@/context/marketplace-store";
 import { chatSafetyIssue, chatSafetyMessage } from "@/lib/chat-safety";
+import {
+  featureFlags,
+  HOME_KITCHEN_CHAT_UNAVAILABLE_REASON,
+  isHomeKitchenBlocked,
+} from "@/lib/features";
 import {
   authorizeNeighborhoodPickupChoice,
   clearMarketplaceConversation,
@@ -41,7 +47,9 @@ import {
 } from "@/lib/marketplace-chat";
 import { blockUser } from "@/lib/marketplace-api";
 import { mediaProcessingStates, stageMediaUpload } from "@/lib/media-upload";
+import { externalDirectionsUrl } from "@/lib/navigation";
 import { confirmAction, showMessage } from "@/lib/platform-dialog";
+import { createAccountBoundSupabaseClient } from "@/lib/supabase";
 import type {
   MarketplaceChatMessage,
   MarketplaceConversation,
@@ -69,10 +77,23 @@ function pickupWindowFromNow(minutesFromNow: number) {
 
 export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { scopeKey } = useMarketplaceStore();
+  return <ScopedConversationScreen id={id} key={`${scopeKey}:conversation:${id ?? ""}`} />;
+}
+
+function ScopedConversationScreen({ id }: { id?: string }) {
   const auth = useAuth();
   const focused = useIsFocused();
+  const expectedUserId = auth.status === "authenticated"
+    ? auth.account?.id ?? null
+    : null;
+  const mounted = useRef(true);
+  const refreshGeneration = useRef(0);
+  const conversationGeneration = useRef(0);
+  const mediaGeneration = useRef(0);
   const scrollRef = useRef<ScrollView | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingActive = useRef(false);
   const pickupDetailRequestRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<MarketplaceChatMessage[]>([]);
   const [conversation, setConversation] = useState<
@@ -109,41 +130,104 @@ export default function ConversationScreen() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chatBlocked, setChatBlocked] = useState(false);
   const draftSafetyIssue = chatSafetyIssue(draft);
   const threadClosed = Boolean(conversation && conversation.state !== "open");
   const activePickup = pickupRequests.find((request) =>
     request.state === "pending" || request.state === "authorized"
   );
 
+  const clearBlockedConversationState = useCallback(() => {
+    refreshGeneration.current += 1;
+    conversationGeneration.current += 1;
+    mediaGeneration.current += 1;
+    if (typingTimer.current) clearTimeout(typingTimer.current);
+    typingTimer.current = null;
+    typingActive.current = false;
+    pickupDetailRequestRef.current = null;
+    setLoading(false);
+    setChatBlocked(true);
+    setConversation(null);
+    setMessages([]);
+    setTyping([]);
+    setPickupRole(null);
+    setChatContext(null);
+    setPickupRequests([]);
+    setPickupOptions([]);
+    setSelectedPickupOption(null);
+    setPickupDetail(null);
+    setPickupBusy(false);
+    setPhotos([]);
+    setDraft("");
+    setSending(false);
+    setError(HOME_KITCHEN_CHAT_UNAVAILABLE_REASON);
+  }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      refreshGeneration.current += 1;
+      conversationGeneration.current += 1;
+      mediaGeneration.current += 1;
+    };
+  }, []);
+
   const refresh = useCallback(async (quiet = false) => {
     if (!id) return;
+    const generation = ++refreshGeneration.current;
     if (!quiet) setLoading(true);
-    const [messageResult, typingMembers, requestResult, contextResult] =
-      await Promise.all([
+    try {
+      // Resolve the narrow conversation context first. This both identifies
+      // the business kind and prevents message/pickup hydration when the
+      // globally disabled home-kitchen category is encountered.
+      const contextResult = await getMarketplaceConversationContext(id);
+      if (!mounted.current || refreshGeneration.current !== generation) return;
+      if (!contextResult.ok || !contextResult.data) {
+        if (!contextResult.ok && contextResult.code === "NOT_FOUND") {
+          clearBlockedConversationState();
+          return;
+        }
+        setLoading(false);
+        setChatBlocked(false);
+        setError(
+          contextResult.ok
+            ? "Conversation details could not be loaded."
+            : contextResult.reason
+        );
+        return;
+      }
+
+      const context = contextResult.data;
+      if (isHomeKitchenBlocked(context.businessCategory)) {
+        clearBlockedConversationState();
+        return;
+      }
+
+      const [messageResult, typingMembers, requestResult] = await Promise.all([
         getMarketplaceMessages(id),
         getMarketplaceTyping(id),
         listMarketplacePickupRequests(id),
-        getMarketplaceConversationContext(id),
       ]);
-    if (!quiet) setLoading(false);
-    if (!messageResult.ok) {
-      setError(messageResult.reason);
-      return;
-    }
-    const nextMessages = messageResult.data ?? [];
-    setError(null);
-    setMessages(nextMessages);
-    setTyping(typingMembers);
-    const context = contextResult.ok ? contextResult.data ?? null : null;
-    const role = context?.role ?? await getMarketplaceConversationRole(id);
-    setChatContext(context);
-    setPickupRole(role);
-    if (requestResult.ok) {
-      const nextRequests = requestResult.data ?? [];
-      setPickupRequests(nextRequests);
+      if (!mounted.current || refreshGeneration.current !== generation) return;
+      if (!messageResult.ok) {
+        setLoading(false);
+        setChatBlocked(false);
+        setError(messageResult.reason);
+        return;
+      }
+
+      const nextMessages = messageResult.data ?? [];
+      const role = context.role ?? await getMarketplaceConversationRole(id);
+      if (!mounted.current || refreshGeneration.current !== generation) return;
+
+      const nextRequests = requestResult.ok ? requestResult.data ?? [] : [];
       const authorized = nextRequests.find((request) =>
         request.state === "authorized"
       );
+      let pickupDetailUpdate:
+        | { requestId: string | null; value: MarketplacePickupDetail | null }
+        | null = null;
       if (
         context?.businessCategory === "home_kitchen" &&
         authorized && pickupDetailRequestRef.current !== authorized.id
@@ -152,48 +236,82 @@ export default function ConversationScreen() {
           id,
           authorized.id,
         );
-        pickupDetailRequestRef.current = authorized.id;
-        setPickupDetail(detailResult.ok ? detailResult.data ?? null : null);
+        if (!mounted.current || refreshGeneration.current !== generation) return;
+        pickupDetailUpdate = {
+          requestId: authorized.id,
+          value: detailResult.ok ? detailResult.data ?? null : null,
+        };
       } else if (!authorized || context?.businessCategory !== "home_kitchen") {
-        pickupDetailRequestRef.current = null;
-        setPickupDetail(null);
+        pickupDetailUpdate = { requestId: null, value: null };
       }
-    }
-    if (context?.businessCategory === "home_kitchen" && role === "customer") {
-      const optionResult = await listNeighborhoodPickupChoices(id);
-      if (optionResult.ok) {
-        const nextOptions = optionResult.data ?? [];
-        setPickupOptions(nextOptions);
-        setSelectedPickupOption((current) =>
-          nextOptions.find((option) => option.id === current?.id) ?? null
-        );
+
+      let nextOptions: MarketplacePickupOption[] = [];
+      if (context?.businessCategory === "home_kitchen" && role === "customer") {
+        const optionResult = await listNeighborhoodPickupChoices(id);
+        if (!mounted.current || refreshGeneration.current !== generation) return;
+        nextOptions = optionResult.ok ? optionResult.data ?? [] : [];
       }
-    } else {
-      setPickupOptions([]);
-      setSelectedPickupOption(null);
+      if (!mounted.current || refreshGeneration.current !== generation) return;
+
+      setLoading(false);
+      setError(null);
+      setChatBlocked(false);
+      setMessages(nextMessages);
+      setTyping(typingMembers);
+      setChatContext(context);
+      setPickupRole(role);
+      setPickupRequests(nextRequests);
+      if (pickupDetailUpdate) {
+        pickupDetailRequestRef.current = pickupDetailUpdate.requestId;
+        setPickupDetail(pickupDetailUpdate.value);
+      }
+      setPickupOptions(nextOptions);
+      setSelectedPickupOption((current) =>
+        nextOptions.find((option) => option.id === current?.id) ?? null
+      );
+
+      const latest = nextMessages.at(-1)?.sequence ?? 0;
+      if (latest && expectedUserId) {
+        void markMarketplaceConversationRead(id, latest, expectedUserId);
+      }
+    } catch {
+      if (!mounted.current || refreshGeneration.current !== generation) return;
+      setLoading(false);
+      setChatBlocked(false);
+      setError("This conversation could not refresh safely. Try again.");
     }
-    const latest = nextMessages.at(-1)?.sequence ?? 0;
-    if (latest) void markMarketplaceConversationRead(id, latest);
-  }, [id]);
+  }, [clearBlockedConversationState, expectedUserId, id]);
 
   useEffect(() => {
     if (!focused || auth.status !== "authenticated") return;
+    const generation = ++conversationGeneration.current;
     const initialTimer = setTimeout(() => {
       void listMarketplaceConversations().then((result) => {
-        if (result.ok) {
-          setConversation(
-            (result.data ?? []).find((entry) => entry.id === id) ?? null,
-          );
-        }
+        if (
+          !mounted.current ||
+          conversationGeneration.current !== generation
+        ) return;
+        setConversation(
+          result.ok
+            ? (result.data ?? []).find((entry) => entry.id === id) ?? null
+            : null,
+        );
+      }).catch(() => {
+        if (
+          mounted.current &&
+          conversationGeneration.current === generation
+        ) setConversation(null);
       });
       void refresh();
     }, 0);
     const interval = setInterval(() => void refresh(true), 4_000);
     return () => {
+      refreshGeneration.current += 1;
+      conversationGeneration.current += 1;
       clearTimeout(initialTimer);
       clearInterval(interval);
     };
-  }, [auth.status, focused, id, refresh]);
+  }, [auth.account?.id, auth.status, focused, id, refresh]);
 
   useEffect(() => {
     const pendingIds = photos.filter((photo) => photo.state === "pending").map((
@@ -202,7 +320,9 @@ export default function ConversationScreen() {
     if (!focused || !pendingIds.length) return;
     const check = async () => {
       if (!id) return;
+      const generation = ++mediaGeneration.current;
       const states = await mediaProcessingStates(id, pendingIds);
+      if (!mounted.current || mediaGeneration.current !== generation) return;
       setPhotos((current) => {
         let changed = false;
         const next = current.map((photo) => {
@@ -216,30 +336,44 @@ export default function ConversationScreen() {
     };
     void check();
     const interval = setInterval(() => void check(), 3_000);
-    return () => clearInterval(interval);
-  }, [focused, id, photos]);
+    return () => {
+      mediaGeneration.current += 1;
+      clearInterval(interval);
+    };
+  }, [auth.account?.id, focused, id, photos]);
 
   useEffect(() => () => {
     if (typingTimer.current) clearTimeout(typingTimer.current);
-    if (id) void setMarketplaceTyping(id, false);
-  }, [id]);
+    if (id && expectedUserId) {
+      void setMarketplaceTyping(id, false, expectedUserId);
+    }
+    typingActive.current = false;
+  }, [expectedUserId, id]);
 
   useEffect(() => {
     if (!pickupDetail) return;
     const expiresAt = new Date(pickupDetail.expiresAt).getTime();
     const delay = expiresAt - Date.now();
     if (!Number.isFinite(expiresAt) || delay <= 0) {
-      const timer = setTimeout(() => setPickupDetail(null), 0);
+      const timer = setTimeout(() => {
+        if (mounted.current) setPickupDetail(null);
+      }, 0);
       return () => clearTimeout(timer);
     }
-    const timer = setTimeout(() => setPickupDetail(null), delay + 250);
+    const timer = setTimeout(() => {
+      if (mounted.current) setPickupDetail(null);
+    }, delay + 250);
     return () => clearTimeout(timer);
   }, [pickupDetail]);
 
   useEffect(() => {
     if (!loading && messages.length) {
       const timer = setTimeout(
-        () => scrollRef.current?.scrollToEnd({ animated: false }),
+        () => {
+          if (mounted.current) {
+            scrollRef.current?.scrollToEnd({ animated: false });
+          }
+        },
         30,
       );
       return () => clearTimeout(timer);
@@ -248,11 +382,24 @@ export default function ConversationScreen() {
 
   const changeDraft = (value: string) => {
     setDraft(value.slice(0, 1_000));
-    if (!id) return;
+    if (!id || !expectedUserId) return;
     if (typingTimer.current) clearTimeout(typingTimer.current);
-    void setMarketplaceTyping(id, Boolean(value.trim()));
+    const hasText = Boolean(value.trim());
+    if (hasText && !typingActive.current) {
+      typingActive.current = true;
+      void setMarketplaceTyping(id, true, expectedUserId);
+    } else if (!hasText && typingActive.current) {
+      typingActive.current = false;
+      void setMarketplaceTyping(id, false, expectedUserId);
+    }
+    if (!hasText) return;
     typingTimer.current = setTimeout(
-      () => void setMarketplaceTyping(id, false),
+      () => {
+        if (mounted.current) {
+          typingActive.current = false;
+          void setMarketplaceTyping(id, false, expectedUserId);
+        }
+      },
       2_500,
     );
   };
@@ -262,12 +409,18 @@ export default function ConversationScreen() {
     const approvedAssets = photos.filter((photo) => photo.state === "approved")
       .map((photo) => photo.assetId);
     if (
-      !id || draftSafetyIssue || threadClosed ||
+      !id || !expectedUserId || draftSafetyIssue || threadClosed ||
       (!body && !approvedAssets.length) ||
       photos.some((photo) => photo.state === "pending") || sending
     ) return;
     setSending(true);
-    const result = await sendMarketplaceMessage(id, body, approvedAssets);
+    const result = await sendMarketplaceMessage(
+      id,
+      body,
+      approvedAssets,
+      expectedUserId,
+    );
+    if (!mounted.current) return;
     setSending(false);
     if (!result.ok) {
       setError(result.reason);
@@ -275,14 +428,31 @@ export default function ConversationScreen() {
     }
     setDraft("");
     setPhotos([]);
-    void setMarketplaceTyping(id, false);
+    typingActive.current = false;
+    void setMarketplaceTyping(id, false, expectedUserId);
     await refresh(true);
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 30);
+    if (!mounted.current) return;
+    setTimeout(() => {
+      if (mounted.current) {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }
+    }, 30);
   };
 
   const pickPhoto = async () => {
-    if (!id || !conversation || threadClosed || photos.length >= 4) return;
+    if (
+      !id || !expectedUserId || !conversation || threadClosed ||
+      photos.length >= 4
+    ) return;
+    if (!featureFlags.mediaUploads) {
+      showMessage(
+        "Photo attachments unavailable",
+        "Text chat remains available while the media safety pipeline is offline.",
+      );
+      return;
+    }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!mounted.current) return;
     if (!permission.granted) {
       showMessage(
         "Photo access needed",
@@ -295,8 +465,18 @@ export default function ConversationScreen() {
       mediaTypes: ["images"],
       quality: 0.9,
     });
+    if (!mounted.current) return;
     if (selection.canceled || !selection.assets[0]) return;
     const selected = selection.assets[0];
+    const accountClient = await createAccountBoundSupabaseClient(expectedUserId);
+    if (!mounted.current) return;
+    if (!accountClient) {
+      showMessage(
+        "Account changed",
+        "Return to this conversation from the current account and try again.",
+      );
+      return;
+    }
     const result = await stageMediaUpload(
       {
         uri: selected.uri,
@@ -306,7 +486,9 @@ export default function ConversationScreen() {
       "chat_photo",
       conversation.businessId,
       id,
+      accountClient,
     );
+    if (!mounted.current) return;
     if (!result.ok || !result.data) {
       showMessage(
         "Photo unavailable",
@@ -325,7 +507,7 @@ export default function ConversationScreen() {
 
   const requestPickupWindow = async (minutesFromNow: number) => {
     if (
-      !id || pickupBusy || pickupRole !== "customer" ||
+      !id || !expectedUserId || pickupBusy || pickupRole !== "customer" ||
       chatContext?.businessCategory !== "home_kitchen"
     ) return;
     const { startsAt, endsAt } = pickupWindowFromNow(minutesFromNow);
@@ -337,8 +519,11 @@ export default function ConversationScreen() {
         startsAt,
         endsAt,
         selectedPickupOption.kind === "seller_residence",
+        "",
+        expectedUserId,
       )
       : { ok: false as const, reason: "Choose a pickup location first." };
+    if (!mounted.current) return;
     setPickupBusy(false);
     if (!result.ok) {
       showMessage("Pickup request unavailable", result.reason);
@@ -350,7 +535,9 @@ export default function ConversationScreen() {
   const acceptNeighborhoodPickup = async (
     request: MarketplacePickupRequest,
   ) => {
-    if (!id || pickupBusy || pickupRole !== "merchant") return;
+    if (!id || !expectedUserId || pickupBusy || pickupRole !== "merchant") {
+      return;
+    }
     if (auth.assuranceLevel !== "aal2") {
       showMessage(
         "Verification required",
@@ -364,7 +551,9 @@ export default function ConversationScreen() {
       id,
       request.id,
       request.version,
+      expectedUserId,
     );
+    if (!mounted.current) return;
     setPickupBusy(false);
     if (!result.ok) {
       showMessage("Pickup preference unavailable", result.reason);
@@ -382,13 +571,14 @@ export default function ConversationScreen() {
           "Spottr recommends a public shopping center. If you choose the seller residence, tell someone where you are going, meet in daylight when possible, and leave if anything feels wrong. Spottr does not inspect or guarantee the location or transaction.",
         confirmLabel: "I understand",
       });
+      if (!mounted.current) return;
       if (!accepted) return;
     }
     setSelectedPickupOption(option);
   };
 
   const clearInbox = async () => {
-    if (!id) return;
+    if (!id || !expectedUserId) return;
     const confirmed = await confirmAction({
       title: "Clear from your inbox?",
       message:
@@ -396,14 +586,19 @@ export default function ConversationScreen() {
       confirmLabel: "Clear inbox",
       destructive: true,
     });
+    if (!mounted.current) return;
     if (!confirmed) return;
-    const result = await clearMarketplaceConversation(id);
+    const result = await clearMarketplaceConversation(
+      id,
+      expectedUserId,
+    );
+    if (!mounted.current) return;
     if (result.ok) router.replace("/messages" as never);
     else showMessage("Conversation not cleared", result.reason);
   };
 
   const resolvePickup = async (request: MarketplacePickupRequest) => {
-    if (!id || pickupBusy) return;
+    if (!id || !expectedUserId || pickupBusy) return;
     const resolution = pickupRole === "customer"
       ? "cancel"
       : request.state === "authorized"
@@ -415,7 +610,9 @@ export default function ConversationScreen() {
       request.id,
       resolution,
       request.version,
+      expectedUserId,
     );
+    if (!mounted.current) return;
     setPickupBusy(false);
     if (!result.ok) {
       showMessage("Pickup update unavailable", result.reason);
@@ -427,18 +624,25 @@ export default function ConversationScreen() {
 
   const openPickupDirections = async () => {
     if (!pickupDetail) return;
-    const destination = `${pickupDetail.latitude},${pickupDetail.longitude}`;
-    const url = Platform.OS === "ios"
-      ? `https://maps.apple.com/?daddr=${
-        encodeURIComponent(destination)
-      }&dirflg=d`
-      : `https://www.google.com/maps/dir/?api=1&destination=${
-        encodeURIComponent(destination)
-      }`;
-    await Linking.openURL(url);
+    const url = externalDirectionsUrl(pickupDetail, Platform.OS);
+    if (!url) {
+      showMessage("Directions unavailable", "This pickup card does not contain a valid destination.");
+      return;
+    }
+    try {
+      await Linking.openURL(url);
+    } catch {
+      if (mounted.current) {
+        showMessage(
+          "Directions unavailable",
+          "Your maps app could not open this destination.",
+        );
+      }
+    }
   };
 
   const safetyAction = async (message: MarketplaceChatMessage) => {
+    if (!expectedUserId) return;
     const shouldReport = await confirmAction({
       title: "Report this message?",
       message:
@@ -446,8 +650,13 @@ export default function ConversationScreen() {
       confirmLabel: "Report",
       destructive: true,
     });
+    if (!mounted.current) return;
     if (!shouldReport) return;
-    const result = await reportMarketplaceMessage(message.id);
+    const result = await reportMarketplaceMessage(
+      message.id,
+      expectedUserId,
+    );
+    if (!mounted.current) return;
     showMessage(
       result.ok ? "Report received" : "Report unavailable",
       result.ok ? "Spottr staff will review this message." : result.reason,
@@ -457,6 +666,7 @@ export default function ConversationScreen() {
   const blockCounterpart = async () => {
     const counterpart = conversation?.counterpart;
     if (!counterpart?.profileId) return;
+    if (!expectedUserId) return;
     const confirmed = await confirmAction({
       title: `Block ${counterpart.name}?`,
       message:
@@ -464,11 +674,30 @@ export default function ConversationScreen() {
       confirmLabel: "Block member",
       destructive: true,
     });
+    if (!mounted.current) return;
     if (!confirmed) return;
-    const result = await blockUser(counterpart.profileId);
+    const result = await blockUser(counterpart.profileId, expectedUserId);
+    if (!mounted.current) return;
     if (result.ok) router.replace("/messages" as never);
     else showMessage("Could not block member", result.reason);
   };
+
+  if (chatBlocked) {
+    return (
+      <FocusAwareScreen>
+        <PageShell>
+          <View style={styles.center}>
+            <FontAwesome6 color={palette.accentDeep} name="shield-halved" size={22} />
+            <Text accessibilityRole="header" style={styles.centerTitle}>Conversation unavailable</Text>
+            <Text style={styles.centerBody}>{HOME_KITCHEN_CHAT_UNAVAILABLE_REASON}</Text>
+            <Pressable accessibilityRole="button" onPress={() => router.replace("/messages" as never)} style={styles.sendButton}>
+              <Text style={styles.sendText}>Back to messages</Text>
+            </Pressable>
+          </View>
+        </PageShell>
+      </FocusAwareScreen>
+    );
+  }
 
   return (
     <FocusAwareScreen>
@@ -896,51 +1125,58 @@ export default function ConversationScreen() {
                             {chatContext?.businessCategory === "home_kitchen"
                               ? (
                                 pickupOptions.length
-                                  ? pickupOptions.map((option) => (
-                                    <Pressable
-                                      accessibilityRole="radio"
-                                      aria-checked={selectedPickupOption?.id === option.id}
-                                      accessibilityState={{
-                                        checked: selectedPickupOption?.id ===
-                                          option.id,
-                                      }}
-                                      key={option.id}
-                                      onPress={() =>
-                                        void choosePickupOption(option)}
-                                      style={[
-                                        styles.pickupOption,
-                                        selectedPickupOption?.id ===
-                                          option.id &&
-                                        styles.pickupOptionSelected,
-                                      ]}
+                                  ? (
+                                    <View
+                                      accessibilityLabel="Pickup location options"
+                                      accessibilityRole="radiogroup"
                                     >
-                                      <View style={styles.pickupDetailCopy}>
-                                        <Text style={styles.pickupLocation}>
-                                          {option.label}
-                                        </Text>
-                                        <Text style={styles.pickupAddress}>
-                                          {option.address
-                                            ? `${option.address} · `
-                                            : ""}
-                                          {option.city}, {option.region}
-                                          {option.warningRequired
-                                            ? " · extra caution"
-                                            : " · public meetup place"}
-                                        </Text>
-                                      </View>
-                                      <FontAwesome6
-                                        color={selectedPickupOption?.id ===
-                                            option.id
-                                          ? palette.success
-                                          : palette.mutedLight}
-                                        name={selectedPickupOption?.id ===
-                                            option.id
-                                          ? "circle-check"
-                                          : "circle"}
-                                        size={13}
-                                      />
-                                    </Pressable>
-                                  ))
+                                      {pickupOptions.map((option) => (
+                                        <Pressable
+                                          accessibilityRole="radio"
+                                          aria-checked={selectedPickupOption?.id === option.id}
+                                          accessibilityState={{
+                                            checked: selectedPickupOption?.id ===
+                                              option.id,
+                                          }}
+                                          key={option.id}
+                                          onPress={() =>
+                                            void choosePickupOption(option)}
+                                          style={[
+                                            styles.pickupOption,
+                                            selectedPickupOption?.id ===
+                                              option.id &&
+                                            styles.pickupOptionSelected,
+                                          ]}
+                                        >
+                                          <View style={styles.pickupDetailCopy}>
+                                            <Text style={styles.pickupLocation}>
+                                              {option.label}
+                                            </Text>
+                                            <Text style={styles.pickupAddress}>
+                                              {option.address
+                                                ? `${option.address} · `
+                                                : ""}
+                                              {option.city}, {option.region}
+                                              {option.warningRequired
+                                                ? " · extra caution"
+                                                : " · public meetup place"}
+                                            </Text>
+                                          </View>
+                                          <FontAwesome6
+                                            color={selectedPickupOption?.id ===
+                                                option.id
+                                              ? palette.success
+                                              : palette.mutedLight}
+                                            name={selectedPickupOption?.id ===
+                                                option.id
+                                              ? "circle-check"
+                                              : "circle"}
+                                            size={13}
+                                          />
+                                        </Pressable>
+                                      ))}
+                                    </View>
+                                  )
                                   : (
                                     <Text style={styles.pickupWarning}>
                                       The seller has not configured 2–3 current
@@ -1063,20 +1299,29 @@ export default function ConversationScreen() {
                     </Text>
                   )
                   : null}
+                {!featureFlags.mediaUploads && !threadClosed
+                  ? (
+                    <Text style={styles.mediaUnavailable}>
+                      Photo attachments are off for this release. Text chat remains available.
+                    </Text>
+                  )
+                  : null}
                 <View style={styles.composer}>
                   <Pressable
-                    accessibilityLabel="Attach a photo"
+                    accessibilityLabel={featureFlags.mediaUploads
+                      ? "Attach a photo"
+                      : "Photo attachments unavailable"}
                     accessibilityRole="button"
                     accessibilityState={{
-                      disabled: !conversation || threadClosed ||
+                      disabled: !featureFlags.mediaUploads || !conversation || threadClosed ||
                         photos.length >= 4,
                     }}
-                    disabled={!conversation || threadClosed ||
+                    disabled={!featureFlags.mediaUploads || !conversation || threadClosed ||
                       photos.length >= 4}
                     onPress={() => void pickPhoto()}
                     style={[
                       styles.attachButton,
-                      (!conversation || threadClosed || photos.length >= 4) &&
+                      (!featureFlags.mediaUploads || !conversation || threadClosed || photos.length >= 4) &&
                       styles.attachButtonDisabled,
                     ]}
                   >
@@ -1345,6 +1590,14 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 10,
     lineHeight: 15,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  mediaUnavailable: {
+    backgroundColor: palette.bg,
+    color: palette.muted,
+    fontSize: 9,
+    lineHeight: 14,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },

@@ -88,6 +88,7 @@ Deno.serve(async (request) => {
   let cors: HeadersInit = {};
   let requestId: string | null = null;
   let admin: ReturnType<typeof adminClient> | null = null;
+  let authDeletionConfirmed = false;
   try {
     cors = corsHeaders(request);
     if (request.method === "OPTIONS") return optionsResponse(request);
@@ -198,18 +199,49 @@ Deno.serve(async (request) => {
       throw prepareError;
     }
 
-    const { error: deleteError } = await admin.auth.admin.deleteUser(user.id, false);
-    if (deleteError) {
-      await markFailed(admin, requestId, "AUTH_DELETE_FAILED");
-      throw new HttpError(503, "ACCOUNT_DELETE_RETRY_REQUIRED");
+    let authDeleteUncertain = false;
+    try {
+      const { error: deleteError } = await admin.auth.admin.deleteUser(
+        user.id,
+        false,
+      );
+      authDeleteUncertain = Boolean(deleteError);
+    } catch {
+      authDeleteUncertain = true;
     }
+    if (authDeleteUncertain) {
+      console.error("ACCOUNT_DELETE_AUTH_RESULT_UNCERTAIN");
+      return jsonResponse(
+        {
+          status: "processing",
+          phase: "auth_deletion",
+          request_id: requestId,
+          retry_after_seconds: 60,
+        },
+        202,
+        cors,
+      );
+    }
+    authDeletionConfirmed = true;
 
-    const { error: completeError } = await admin.rpc("advance_account_deletion", {
-      target_request_id: requestId,
-      next_state: "completed",
-      target_failure_code: null,
-    });
-    if (completeError) console.error("Deletion completed but receipt update failed", completeError);
+    const { data: receiptCompleted, error: completeError } = await admin.rpc(
+      "finalize_account_deletion_receipt",
+      { target_request_id: requestId },
+    );
+    if (completeError || receiptCompleted !== true) {
+      console.error("ACCOUNT_DELETE_RECEIPT_FINALIZATION_PENDING");
+      return jsonResponse(
+        {
+          status: "processing",
+          phase: "receipt_finalization",
+          account_removed: true,
+          request_id: requestId,
+          retry_after_seconds: 60,
+        },
+        202,
+        cors,
+      );
+    }
 
     return jsonResponse(
       { status: "deleted", request_id: requestId },
@@ -220,6 +252,7 @@ Deno.serve(async (request) => {
     if (
       admin &&
       requestId &&
+      !authDeletionConfirmed &&
       !(error instanceof HttpError && error.code === "ACCOUNT_DELETE_RETRY_REQUIRED")
     ) {
       await markFailed(admin, requestId, "UNEXPECTED_FAILURE");

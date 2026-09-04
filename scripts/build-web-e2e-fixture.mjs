@@ -19,6 +19,7 @@ const result = spawnSync(
       EXPO_PUBLIC_SUPABASE_URL: 'https://spottr-fixture.supabase.co',
       EXPO_PUBLIC_SUPABASE_ANON_KEY: 'spottr-public-fixture-anon-key',
       EXPO_PUBLIC_MAP_STYLE_URL: 'https://spottr-fixture.supabase.co/map/style.json',
+      EXPO_PUBLIC_MAP_CSP_ORIGINS: 'https://spottr-fixture.supabase.co',
       EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED: 'true',
     },
     stdio: 'inherit',

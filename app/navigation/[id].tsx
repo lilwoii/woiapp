@@ -19,81 +19,290 @@ import { LiveMap } from '@/components/live-map';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
-import { featureFlags } from '@/lib/features';
 import {
+  featureFlags,
+  isHomeKitchenBlocked,
+  publicListingRouteUnavailableReason,
+} from '@/lib/features';
+import {
+  advanceRouteProgress,
+  createRouteLiveProgress,
+  externalDirectionsProviderUrl,
+  externalDirectionsUrl,
+  formatRouteArrivalTime,
   formatRouteDistance,
   formatRouteDuration,
-  nearestRouteStep,
+  inferTravelMode,
+  navigationDistanceMeters,
   requestRoutePlan,
+  routeProgressMetrics,
   shouldRequestAutomaticReroute,
 } from '@/lib/navigation';
+import { parsePublicLocationRouteParam, placeLocationRoutePath } from '@/lib/links';
+import type { ExternalMapProvider, RouteLiveProgress } from '@/lib/navigation';
 import type { NavigationCoordinate, RoutePlan, TravelMode } from '@/types/navigation';
 
-const travelModes: { id: TravelMode; label: string; icon: 'car-side' | 'person-walking' | 'bicycle' }[] = [
+type TravelModeChoice = TravelMode | 'auto';
+
+const travelModes: { id: TravelModeChoice; label: string; icon: 'location-crosshairs' | 'car-side' | 'person-walking' | 'bicycle' }[] = [
+  { id: 'auto', label: 'Auto', icon: 'location-crosshairs' },
   { id: 'drive', label: 'Drive', icon: 'car-side' },
   { id: 'walk', label: 'Walk', icon: 'person-walking' },
   { id: 'bike', label: 'Bike', icon: 'bicycle' },
 ];
 const automaticReroutingPrivacyNotice = 'When on, Spottr may send your updated precise current location to Mapbox after at least 100 m of movement and 90 seconds to refresh the route. Turn it off to stop additional Mapbox route requests while your foreground live marker continues.';
+const CURRENT_LOCATION_TIMEOUT_MS = 15_000;
+
+function destinationKey(destination: NavigationCoordinate | null) {
+  return destination ? `${destination.latitude}:${destination.longitude}` : '';
+}
+
+async function currentPositionWithTimeout() {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let outcome: { kind: 'timeout' } | {
+    kind: 'position';
+    position: Awaited<ReturnType<typeof Location.getCurrentPositionAsync>>;
+  };
+  try {
+    outcome = await Promise.race([
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then((position) => ({
+        kind: 'position' as const,
+        position,
+      })),
+      new Promise<{ kind: 'timeout' }>((resolve) => {
+        timeout = setTimeout(() => resolve({ kind: 'timeout' }), CURRENT_LOCATION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+  if (outcome.kind === 'timeout') throw new Error('CURRENT_LOCATION_TIMEOUT');
+  return outcome.position;
+}
 
 export default function NavigationScreen() {
-  const params = useLocalSearchParams<{ id?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    id?: string | string[];
+    location?: string | string[];
+  }>();
   const placeId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const parsedLocationId = parsePublicLocationRouteParam(params.location);
+  const locationId = parsedLocationId ?? undefined;
+  const locationParamInvalid = parsedLocationId === null;
+  const { scopeKey } = useMarketplaceStore();
+  return <ScopedNavigationScreen
+    key={`${scopeKey}:navigation:${placeId ?? ''}:${locationId ?? ''}:${locationParamInvalid}`}
+    locationId={locationId}
+    locationParamInvalid={locationParamInvalid}
+    placeId={placeId}
+  />;
+}
+
+function ScopedNavigationScreen({
+  placeId,
+  locationId,
+  locationParamInvalid,
+}: {
+  placeId?: string;
+  locationId?: string;
+  locationParamInvalid: boolean;
+}) {
   const auth = useAuth();
   const { ensurePlace, places } = useMarketplaceStore();
-  const place = places.find((entry) => entry.id === placeId);
-  const [placeRequestPending, setPlaceRequestPending] = useState(Boolean(placeId && !place));
+  const loadedPlace = places.find((entry) =>
+    entry.id === placeId && (!locationId || entry.locationId === locationId)
+  );
+  const placeBlockedReason = locationParamInvalid
+    ? 'This destination link is invalid.'
+    : publicListingRouteUnavailableReason(loadedPlace);
+  const placeBlocked = Boolean(placeBlockedReason);
+  const place = placeBlocked ? undefined : loadedPlace;
+  const [placeRequestPending, setPlaceRequestPending] = useState(Boolean(placeId && !place && !placeBlocked));
   const [route, setRoute] = useState<RoutePlan | null>(null);
+  const [routeClock, setRouteClock] = useState(() => Date.now());
+  const [routedDestinationKey, setRoutedDestinationKey] = useState<string | null>(null);
   const [routeVisible, setRouteVisible] = useState(true);
+  const [routeStepIndex, setRouteStepIndex] = useState(0);
+  const [routeLiveProgress, setRouteLiveProgress] = useState<RouteLiveProgress | null>(null);
+  const [routeGuidanceNeedsRefresh, setRouteGuidanceNeedsRefresh] = useState(false);
   const [mode, setMode] = useState<TravelMode | null>(null);
+  const [modeChoice, setModeChoice] = useState<TravelModeChoice | null>(null);
   const [location, setLocation] = useState<NavigationCoordinate | null>(null);
   const [automaticRerouting, setAutomaticRerouting] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pendingMode, setPendingMode] = useState<TravelModeChoice | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const watcher = useRef<Location.LocationSubscription | null>(null);
+  const routeRef = useRef<RoutePlan | null>(null);
+  const routeLiveProgressRef = useRef<RouteLiveProgress | null>(null);
+  const boundedRecoveryPending = useRef(false);
+  const routeDestinationKey = useRef<string | null>(null);
+  const destinationRef = useRef<NavigationCoordinate | null>(null);
   const trackingWanted = useRef(false);
   const modeRef = useRef<TravelMode | null>(null);
   const routeRequestOrigin = useRef<NavigationCoordinate | null>(null);
   const lastRouteRequestAt = useRef(0);
-  const rerouteInFlight = useRef(false);
+  const routeRequestSequence = useRef(0);
+  const activeRouteRequest = useRef<number | null>(null);
   const automaticReroutingRef = useRef(false);
+  const navigationOperationActive = useRef(false);
   const appStateRef = useRef(AppState.currentState);
   const watcherGeneration = useRef(0);
+  const navigationOperationGeneration = useRef(0);
+  const mounted = useRef(true);
+
+  const cancelTrackingSession = useCallback((nextMessage?: string) => {
+    trackingWanted.current = false;
+    watcherGeneration.current += 1;
+    navigationOperationGeneration.current += 1;
+    routeRequestSequence.current += 1;
+    activeRouteRequest.current = null;
+    navigationOperationActive.current = false;
+    watcher.current?.remove();
+    watcher.current = null;
+    modeRef.current = null;
+    routeRef.current = null;
+    routeLiveProgressRef.current = null;
+    boundedRecoveryPending.current = false;
+    routeDestinationKey.current = null;
+    routeRequestOrigin.current = null;
+    lastRouteRequestAt.current = 0;
+    automaticReroutingRef.current = false;
+    setMode(null);
+    setModeChoice(null);
+    setRoutedDestinationKey(null);
+    setRoute(null);
+    setRouteVisible(true);
+    setRouteStepIndex(0);
+    setRouteLiveProgress(null);
+    setRouteGuidanceNeedsRefresh(false);
+    setLocation(null);
+    setAutomaticRerouting(false);
+    setBusy(false);
+    setPendingMode(null);
+    if (nextMessage !== undefined) setMessage(nextMessage);
+  }, []);
 
   useEffect(() => {
-    if (!placeId || place) return;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      trackingWanted.current = false;
+      watcherGeneration.current += 1;
+      navigationOperationGeneration.current += 1;
+      routeRequestSequence.current += 1;
+      activeRouteRequest.current = null;
+      navigationOperationActive.current = false;
+      watcher.current?.remove();
+      watcher.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!placeId || place || placeBlocked || locationParamInvalid) return;
     let active = true;
-    void ensurePlace(placeId).then((result) => {
+    void ensurePlace(placeId, locationId).then((result) => {
       if (!active) return;
       setPlaceRequestPending(false);
       if (!result.ok) setMessage(result.reason);
     });
     return () => { active = false; };
-  }, [ensurePlace, place, placeId]);
+  }, [ensurePlace, locationId, locationParamInvalid, place, placeBlocked, placeId]);
 
   const destination = useMemo(() => place ? {
     latitude: place.latitude,
     longitude: place.longitude,
   } : null, [place]);
+  const currentDestinationKey = destinationKey(destination);
+  const routeMatchesDestination = !route || routedDestinationKey === currentDestinationKey;
+  const routeIsFresh = !route || Date.parse(route.expiresAt) > routeClock;
+  const visibleRoute = route;
+  const hasTrackableDestination = Boolean(
+    place &&
+    destination &&
+    place.category !== 'home_kitchen' &&
+    !isHomeKitchenBlocked(place.category)
+  );
+
+  useEffect(() => {
+    if (hasTrackableDestination) return;
+    const sessionIsActive =
+      trackingWanted.current ||
+      watcher.current !== null ||
+      activeRouteRequest.current !== null ||
+      modeRef.current !== null ||
+      routeRef.current !== null ||
+      busy;
+    if (sessionIsActive) cancelTrackingSession();
+  }, [busy, cancelTrackingSession, hasTrackableDestination]);
+
+  useEffect(() => {
+    if (!route) return;
+    const timer = setInterval(() => setRouteClock(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [route]);
+
+  useEffect(() => {
+    destinationRef.current = destination;
+  }, [destination]);
 
   const refreshRoute = useCallback(async (origin: NavigationCoordinate, selectedMode: TravelMode) => {
-    if (!destination || rerouteInFlight.current) return false;
-    rerouteInFlight.current = true;
+    const requestedDestination = destinationRef.current;
+    if (
+      !mounted.current ||
+      appStateRef.current !== 'active' ||
+      !requestedDestination ||
+      activeRouteRequest.current !== null
+    ) return false;
+    const requestedDestinationKey = destinationKey(requestedDestination);
+    const requestId = routeRequestSequence.current + 1;
+    routeRequestSequence.current = requestId;
+    activeRouteRequest.current = requestId;
     lastRouteRequestAt.current = Date.now();
-    const result = await requestRoutePlan({ origin, destination, mode: selectedMode });
-    rerouteInFlight.current = false;
+    let result: Awaited<ReturnType<typeof requestRoutePlan>>;
+    try {
+      result = await requestRoutePlan({ origin, destination: requestedDestination, mode: selectedMode });
+    } catch {
+      if (activeRouteRequest.current === requestId) activeRouteRequest.current = null;
+      if (mounted.current && routeRequestSequence.current === requestId) {
+        setMessage('Your route could not be updated. Check your connection and try again.');
+      }
+      return false;
+    }
+    if (
+      !mounted.current ||
+      appStateRef.current !== 'active' ||
+      activeRouteRequest.current !== requestId ||
+      routeRequestSequence.current !== requestId
+    ) return false;
+    activeRouteRequest.current = null;
+    if (destinationKey(destinationRef.current) !== requestedDestinationKey) {
+      setMessage('This destination moved while the route was loading. Try the route again.');
+      return false;
+    }
     if (!result.ok || !result.data) {
       setMessage(result.ok ? 'A route could not be created.' : result.reason);
       return false;
     }
     routeRequestOrigin.current = origin;
+    routeRef.current = result.data;
+    const initialProgress = createRouteLiveProgress(result.data);
+    routeLiveProgressRef.current = initialProgress;
+    boundedRecoveryPending.current = false;
+    routeDestinationKey.current = requestedDestinationKey;
+    setRouteClock(Date.now());
+    setRoutedDestinationKey(requestedDestinationKey);
+    setRouteStepIndex(0);
+    setRouteLiveProgress(initialProgress);
+    setRouteGuidanceNeedsRefresh(false);
     setRoute(result.data);
     setRouteVisible(true);
     setMessage(null);
     return true;
-  }, [destination]);
+  }, []);
 
   const beginWatching = useCallback(async () => {
+    if (!mounted.current) return;
     const generation = watcherGeneration.current + 1;
     watcherGeneration.current = generation;
     watcher.current?.remove();
@@ -103,15 +312,31 @@ export default function NavigationScreen() {
       { accuracy: Location.Accuracy.High, distanceInterval: 10, timeInterval: 4_000 },
       (position) => {
         if (
+          !mounted.current ||
           watcherGeneration.current !== generation ||
           !trackingWanted.current ||
           appStateRef.current !== 'active'
         ) return;
         const next = { latitude: position.coords.latitude, longitude: position.coords.longitude };
         setLocation(next);
+        const activeRoute = routeRef.current;
+        if (activeRoute && routeDestinationKey.current === destinationKey(destinationRef.current)) {
+          const allowBoundedRecovery = boundedRecoveryPending.current;
+          boundedRecoveryPending.current = false;
+          const nextProgress = advanceRouteProgress(
+            activeRoute,
+            next,
+            routeLiveProgressRef.current,
+            { allowBoundedRecovery },
+          );
+          routeLiveProgressRef.current = nextProgress;
+          setRouteLiveProgress(nextProgress);
+          setRouteStepIndex(nextProgress.stepIndex);
+          setRouteGuidanceNeedsRefresh(!nextProgress.matched);
+        }
         const selectedMode = modeRef.current;
         const priorOrigin = routeRequestOrigin.current;
-        if (selectedMode && shouldRequestAutomaticReroute({
+        if (!navigationOperationActive.current && selectedMode && shouldRequestAutomaticReroute({
           enabled: automaticReroutingRef.current,
           previousOrigin: priorOrigin,
           currentOrigin: next,
@@ -120,6 +345,7 @@ export default function NavigationScreen() {
       }
     );
     if (
+      !mounted.current ||
       watcherGeneration.current !== generation ||
       !trackingWanted.current ||
       appStateRef.current !== 'active'
@@ -134,12 +360,20 @@ export default function NavigationScreen() {
     const subscription = AppState.addEventListener('change', (state) => {
       appStateRef.current = state;
       if (state !== 'active') {
+        navigationOperationGeneration.current += 1;
+        navigationOperationActive.current = false;
+        routeRequestSequence.current += 1;
+        activeRouteRequest.current = null;
         watcherGeneration.current += 1;
         watcher.current?.remove();
         watcher.current = null;
+        boundedRecoveryPending.current = false;
+        setBusy(false);
+        setPendingMode(null);
       } else if (trackingWanted.current && !watcher.current) {
+        boundedRecoveryPending.current = true;
         void beginWatching().catch(() => {
-          if (trackingWanted.current && appStateRef.current === 'active') {
+          if (mounted.current && trackingWanted.current && appStateRef.current === 'active') {
             setMessage('Live tracking could not resume. Check location services and try again.');
           }
         });
@@ -148,60 +382,191 @@ export default function NavigationScreen() {
     return () => {
       trackingWanted.current = false;
       watcherGeneration.current += 1;
+      routeRequestSequence.current += 1;
+      activeRouteRequest.current = null;
       watcher.current?.remove();
       watcher.current = null;
       subscription.remove();
     };
   }, [beginWatching]);
 
-  const startNavigation = async (selectedMode: TravelMode) => {
+  const startNavigation = async (selectedChoice: TravelModeChoice) => {
     if (auth.status !== 'authenticated') {
-      router.push({ pathname: '/auth', params: { next: `/navigation/${placeId ?? ''}` } } as Href);
+      router.push({
+        pathname: '/auth',
+        params: { next: placeLocationRoutePath('navigation', placeId ?? '', locationId) },
+      } as Href);
       return;
     }
-    if (!place || !destination || place.category === 'home_kitchen') return;
+    if (!place || !destination || isHomeKitchenBlocked(place.category) || place.category === 'home_kitchen') return;
+    const navigationGeneration = ++navigationOperationGeneration.current;
+    routeRequestSequence.current += 1;
+    activeRouteRequest.current = null;
+    navigationOperationActive.current = true;
     setBusy(true);
+    setPendingMode(selectedChoice);
     setMessage(null);
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
+      if (
+        !mounted.current ||
+        appStateRef.current !== 'active' ||
+        navigationOperationGeneration.current !== navigationGeneration
+      ) return;
       if (permission.status !== Location.PermissionStatus.GRANTED) {
         setMessage('Allow foreground location access to start live navigation. Spottr does not request background tracking.');
         return;
       }
-      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      const current = await currentPositionWithTimeout();
+      if (
+        !mounted.current ||
+        appStateRef.current !== 'active' ||
+        navigationOperationGeneration.current !== navigationGeneration
+      ) return;
       const origin = { latitude: current.coords.latitude, longitude: current.coords.longitude };
+      const selectedMode = selectedChoice === 'auto'
+        ? inferTravelMode({
+            speedMetersPerSecond: current.coords.speed,
+            horizontalAccuracyMeters: current.coords.accuracy,
+            distanceMeters: navigationDistanceMeters(origin, destination),
+          })
+        : selectedChoice;
       setLocation(origin);
       automaticReroutingRef.current = false;
       setAutomaticRerouting(false);
-      setMode(selectedMode);
-      modeRef.current = selectedMode;
+      if (appStateRef.current !== 'active') return;
       const routed = await refreshRoute(origin, selectedMode);
-      if (!routed) {
-        modeRef.current = null;
-        setMode(null);
-        return;
-      }
+      if (
+        !mounted.current ||
+        appStateRef.current !== 'active' ||
+        navigationOperationGeneration.current !== navigationGeneration
+      ) return;
+      if (!routed) return;
+      modeRef.current = selectedMode;
+      setMode(selectedMode);
+      setModeChoice(selectedChoice);
       trackingWanted.current = true;
       await beginWatching();
+      if (selectedChoice === 'auto' && mounted.current) {
+        setMessage(`Auto estimated ${selectedMode === 'drive' ? 'driving' : 'walking'} from current speed and trip distance. You can change the mode anytime.`);
+      }
     } catch {
-      setMessage('Your current location could not be read. Check location services and try again.');
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        setMessage('Your current location could not be read. Check location services and try again.');
+      }
     } finally {
-      setBusy(false);
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        navigationOperationActive.current = false;
+        setBusy(false);
+        setPendingMode(null);
+      }
+    }
+  };
+
+  const changeTravelMode = async (selectedChoice: TravelModeChoice) => {
+    if (!mode || (selectedChoice === modeChoice && visibleRoute) || busy) return;
+    if (!location) {
+      setMessage('Your current location is not available yet. Try changing travel mode again.');
+      return;
+    }
+    const navigationGeneration = ++navigationOperationGeneration.current;
+    routeRequestSequence.current += 1;
+    activeRouteRequest.current = null;
+    navigationOperationActive.current = true;
+    setBusy(true);
+    setPendingMode(selectedChoice);
+    setMessage(null);
+    try {
+      let routeOrigin = location;
+      let selectedMode: TravelMode = selectedChoice === 'auto'
+        ? inferTravelMode({
+            distanceMeters: destination ? navigationDistanceMeters(location, destination) : Number.POSITIVE_INFINITY,
+          })
+        : selectedChoice;
+      if (selectedChoice === 'auto') {
+        const current = await currentPositionWithTimeout();
+        if (
+          !mounted.current ||
+          appStateRef.current !== 'active' ||
+          navigationOperationGeneration.current !== navigationGeneration
+        ) return;
+        routeOrigin = { latitude: current.coords.latitude, longitude: current.coords.longitude };
+        setLocation(routeOrigin);
+        selectedMode = inferTravelMode({
+          speedMetersPerSecond: current.coords.speed,
+          horizontalAccuracyMeters: current.coords.accuracy,
+          distanceMeters: destination
+            ? navigationDistanceMeters(routeOrigin, destination)
+            : Number.POSITIVE_INFINITY,
+        });
+      }
+      if (appStateRef.current !== 'active') return;
+      const routed = await refreshRoute(routeOrigin, selectedMode);
+      if (
+        !mounted.current ||
+        appStateRef.current !== 'active' ||
+        navigationOperationGeneration.current !== navigationGeneration
+      ) return;
+      if (!routed) return;
+      modeRef.current = selectedMode;
+      setMode(selectedMode);
+      setModeChoice(selectedChoice);
+      if (selectedChoice === 'auto') {
+        setMessage(`Auto estimated ${selectedMode === 'drive' ? 'driving' : 'walking'} from current speed and trip distance. You can change the mode anytime.`);
+      }
+    } catch {
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        setMessage('Your route could not be updated. Check your connection and try again.');
+      }
+    } finally {
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        navigationOperationActive.current = false;
+        setBusy(false);
+        setPendingMode(null);
+      }
+    }
+  };
+
+  const refreshActiveRoute = async () => {
+    if (!mode || !location || busy) return;
+    if (activeRouteRequest.current !== null) {
+      setMessage('A route refresh is already in progress.');
+      return;
+    }
+    const navigationGeneration = ++navigationOperationGeneration.current;
+    navigationOperationActive.current = true;
+    setBusy(true);
+    setPendingMode(modeChoice ?? mode);
+    setMessage(null);
+    try {
+      const current = await currentPositionWithTimeout();
+      if (
+        !mounted.current ||
+        appStateRef.current !== 'active' ||
+        navigationOperationGeneration.current !== navigationGeneration
+      ) return;
+      const routeOrigin = {
+        latitude: current.coords.latitude,
+        longitude: current.coords.longitude,
+      };
+      setLocation(routeOrigin);
+      if (appStateRef.current !== 'active') return;
+      await refreshRoute(routeOrigin, mode);
+    } catch {
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        setMessage('Your route could not be refreshed. Check your connection and try again.');
+      }
+    } finally {
+      if (mounted.current && navigationOperationGeneration.current === navigationGeneration) {
+        navigationOperationActive.current = false;
+        setBusy(false);
+        setPendingMode(null);
+      }
     }
   };
 
   const stopTracking = () => {
-    trackingWanted.current = false;
-    watcherGeneration.current += 1;
-    watcher.current?.remove();
-    watcher.current = null;
-    modeRef.current = null;
-    setMode(null);
-    setRoute(null);
-    setLocation(null);
-    automaticReroutingRef.current = false;
-    setAutomaticRerouting(false);
-    setMessage('Live tracking stopped.');
+    cancelTrackingSession('Live tracking stopped.');
   };
 
   const toggleAutomaticRerouting = () => {
@@ -210,19 +575,25 @@ export default function NavigationScreen() {
     setAutomaticRerouting(enabled);
   };
 
-  const openExternalMaps = () => {
+  const openExternalMaps = (provider?: ExternalMapProvider) => {
     if (!place) return;
-    const url = Platform.OS === 'ios'
-      ? `maps://?daddr=${place.latitude},${place.longitude}`
-      : `https://www.google.com/maps/dir/?api=1&destination=${place.latitude},${place.longitude}`;
-    void Linking.openURL(url);
+    const url = provider
+      ? externalDirectionsProviderUrl(place, provider, mode)
+      : externalDirectionsUrl(place, Platform.OS, mode);
+    if (!url) {
+      setMessage('This listing does not have a valid public destination.');
+      return;
+    }
+    void Linking.openURL(url).catch(() => {
+      if (mounted.current) setMessage('Your maps app could not open this destination.');
+    });
   };
 
   if ((!place && placeRequestPending) || auth.status === 'loading') {
     return <View role="main" style={styles.center}><ActivityIndicator color={palette.accentDeep} /><Text style={styles.centerText}>Preparing navigation…</Text></View>;
   }
   if (!place) {
-    return <View role="main" style={styles.center}><Text accessibilityRole="header" style={styles.centerTitle}>This destination is unavailable.</Text><Text style={styles.centerText}>{message}</Text></View>;
+    return <View role="main" style={styles.center}><Text accessibilityRole="header" style={styles.centerTitle}>This destination is unavailable.</Text><Text style={styles.centerText}>{placeBlockedReason ?? message}</Text></View>;
   }
   if (place.category === 'home_kitchen') {
     return (
@@ -239,10 +610,17 @@ export default function NavigationScreen() {
       <View role="main" style={styles.center}>
         <FontAwesome6 color={palette.accentDeep} name="route" size={26} />
         <Text accessibilityRole="header" style={styles.centerTitle}>Spottr navigation is not available yet.</Text>
-        <Text style={styles.centerText}>You can still open this public destination in your device’s maps app.</Text>
-        <Pressable accessibilityRole="link" onPress={openExternalMaps} style={styles.darkButton}>
-          <Text style={styles.darkButtonText}>Open in Maps</Text>
-        </Pressable>
+        <Text style={styles.centerText}>You can still open this public destination in Apple Maps or Google Maps.</Text>
+        <View style={styles.centerActionRow}>
+          {Platform.OS !== 'android' ? (
+            <Pressable accessibilityRole="link" onPress={() => openExternalMaps('apple')} style={styles.darkButton}>
+              <Text style={styles.darkButtonText}>Apple Maps</Text>
+            </Pressable>
+          ) : null}
+          <Pressable accessibilityRole="link" onPress={() => openExternalMaps('google')} style={Platform.OS === 'android' ? styles.darkButton : styles.outlineButton}>
+            <Text style={Platform.OS === 'android' ? styles.darkButtonText : styles.outlineButtonText}>Google Maps</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }
@@ -254,15 +632,63 @@ export default function NavigationScreen() {
         <Text style={styles.centerText}>Live foreground location and provider route requests require your Spottr account.</Text>
         <Pressable
           accessibilityRole="button"
-          onPress={() => router.push({ pathname: '/auth', params: { next: `/navigation/${place.id}` } } as Href)}
+          onPress={() => router.push({
+            pathname: '/auth',
+            params: { next: placeLocationRoutePath('navigation', place.id, place.locationId) },
+          } as Href)}
           style={styles.darkButton}>
           <Text style={styles.darkButtonText}>Sign in securely</Text>
         </Pressable>
+        <View style={styles.centerActionRow}>
+          {Platform.OS !== 'android' ? (
+            <Pressable accessibilityRole="link" onPress={() => openExternalMaps('apple')} style={styles.outlineButton}>
+              <Text style={styles.outlineButtonText}>Apple Maps</Text>
+            </Pressable>
+          ) : null}
+          <Pressable accessibilityRole="link" onPress={() => openExternalMaps('google')} style={styles.outlineButton}>
+            <Text style={styles.outlineButtonText}>Google Maps</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }
 
-  const nextStep = route && location ? nearestRouteStep(route, location) : route?.steps[0] ?? null;
+  const actionableGuidance = Boolean(
+    visibleRoute && routeMatchesDestination && routeIsFresh && !routeGuidanceNeedsRefresh,
+  );
+  const nextStep = actionableGuidance
+    ? visibleRoute?.steps[routeStepIndex] ?? null
+    : null;
+  const routeProgress = visibleRoute
+    ? routeProgressMetrics(visibleRoute, routeStepIndex, location, routeLiveProgress)
+    : null;
+  const guidanceDurationSeconds = visibleRoute
+    ? actionableGuidance
+      ? routeProgress?.durationSeconds ?? visibleRoute.durationSeconds
+      : visibleRoute.durationSeconds
+    : 0;
+  const guidanceDistanceMeters = visibleRoute
+    ? actionableGuidance
+      ? routeProgress?.distanceMeters ?? visibleRoute.distanceMeters
+      : visibleRoute.distanceMeters
+    : 0;
+  const guidanceInstruction = !routeMatchesDestination
+    ? 'Destination changed — refresh route'
+    : !routeIsFresh
+      ? 'Route expired — refresh for current turns'
+      : routeGuidanceNeedsRefresh
+        ? 'Location changed — refresh route guidance'
+        : nextStep?.instruction ?? 'Continue toward your destination';
+  const routeStatusMessage = message ?? (route && !routeMatchesDestination
+    ? 'This destination moved. Select your current travel mode to refresh the route.'
+    : route && !routeIsFresh
+      ? 'This is the original route estimate. Refresh to update traffic, route conditions, and ETA.'
+      : routeGuidanceNeedsRefresh
+        ? 'Your location could not be matched safely to this route. The route remains as a reference; refresh to resume turn guidance.'
+      : null);
+  const travelModePrivacyNotice = mode
+    ? 'Changing travel mode sends your current precise location, this public destination, and the selected route mode to Mapbox. Auto estimates walking or driving on your device from current speed and trip distance before requesting a route.'
+    : 'Starting navigation sends your precise current starting location, this public destination, and route mode to Mapbox. Auto estimates walking or driving on your device first. Spottr does not send later movement to Mapbox for rerouting unless you separately turn on Automatic rerouting, and does not save your route to your profile.';
   return (
     <View role="main" style={styles.screen}>
       <View style={styles.topBar}>
@@ -273,18 +699,31 @@ export default function NavigationScreen() {
           <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>{place.name}</Text>
           <Text numberOfLines={1} style={styles.subtitle}>{place.categoryLabel} · {place.city}</Text>
         </View>
-        <Pressable accessibilityLabel="Open destination in external maps" accessibilityRole="link" onPress={openExternalMaps} style={styles.iconButton}>
+        <Pressable accessibilityLabel="Open destination in external maps" accessibilityRole="link" onPress={() => openExternalMaps()} style={styles.iconButton}>
           <FontAwesome6 color={palette.ink} name="arrow-up-right-from-square" size={14} />
         </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        {route ? (
-          <View accessibilityLiveRegion="polite" style={styles.guidanceStrip}>
-            <FontAwesome6 color="#FFFFFF" name="diamond-turn-right" size={20} />
+        {visibleRoute ? (
+          <View style={styles.guidanceStrip}>
+            <FontAwesome6
+              color="#FFFFFF"
+              name={actionableGuidance ? 'diamond-turn-right' : 'rotate'}
+              size={20}
+            />
             <View style={styles.guidanceCopy}>
-              <Text numberOfLines={2} style={styles.guidanceInstruction}>{nextStep?.instruction ?? 'Continue toward your destination'}</Text>
-              <Text style={styles.guidanceMeta}>{formatRouteDuration(route.durationSeconds)} · {formatRouteDistance(route.distanceMeters)}</Text>
+              <Text accessibilityLiveRegion="polite" numberOfLines={2} style={styles.guidanceInstruction}>{guidanceInstruction}</Text>
+              <Text style={styles.guidanceMeta}>{!actionableGuidance
+                ? 'Original estimate'
+                : routeProgress?.distanceMeters === 0
+                ? 'Arriving'
+                : `ETA ${formatRouteArrivalTime(
+                      visibleRoute,
+                      undefined,
+                      guidanceDurationSeconds,
+                      routeClock,
+                    )}`} · About {formatRouteDuration(guidanceDurationSeconds)} · {formatRouteDistance(guidanceDistanceMeters)}</Text>
             </View>
           </View>
         ) : null}
@@ -293,34 +732,41 @@ export default function NavigationScreen() {
           <LiveMap
             navigationMode={mode ?? undefined}
             places={[place]}
-            routeCoordinates={routeVisible ? route?.coordinates : []}
+            routeCoordinates={routeVisible ? visibleRoute?.coordinates : []}
             selectedId={place.id}
+            selectedLocationId={place.locationId}
             userCoordinates={location}
           />
         </View>
 
         <View style={styles.controlsArea}>
-          {!mode ? (
-            <>
-              <Text style={styles.controlHeading}>Choose how you’re traveling</Text>
-              <Text style={styles.providerNotice}>Starting navigation sends your precise current starting location, this public destination, and travel mode to Mapbox to calculate one route. Spottr does not send later movement to Mapbox for rerouting unless you separately turn on Automatic rerouting. Spottr does not save your route to your profile.</Text>
-              <View accessibilityRole="radiogroup" style={styles.modeRow}>
-                {travelModes.map((item) => (
-                  <Pressable
-                    aria-checked={false}
-                    accessibilityRole="radio"
-                    accessibilityState={{ disabled: busy }}
-                    disabled={busy}
-                    key={item.id}
-                    onPress={() => void startNavigation(item.id)}
-                    style={styles.modeButton}>
-                    {busy ? <ActivityIndicator color={palette.ink} size="small" /> : <FontAwesome6 color={palette.ink} name={item.icon} size={16} />}
-                    <Text style={styles.modeText}>{item.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </>
-          ) : (
+          <Text style={styles.controlHeading}>{modeChoice === 'auto' && mode
+            ? `Auto estimated ${mode === 'drive' ? 'driving' : 'walking'}`
+            : mode ? 'Travel mode' : 'Choose how you’re traveling'}</Text>
+          <Text nativeID="travel-mode-privacy-description" style={styles.providerNotice}>{travelModePrivacyNotice}</Text>
+          <View accessibilityLabel="Travel mode" accessibilityRole="radiogroup" style={styles.modeRow}>
+            {travelModes.map((item) => {
+              const selected = item.id === (modeChoice ?? mode);
+              return (
+                <Pressable
+                  aria-checked={selected}
+                  aria-describedby="travel-mode-privacy-description"
+                  accessibilityHint={travelModePrivacyNotice}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: selected, disabled: busy }}
+                  disabled={busy}
+                  key={item.id}
+                  onPress={() => void (mode ? changeTravelMode(item.id) : startNavigation(item.id))}
+                  style={[styles.modeButton, selected && styles.modeButtonSelected]}>
+                  {busy && pendingMode === item.id
+                    ? <ActivityIndicator color={palette.ink} size="small" />
+                    : <FontAwesome6 color={palette.ink} name={item.icon} size={16} />}
+                  <Text style={styles.modeText}>{item.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {mode ? (
             <>
               <View style={styles.rerouteControl}>
                 <View style={styles.rerouteCopy}>
@@ -343,20 +789,45 @@ export default function NavigationScreen() {
                 </Pressable>
               </View>
               <View style={styles.activeControls}>
-                <Pressable accessibilityRole="button" onPress={() => setRouteVisible((value) => !value)} style={styles.secondaryButton}>
-                  <FontAwesome6 color={palette.ink} name={routeVisible ? 'route' : 'eye'} size={13} />
-                  <Text style={styles.secondaryButtonText}>{routeVisible ? 'Hide route' : 'Show route'}</Text>
-                </Pressable>
+                {visibleRoute && (
+                  !routeMatchesDestination || !routeIsFresh || routeGuidanceNeedsRefresh
+                ) ? (
+                  <Pressable
+                    accessibilityHint="Sends your current precise foreground location and this public destination to Mapbox for a new route."
+                    accessibilityRole="button"
+                    disabled={busy}
+                    onPress={() => void refreshActiveRoute()}
+                    style={styles.secondaryButton}>
+                    <FontAwesome6 color={palette.ink} name="rotate" size={13} />
+                    <Text style={styles.secondaryButtonText}>Refresh route</Text>
+                  </Pressable>
+                ) : null}
+                {visibleRoute ? (
+                  <Pressable accessibilityRole="button" onPress={() => setRouteVisible((value) => !value)} style={styles.secondaryButton}>
+                    <FontAwesome6 color={palette.ink} name={routeVisible ? 'route' : 'eye'} size={13} />
+                    <Text style={styles.secondaryButtonText}>{routeVisible ? 'Hide route' : 'Show route'}</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable accessibilityRole="button" onPress={stopTracking} style={styles.stopButton}>
                   <FontAwesome6 color="#FFFFFF" name="location-crosshairs" size={13} />
                   <Text style={styles.stopButtonText}>Stop tracking</Text>
                 </Pressable>
               </View>
+              <View accessibilityLabel="Open route in another maps app" style={styles.externalMapsRow}>
+                {Platform.OS !== 'android' ? (
+                  <Pressable accessibilityRole="link" onPress={() => openExternalMaps('apple')} style={styles.externalMapsButton}>
+                    <Text style={styles.externalMapsButtonText}>Apple Maps</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable accessibilityRole="link" onPress={() => openExternalMaps('google')} style={styles.externalMapsButton}>
+                  <Text style={styles.externalMapsButtonText}>Google Maps</Text>
+                </Pressable>
+              </View>
             </>
-          )}
-          {message ? <Text accessibilityLiveRegion="assertive" style={styles.message}>{message}</Text> : null}
-          <Text style={styles.disclaimer}>Foreground only. Route guidance is informational—follow posted signs, closures, and real-world conditions.</Text>
-          {route ? <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(route.attributionUrl)}><Text style={styles.attribution}>{route.attribution}</Text></Pressable> : null}
+          ) : null}
+          {routeStatusMessage ? <Text accessibilityLiveRegion="assertive" style={styles.message}>{routeStatusMessage}</Text> : null}
+          <Text style={styles.disclaimer}>Foreground only. Routes and ETAs are estimates—follow posted signs, closures, laws, and real-world conditions. Do not interact while driving.</Text>
+          {visibleRoute ? <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(visibleRoute.attributionUrl)}><Text style={styles.attribution}>{visibleRoute.attribution}</Text></Pressable> : null}
         </View>
       </ScrollView>
     </View>
@@ -381,8 +852,12 @@ const styles = StyleSheet.create({
   providerNotice: { color: palette.muted, fontSize: 11, lineHeight: 17, maxWidth: 760 },
   modeRow: { flexDirection: 'row', gap: 10 },
   modeButton: { alignItems: 'center', backgroundColor: palette.bg, borderColor: palette.line, borderRadius: radii.md, borderWidth: 1, flex: 1, gap: 7, justifyContent: 'center', minHeight: 64 },
+  modeButtonSelected: { backgroundColor: palette.accentSoft, borderColor: palette.accentDeep, borderWidth: 2 },
   modeText: { color: palette.ink, fontSize: 11, fontWeight: '900' },
   activeControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  externalMapsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  externalMapsButton: { borderBottomColor: palette.accentDeep, borderBottomWidth: 1, justifyContent: 'center', minHeight: 44, paddingHorizontal: 4 },
+  externalMapsButtonText: { color: palette.accentDeep, fontSize: 11, fontWeight: '900' },
   rerouteControl: { alignItems: 'center', backgroundColor: palette.bg, borderColor: palette.line, borderRadius: radii.md, borderWidth: 1, flexDirection: 'row', gap: 16, minHeight: 72, paddingHorizontal: 16, paddingVertical: 12 },
   rerouteCopy: { flex: 1, gap: 3 },
   rerouteTitle: { color: palette.ink, fontSize: 12, fontWeight: '900' },
@@ -403,6 +878,9 @@ const styles = StyleSheet.create({
   center: { alignItems: 'center', backgroundColor: palette.bg, flex: 1, gap: 14, justifyContent: 'center', padding: 32 },
   centerTitle: { color: palette.ink, fontSize: 22, fontWeight: '900', textAlign: 'center' },
   centerText: { color: palette.muted, fontSize: 13, lineHeight: 20, maxWidth: 520, textAlign: 'center' },
+  centerActionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' },
   darkButton: { backgroundColor: palette.ink, borderRadius: radii.pill, minHeight: 48, justifyContent: 'center', paddingHorizontal: 20 },
   darkButtonText: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
+  outlineButton: { borderColor: palette.line, borderRadius: radii.pill, borderWidth: 1, minHeight: 48, justifyContent: 'center', paddingHorizontal: 20 },
+  outlineButtonText: { color: palette.ink, fontSize: 12, fontWeight: '900' },
 });

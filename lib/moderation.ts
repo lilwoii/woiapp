@@ -5,13 +5,36 @@ const blockedTerms = [
   'bullshit',
   'cunt',
   'dick',
+  'faggot',
   'fuck',
   'motherfucker',
+  'nigger',
   'shit',
   'slut',
 ];
 
-const blockedPattern = new RegExp(`\\b(${blockedTerms.join('|')})\\b`, 'i');
+const leetCharacters: Record<string, string> = {
+  '0': 'o',
+  '1': 'i',
+  '3': 'e',
+  '4': 'a',
+  '5': 's',
+  '7': 't',
+  '@': 'a',
+  '$': 's',
+  '!': 'i',
+};
+
+function blockedTermPattern(term: string) {
+  return [...term]
+    .map((letter, index) => `${letter}+${index === term.length - 1 ? '' : '[^\\p{L}\\p{N}]*'}`)
+    .join('');
+}
+
+const blockedPattern = new RegExp(
+  `(?:^|[^\\p{L}\\p{N}])(?:${blockedTerms.map(blockedTermPattern).join('|')})(?=$|[^\\p{L}\\p{N}])`,
+  'iu'
+);
 const repeatedLinkPattern = /(https?:\/\/|www\.)/gi;
 
 export function checkProfessionalText(value: string, maxLength: number) {
@@ -26,7 +49,13 @@ export function checkProfessionalText(value: string, maxLength: number) {
     return { ok: false as const, reason: `Keep this to ${maxLength} characters or fewer.` };
   }
 
-  if (blockedPattern.test(clean)) {
+  const normalizedKey = clean.normalize('NFKC').toLocaleLowerCase('en-US');
+  const moderationKey = normalizedKey.replace(
+    /[013457@$!]/g,
+    (character) => leetCharacters[character] ?? character
+  );
+
+  if (blockedPattern.test(normalizedKey) || blockedPattern.test(moderationKey)) {
     return { ok: false as const, reason: 'Please use professional, respectful language.' };
   }
 

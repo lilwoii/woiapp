@@ -1,16 +1,42 @@
-function allowedMapOrigins(env) {
-  return (env.SPOTTR_MAP_CSP_ORIGINS ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .flatMap((value) => {
-      try {
-        const url = new URL(value);
-        return url.protocol === 'https:' ? [url.origin] : [];
-      } catch {
-        return [];
-      }
-    });
+const mapOriginPlaceholderPattern =
+  /(?:your-|example|\.test(?:[/:]|$)|\.invalid(?:[/:]|$)|00000000-0000-0000-0000-000000000000)/i;
+
+export function allowedMapOrigins(env) {
+  const configured = env.EXPO_PUBLIC_MAP_CSP_ORIGINS;
+  if (typeof configured !== 'string') return [];
+  const raw = configured.trim();
+  if (!raw || raw.length > 2048) return [];
+  const entries = raw.split(',').map((entry) => entry.trim());
+  if (!entries.length || entries.length > 16 || entries.some((entry) => !entry)) return [];
+  const origins = [];
+  for (const entry of entries) {
+    try {
+      const url = new URL(entry);
+      const hostname = url.hostname;
+      if (
+        url.protocol !== 'https:' ||
+        url.username ||
+        url.password ||
+        url.pathname !== '/' ||
+        url.search ||
+        url.hash ||
+        url.port ||
+        hostname === 'localhost' ||
+        hostname.endsWith('.localhost') ||
+        hostname.endsWith('.local') ||
+        hostname.endsWith('.internal') ||
+        hostname.endsWith('.') ||
+        /^[0-9.]+$/.test(hostname) ||
+        hostname.includes(':') ||
+        hostname.includes('*') ||
+        mapOriginPlaceholderPattern.test(entry)
+      ) return [];
+      if (!origins.includes(url.origin)) origins.push(url.origin);
+    } catch {
+      return [];
+    }
+  }
+  return origins;
 }
 
 function configuredSupabaseOrigins(env) {
@@ -34,11 +60,11 @@ function htmlHeaders(env) {
   'Content-Security-Policy': [
     "default-src 'self'",
     "base-uri 'self'",
-    `connect-src 'self' https://*.supabase.co wss://*.supabase.co ${supabaseOrigins} https://tile.openstreetmap.org ${mapOrigins}`.trim(),
+    `connect-src 'self' https://*.supabase.co wss://*.supabase.co ${supabaseOrigins} https://tile.openstreetmap.org https://tiles.openfreemap.org ${mapOrigins}`.trim(),
     "font-src 'self' data:",
     "form-action 'self'",
     "frame-ancestors 'none'",
-    `img-src 'self' data: blob: https://images.unsplash.com https://tile.openstreetmap.org https://*.supabase.co ${supabaseImageOrigins} ${mapOrigins}`.trim(),
+    `img-src 'self' data: blob: https://images.unsplash.com https://tile.openstreetmap.org https://tiles.openfreemap.org https://*.supabase.co ${supabaseImageOrigins} ${mapOrigins}`.trim(),
     "manifest-src 'self'",
     "object-src 'none'",
     "script-src 'self' 'sha256-67fhrP0+BkBqmgGGXTtgiVO/9EQs3QruYNU/7fnRkI8='",
@@ -115,11 +141,30 @@ function jsonResponse(body, status = 200) {
   });
 }
 
-function appAssociationResponse(pathname, env) {
+const appleTeamIdPattern = /^[A-Z0-9]{10}$/;
+const appleBundleIdPattern = /^[A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/;
+const androidPackagePattern = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
+const androidFingerprintPattern = /^(?:[0-9A-F]{2}:){31}[0-9A-F]{2}$/;
+
+function normalizedAndroidFingerprints(value) {
+  const entries = (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toUpperCase())
+    .filter(Boolean);
+  if (!entries.length || entries.some((entry) => !androidFingerprintPattern.test(entry))) {
+    return null;
+  }
+  return [...new Set(entries)];
+}
+
+export function appAssociationResponse(pathname, env) {
   if (pathname === '/.well-known/apple-app-site-association') {
     const teamId = env.SPOTTR_APPLE_TEAM_ID?.trim();
-    const bundleId = env.SPOTTR_IOS_BUNDLE_ID?.trim() || 'com.spottr.food';
-    if (!teamId) return jsonResponse({ error: 'Association is not configured.' }, 404);
+    const bundleId = env.SPOTTR_IOS_BUNDLE_ID?.trim();
+    if (
+      !appleTeamIdPattern.test(teamId ?? '') ||
+      !appleBundleIdPattern.test(bundleId ?? '')
+    ) return jsonResponse({ error: 'Association is not configured.' }, 404);
     return jsonResponse({
       applinks: {
         apps: [],
@@ -128,8 +173,11 @@ function appAssociationResponse(pathname, env) {
             appID: `${teamId}.${bundleId}`,
             components: [
               { '/': '/place/*', comment: 'Spottr business listing links' },
+              { '/': '/profile/*', comment: 'Spottr public profile links' },
+              { '/': '/navigation/*', comment: 'Spottr in-app navigation links' },
               { '/': '/auth*', comment: 'Spottr authentication callbacks' },
               { '/': '/reset-password*', comment: 'Spottr password recovery links' },
+              { '/': '/orders*', comment: 'Spottr protected pickup checkout return links' },
             ],
           },
         ],
@@ -138,12 +186,11 @@ function appAssociationResponse(pathname, env) {
   }
 
   if (pathname === '/.well-known/assetlinks.json') {
-    const packageName = env.SPOTTR_ANDROID_PACKAGE?.trim() || 'com.spottr.food';
-    const fingerprints = (env.SPOTTR_ANDROID_CERT_SHA256 ?? '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (!fingerprints.length) return jsonResponse({ error: 'Association is not configured.' }, 404);
+    const packageName = env.SPOTTR_ANDROID_PACKAGE?.trim();
+    const fingerprints = normalizedAndroidFingerprints(env.SPOTTR_ANDROID_CERT_SHA256);
+    if (!androidPackagePattern.test(packageName ?? '') || !fingerprints) {
+      return jsonResponse({ error: 'Association is not configured.' }, 404);
+    }
     return jsonResponse([
       {
         relation: ['delegate_permission/common.handle_all_urls'],
@@ -188,6 +235,10 @@ export default {
 
     if (response.status === 404 && url.pathname.startsWith('/navigation/')) {
       response = await fetchAsset(env, request, '/navigation/[id].html');
+    }
+
+    if (response.status === 404 && url.pathname.startsWith('/profile/')) {
+      response = await fetchAsset(env, request, '/profile/[id].html');
     }
 
     if (response.status === 404) {

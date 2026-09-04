@@ -4,6 +4,9 @@ type ErrorLike = {
   code?: string;
   message?: string;
   status?: number;
+  context?: {
+    status?: number;
+  };
 };
 
 const genericMessage = 'Something went wrong. Please try again.';
@@ -11,9 +14,10 @@ const genericMessage = 'Something went wrong. Please try again.';
 export function toActionError(error: unknown, fallback = genericMessage): ActionResult<never> {
   const candidate = error as ErrorLike | null;
   const message = candidate?.message?.toLocaleLowerCase('en-US') ?? '';
+  const status = candidate?.status ?? candidate?.context?.status;
 
   if (
-    candidate?.status === 0 ||
+    status === 0 ||
     message.includes('network') ||
     message.includes('fetch') ||
     message.includes('offline')
@@ -26,7 +30,7 @@ export function toActionError(error: unknown, fallback = genericMessage): Action
   }
 
   if (
-    candidate?.status === 409 ||
+    status === 409 ||
     candidate?.code === '23505' ||
     message.includes('already registered') ||
     message.includes('already exists') ||
@@ -40,7 +44,7 @@ export function toActionError(error: unknown, fallback = genericMessage): Action
   }
 
   if (
-    candidate?.status === 401 ||
+    status === 401 ||
     candidate?.code === 'invalid_credentials' ||
     message.includes('invalid login credentials')
   ) {
@@ -51,10 +55,10 @@ export function toActionError(error: unknown, fallback = genericMessage): Action
     };
   }
 
-  if (candidate?.status === 429 || message.includes('rate limit')) {
+  if (status === 429 || message.includes('rate limit') || message.includes('rate_limited')) {
     return {
       ok: false,
-      code: 'UNKNOWN',
+      code: 'RATE_LIMITED',
       reason: 'Too many attempts. Wait a moment, then try again.',
     };
   }

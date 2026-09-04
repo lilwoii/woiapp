@@ -1,4 +1,4 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
+import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { palette } from '@/constants/theme';
@@ -12,13 +12,16 @@ type Props = {
 
 export function Rating({ rating, count, light = false, compact = false }: Props) {
   const ink = light ? '#FFFFFF' : palette.ink;
+  const accessibilityLabel = `${rating.toFixed(1)} stars${
+    typeof count === 'number' ? `, ${count.toLocaleString()} ${count === 1 ? 'review' : 'reviews'}` : ''
+  }`;
 
   return (
-    <View style={styles.row}>
-      <FontAwesome color={palette.sun} name="star" size={compact ? 12 : 14} />
-      <Text style={[styles.rating, { color: ink }, compact && styles.compact]}>{rating.toFixed(1)}</Text>
+    <View accessibilityLabel={accessibilityLabel} accessibilityRole="text" accessible style={styles.row}>
+      <FontAwesome6 accessibilityElementsHidden color={palette.sun} importantForAccessibility="no" name="star" size={compact ? 12 : 14} />
+      <Text accessibilityElementsHidden importantForAccessibility="no" style={[styles.rating, { color: ink }, compact && styles.compact]}>{rating.toFixed(1)}</Text>
       {typeof count === 'number' ? (
-        <Text style={[styles.count, { color: light ? '#E8EFEC' : palette.muted }, compact && styles.compact]}>
+        <Text accessibilityElementsHidden importantForAccessibility="no" style={[styles.count, { color: light ? '#E8EFEC' : palette.muted }, compact && styles.compact]}>
           ({count.toLocaleString()})
         </Text>
       ) : null}

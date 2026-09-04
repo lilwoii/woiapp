@@ -8,13 +8,17 @@ const ids = {
   business: '11111111-1111-4111-8111-111111111111',
   location: '22222222-2222-4222-8222-222222222222',
   customer: '33333333-3333-4333-8333-333333333333',
+  owner: '34343434-3434-4434-8434-343434343434',
   conversation: '44444444-4444-4444-8444-444444444444',
   counterpart: '55555555-5555-4555-8555-555555555555',
   factor: '66666666-6666-4666-8666-666666666666',
   update: '77777777-7777-4777-8777-777777777777',
   review: '88888888-8888-4888-8888-888888888888',
+  post: '89898989-8989-4989-8989-898989898989',
+  ownerPost: '90909090-9090-4090-8090-909090909090',
   section: '99999999-9999-4999-8999-999999999999',
   item: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  signup: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
 };
 
 const now = '2026-08-09T12:00:00.000Z';
@@ -28,6 +32,7 @@ function base64Url(value: unknown) {
 }
 
 function accessToken(role: 'customer' | 'business') {
+  const accountId = role === 'business' ? ids.owner : ids.customer;
   return [
     base64Url({ alg: 'HS256', typ: 'JWT' }),
     base64Url({
@@ -37,7 +42,7 @@ function accessToken(role: 'customer' | 'business') {
       exp: 4_102_444_800,
       iat: 1_786_276_800,
       role: 'authenticated',
-      sub: ids.customer,
+      sub: accountId,
       spottr_fixture_role: role,
     }),
     base64Url('fixture-signature'),
@@ -47,7 +52,7 @@ function accessToken(role: 'customer' | 'business') {
 function fixtureUser(role: 'customer' | 'business') {
   const businessAccount = role === 'business';
   return {
-    id: ids.customer,
+    id: businessAccount ? ids.owner : ids.customer,
     aud: 'authenticated',
     role: 'authenticated',
     email: businessAccount ? 'owner@spottr.test' : 'customer@spottr.test',
@@ -135,7 +140,7 @@ function json(route: Route, body: unknown, status = 200) {
     contentType: 'application/json; charset=utf-8',
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'authorization, apikey, content-profile, content-type, prefer, x-client-info',
+      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-profile, content-type, prefer, x-retry-count, traceparent, tracestate, baggage',
       'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
       'Content-Range': Array.isArray(body) ? `0-${Math.max(0, body.length - 1)}/${body.length}` : '0-0/1',
     },
@@ -157,6 +162,7 @@ function tableRows(table: string, role: 'anonymous' | 'customer' | 'business') {
         username: role === 'business' ? 'maya.owner' : 'jordan.finds',
         display_name: role === 'business' ? 'Maya Rivera' : 'Jordan Lee',
         avatar_path: null,
+        allow_business_invitations: false,
       }];
     case 'follows':
       return role === 'anonymous' ? [] : [{ business_id: ids.business }];
@@ -234,9 +240,65 @@ function tableRows(table: string, role: 'anonymous' | 'customer' | 'business') {
         created_at: now,
         helpful_count: 14,
       }];
+    case 'public_profile_badges':
+      return [{
+        subject_public_id: ids.counterpart,
+        badge_code: 'first_bite',
+        earned_at: now,
+        expires_at: null,
+      }];
+    case 'public_followed_feed':
+      if (role === 'anonymous') return [];
+      if (role === 'business') {
+        return [{
+          feed_type: 'business_post',
+          content_id: ids.ownerPost,
+          business_id: ids.business,
+          business_name: 'Maya Taco Truck',
+          business_slug: 'maya-taco-truck',
+          author_public_id: null,
+          author_username: null,
+          author_display_name: null,
+          body: 'Owner account feed fixture.',
+          rating: null,
+          created_at: now,
+        }];
+      }
+      return [
+        {
+          feed_type: 'business_post',
+          content_id: ids.post,
+          business_id: ids.business,
+          business_name: 'Maya Taco Truck',
+          business_slug: 'maya-taco-truck',
+          author_public_id: null,
+          author_username: null,
+          author_display_name: null,
+          body: 'Taco Tuesday starts at noon today.',
+          rating: null,
+          created_at: now,
+        },
+        {
+          feed_type: 'user_review',
+          content_id: ids.review,
+          business_id: ids.business,
+          business_name: 'Maya Taco Truck',
+          business_slug: 'maya-taco-truck',
+          author_public_id: ids.counterpart,
+          author_username: 'taco.scout',
+          author_display_name: 'Avery Chen',
+          body: 'Fast service and excellent birria.',
+          rating: 5,
+          created_at: now,
+        },
+      ];
     case 'mobile_stops':
+    case 'public_business_mobile_service':
     case 'special_hours':
     case 'public_business_media':
+    case 'public_business_badges':
+    case 'public_business_posts':
+    case 'public_business_post_media':
     case 'public_business_responses':
     case 'public_review_media':
     case 'business_responses':
@@ -257,6 +319,10 @@ function postBody(route: Route): Record<string, unknown> {
     : {};
 }
 
+function exactBodyKeys(body: Record<string, unknown>, ...keys: string[]) {
+  return Object.keys(body).sort().join(',') === [...keys].sort().join(',');
+}
+
 function exactFilter(url: URL, key: string, ...expected: string[]) {
   return expected.includes(url.searchParams.get(key) ?? '');
 }
@@ -267,7 +333,9 @@ function protectedTableAllowed(
   url: URL,
 ) {
   if (table === 'profiles' || table === 'follows' || table === 'business_members') {
-    if (role === 'anonymous' || !exactFilter(url, 'user_id', `eq.${ids.customer}`)) return false;
+    if (role === 'anonymous') return false;
+    const accountId = role === 'business' ? ids.owner : ids.customer;
+    if (!exactFilter(url, 'user_id', `eq.${accountId}`)) return false;
     return table !== 'business_members' || url.searchParams.get('status') === 'eq.active';
   }
   if (
@@ -295,10 +363,26 @@ function protectedTableAllowed(
   if (table === 'public_business_responses' || table === 'public_review_media') {
     return exactFilter(url, 'review_id', `in.(${ids.review})`);
   }
+  if (table === 'public_profile_badges') {
+    return exactFilter(url, 'subject_public_id', `in.(${ids.counterpart})`);
+  }
+  if (table === 'public_followed_feed') {
+    const filter = url.searchParams.get('feed_type');
+    return role !== 'anonymous' &&
+      (filter === null || filter === 'eq.business_post' || filter === 'eq.user_review');
+  }
+  if (table === 'public_business_post_media') {
+    const postId = role === 'business' ? ids.ownerPost : ids.post;
+    return exactFilter(url, 'post_id', `in.(${postId})`);
+  }
+  if (table === 'public_business_posts' || table === 'public_business_badges') {
+    return exactFilter(url, 'business_id', `eq.${ids.business}`, `in.(${ids.business})`);
+  }
   if (
     table === 'public_business_directory' || table === 'public_business_locations' ||
     table === 'mobile_stops' || table === 'public_business_updates' ||
-    table === 'public_business_live_status' || table === 'public_business_review_aggregates' ||
+    table === 'public_business_live_status' || table === 'public_business_mobile_service' ||
+    table === 'public_business_review_aggregates' ||
     table === 'public_business_contacts' || table === 'public_reviews' ||
     table === 'public_business_media'
   ) {
@@ -310,8 +394,14 @@ function protectedTableAllowed(
 export async function installSpottrFixture(page: Page) {
   const unexpected: string[] = [];
   const calls: string[] = [];
+  const discoveryRequests: Record<string, unknown>[] = [];
+  const feedRequests: { accountId: string; role: 'business' | 'customer' }[] = [];
   const mapRequests: Record<string, unknown>[] = [];
+  const nearbyRequests: Record<string, unknown>[] = [];
+  const searchRequests: Record<string, unknown>[] = [];
   const routeRequests: Record<string, unknown>[] = [];
+  const signupRequests: Record<string, unknown>[] = [];
+  const usernameAvailabilityRequests: Record<string, unknown>[] = [];
   const realtimeMessages: string[] = [];
   let realtimeConnections = 0;
 
@@ -394,7 +484,7 @@ export async function installSpottrFixture(page: Page) {
         status: 204,
         headers: {
           'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'authorization, apikey, content-profile, content-type, prefer, x-client-info',
+          'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-profile, content-type, prefer, x-retry-count, traceparent, tracestate, baggage',
           'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
         },
       });
@@ -441,14 +531,40 @@ export async function installSpottrFixture(page: Page) {
       return;
     }
 
+    if (url.pathname === '/functions/v1/notification-device' && method === 'POST') {
+      const role = roleFromRequest(route);
+      const body = postBody(route);
+      const revokeOne =
+        exactBodyKeys(body, 'action', 'consentPolicyVersion', 'installationId') &&
+        body.action === 'revoke' &&
+        typeof body.installationId === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.installationId);
+      const revokeAll =
+        exactBodyKeys(body, 'action', 'consentPolicyVersion') &&
+        body.action === 'revoke_all';
+      if (
+        role === 'anonymous' ||
+        body.consentPolicyVersion !== 'product-updates-v1' ||
+        (!revokeOne && !revokeAll)
+      ) {
+        unexpected.push(`${label} carried an invalid notification revocation request`);
+        await json(route, { message: 'Invalid fixture notification revocation' }, 400);
+        return;
+      }
+      await json(route, { ok: true });
+      return;
+    }
+
     if (url.pathname === '/functions/v1/route-plan' && method === 'POST') {
       const role = roleFromRequest(route);
       const body = postBody(route);
       const keys = Object.keys(body).sort().join(',');
       const origin = body.origin as Record<string, unknown> | undefined;
       const destination = body.destination as Record<string, unknown> | undefined;
+      const mode = body.mode;
       if (
-        role !== 'customer' || keys !== 'destination,mode,origin' || body.mode !== 'walk' ||
+        role !== 'customer' || keys !== 'destination,mode,origin' ||
+        (mode !== 'drive' && mode !== 'walk' && mode !== 'bike') ||
         origin?.latitude !== 34.0522 || origin.longitude !== -118.2437 ||
         destination?.latitude !== location.latitude || destination.longitude !== location.longitude
       ) {
@@ -460,7 +576,7 @@ export async function installSpottrFixture(page: Page) {
       const generatedAt = new Date();
       await json(route, {
         provider: 'mapbox',
-        mode: 'walk',
+        mode,
         distanceMeters: 2_140,
         durationSeconds: 1_560,
         coordinates: [
@@ -482,48 +598,234 @@ export async function installSpottrFixture(page: Page) {
       return;
     }
 
-    if (url.pathname.startsWith('/rest/v1/rpc/')) {
-      const rpc = url.pathname.slice('/rest/v1/rpc/'.length);
+    if (url.pathname === '/auth/v1/logout' && method === 'POST') {
       const role = roleFromRequest(route);
-      const body = postBody(route);
-      if (
-        rpc === 'search_businesses' && method === 'POST' &&
-        body.search_text === 'Los Angeles, CA' && body.result_limit === 100 &&
-        body.result_offset === 0
-      ) {
-        await json(route, [{ business_id: ids.business, has_more: false }]);
+      if (role === 'anonymous') {
+        unexpected.push(`${label} did not carry a signed-in bearer token`);
+        await json(route, { message: 'Signed-in fixture token required' }, 401);
         return;
       }
+      await json(route, {});
+      return;
+    }
+
+    if (url.pathname === '/auth/v1/signup' && method === 'POST') {
+      const body = postBody(route);
+      const metadata = body.data as Record<string, unknown> | undefined;
+      const security = body.gotrue_meta_security as Record<string, unknown> | undefined;
+      const codeChallenge = body.code_challenge;
+      const redirect = url.searchParams.get('redirect_to');
       if (
-        rpc === 'map_food_places' && method === 'POST' &&
+        !exactBodyKeys(
+          body,
+          'code_challenge',
+          'code_challenge_method',
+          'data',
+          'email',
+          'gotrue_meta_security',
+          'password',
+        ) ||
+        typeof codeChallenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(codeChallenge) ||
+        body.code_challenge_method !== 's256' ||
+        typeof security !== 'object' || security === null || Object.keys(security).length !== 0 ||
+        body.password !== 'Fixture-password-123!' ||
+        (body.email !== 'new.customer@spottr.test' && body.email !== 'new.owner@spottr.test') ||
+        !metadata || metadata.display_name !== (body.email === 'new.owner@spottr.test' ? 'New Owner' : 'Q Customer') ||
+        metadata.username !== (body.email === 'new.owner@spottr.test' ? 'new.owner' : 'q') ||
+        metadata.requested_role !== (body.email === 'new.owner@spottr.test' ? 'business' : 'customer') ||
+        metadata.terms_accepted !== true ||
+        redirect !== `${fixtureAppOrigin}/auth?verified=1&next=${body.email === 'new.owner@spottr.test' ? 'business-onboarding' : 'home'}`
+      ) {
+        unexpected.push(`${label} carried an invalid account-creation contract`);
+        await json(route, { message: 'Invalid fixture signup request' }, 400);
+        return;
+      }
+      signupRequests.push(body);
+      await json(route, {
+        user: {
+          ...fixtureUser('customer'),
+          id: ids.signup,
+          email: body.email,
+          email_confirmed_at: null,
+          confirmed_at: null,
+          user_metadata: metadata,
+        },
+        session: null,
+      });
+      return;
+    }
+
+    if (url.pathname === '/functions/v1/public-discovery' && method === 'POST') {
+      const body = postBody(route);
+      const operation = body.operation;
+      const validLimit = body.result_limit === 100;
+      const validOffset = body.result_offset === 0;
+
+      if (
+        operation === 'search' &&
+        exactBodyKeys(body, 'operation', 'search_text', 'result_limit', 'result_offset') &&
+        (body.search_text === 'Los Angeles, CA' || body.search_text === 'No Results, ZZ') &&
+        validLimit && validOffset
+      ) {
+        discoveryRequests.push(body);
+        searchRequests.push(body);
+        await json(route, {
+          operation: 'search',
+          rows: body.search_text === 'No Results, ZZ'
+            ? []
+            : [{ business_id: ids.business, has_more: false }],
+        });
+        return;
+      }
+
+      if (
+        operation === 'nearby' &&
+        exactBodyKeys(
+          body,
+          'operation',
+          'search_lat',
+          'search_lng',
+          'radius_meters',
+          'result_limit',
+          'result_offset',
+        ) &&
+        typeof body.search_lat === 'number' &&
+        typeof body.search_lng === 'number' &&
+        typeof body.radius_meters === 'number' &&
+        body.radius_meters > 0 &&
+        validLimit &&
+        validOffset
+      ) {
+        discoveryRequests.push(body);
+        nearbyRequests.push(body);
+        await json(route, {
+          operation: 'nearby',
+          rows: [{
+            business_id: ids.business,
+            location_id: ids.location,
+            distance_meters: 1_250,
+            is_approximate: false,
+            has_more: false,
+          }],
+        });
+        return;
+      }
+
+      if (
+        operation === 'map' &&
+        exactBodyKeys(
+          body,
+          'operation',
+          'west_longitude',
+          'south_latitude',
+          'east_longitude',
+          'north_latitude',
+          'map_zoom',
+          'requested_kinds',
+          'max_features',
+        ) &&
         body.max_features === 1_200 &&
         Array.isArray(body.requested_kinds) &&
         body.requested_kinds.join(',') === 'food_truck,restaurant,pop_up,cafe_bakery' &&
-        typeof body.west_longitude === 'number' && typeof body.east_longitude === 'number' &&
-        typeof body.south_latitude === 'number' && typeof body.north_latitude === 'number' &&
+        typeof body.west_longitude === 'number' &&
+        typeof body.east_longitude === 'number' &&
+        typeof body.south_latitude === 'number' &&
+        typeof body.north_latitude === 'number' &&
         typeof body.map_zoom === 'number'
       ) {
+        discoveryRequests.push(body);
         mapRequests.push(body);
         const venueKinds = ['food_truck', 'restaurant', 'pop_up', 'cafe_bakery'] as const;
         const features = Array.from({ length: 1_200 }, (_, index) => {
-          const kind = index >= 1_198 ? 'home_kitchen' : venueKinds[index % venueKinds.length];
+          const kind = venueKinds[index % venueKinds.length];
           const showcase = index < venueKinds.length;
+          const suffix = (index + 1).toString(16).padStart(12, '0');
+          const businessId = index === 0
+            ? ids.business
+            : `30000000-0000-4000-8000-${suffix}`;
+          const locationId = index === 0
+            ? ids.location
+            : `40000000-0000-4000-8000-${suffix}`;
           return {
             feature_type: 'place',
-            feature_id: `fixture-place-${index}`,
+            feature_id: `place:${locationId}`,
             place_count: 1,
             latitude: showcase ? 34.0355 : 34.0355 + (index % 20) * 0.00001,
             longitude: showcase ? -118.3524 + index * 0.08 : -118.2324 + Math.floor(index / 20) * 0.00001,
             category_counts: { [kind]: 1 },
             dominant_kind: kind,
-            business_id: index === 0 ? ids.business : null,
-            location_id: index === 0 ? ids.location : null,
+            business_id: businessId,
+            location_id: locationId,
             business_name: index === 0 ? 'Maya Taco Truck' : `Fixture ${kind.replaceAll('_', ' ')} ${index + 1}`,
             logo_path: null,
             source_label: 'Owner verified',
           };
         });
-        await json(route, features);
+        await json(route, { operation: 'map', rows: features });
+        return;
+      }
+
+      unexpected.push(`${label} carried an invalid public-discovery request`);
+      await json(route, { message: 'Invalid fixture public-discovery request' }, 400);
+      return;
+    }
+
+    if (url.pathname.startsWith('/rest/v1/rpc/')) {
+      const rpc = url.pathname.slice('/rest/v1/rpc/'.length);
+      const role = roleFromRequest(route);
+      const body = postBody(route);
+      if (
+        rpc === 'is_username_available' && method === 'POST' && role === 'anonymous' &&
+        exactBodyKeys(body, 'candidate') && typeof body.candidate === 'string'
+      ) {
+        usernameAvailabilityRequests.push(body);
+        await json(route, body.candidate !== 'taken.member');
+        return;
+      }
+      if (
+        rpc === 'get_my_profile_badges' && method === 'POST' && role !== 'anonymous' &&
+        exactBodyKeys(body)
+      ) {
+        await json(route, [{ badge_code: 'first_bite', earned_at: now, expires_at: null }]);
+        return;
+      }
+      if (
+        rpc === 'list_followed_feed' && method === 'POST' && role !== 'anonymous' &&
+        exactBodyKeys(
+          body,
+          'feed_filter',
+          'cursor_created_at',
+          'cursor_feed_type',
+          'cursor_content_id',
+          'result_limit',
+        ) &&
+        typeof body.feed_filter === 'string' &&
+        ['all', 'business_post', 'user_review'].includes(body.feed_filter) &&
+        body.cursor_created_at === null &&
+        body.cursor_feed_type === null &&
+        body.cursor_content_id === null &&
+        body.result_limit === 20
+      ) {
+        if (request.headers().authorization !== `Bearer ${accessToken(role)}`) {
+          unexpected.push(`${label} carried an unexpected bearer token`);
+        }
+        feedRequests.push({
+          accountId: role === 'business' ? ids.owner : ids.customer,
+          role,
+        });
+        const rows = (tableRows('public_followed_feed', role) ?? []) as Record<string, unknown>[];
+        const filteredRows = body.feed_filter === 'all'
+          ? rows
+          : rows.filter((row) => row.feed_type === body.feed_filter);
+        await json(route, filteredRows.map((row) => ({ ...row, has_more: false })));
+        return;
+      }
+      if (
+        method === 'POST' &&
+        ['map_food_places', 'nearby_businesses', 'search_businesses'].includes(rpc)
+      ) {
+        unexpected.push(`${label} used a direct discovery RPC; expected public-discovery`);
+        await json(route, { message: 'Direct discovery RPCs are not supported by this fixture' }, 501);
         return;
       }
       if (
@@ -569,6 +871,12 @@ export async function installSpottrFixture(page: Page) {
         if (role !== 'anonymous' && request.headers().authorization !== `Bearer ${accessToken(role)}`) {
           unexpected.push(`${label} carried an unexpected bearer token`);
         }
+        if (table === 'public_followed_feed' && role !== 'anonymous') {
+          feedRequests.push({
+            accountId: role === 'business' ? ids.owner : ids.customer,
+            role,
+          });
+        }
         await json(route, objectResponseRequested(route) ? (rows[0] ?? null) : rows);
         return;
       }
@@ -581,8 +889,14 @@ export async function installSpottrFixture(page: Page) {
   return {
     calls,
     ids,
+    discoveryRequests,
+    feedRequests,
     mapRequests,
+    nearbyRequests,
+    searchRequests,
     routeRequests,
+    signupRequests,
+    usernameAvailabilityRequests,
     realtimeMessages,
     get realtimeConnections() { return realtimeConnections; },
     unexpected,

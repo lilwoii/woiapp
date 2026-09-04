@@ -1,11 +1,8 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { File, Paths } from 'expo-file-system';
 import { router } from 'expo-router';
-import * as Sharing from 'expo-sharing';
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -15,6 +12,7 @@ import {
 import { InfoScreen, InfoSection } from '@/components/info-screen';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
+import { saveAccountExport } from '@/lib/account-export-file';
 import { requestAccountExport } from '@/lib/marketplace-api';
 
 export default function AccountDataScreen() {
@@ -51,36 +49,7 @@ export default function AccountDataScreen() {
       return;
     }
     try {
-      if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        const url = URL.createObjectURL(
-          new Blob([content], { type: 'application/json;charset=utf-8' })
-        );
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = fileName;
-        link.rel = 'noopener';
-        link.click();
-        URL.revokeObjectURL(url);
-      } else {
-        if (!(await Sharing.isAvailableAsync())) {
-          throw new Error('File sharing is not available on this device.');
-        }
-        const safeFileName =
-          fileName.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 120) ||
-          'spottr-account-export.json';
-        const exportFile = new File(Paths.cache, safeFileName);
-        exportFile.create({ overwrite: true });
-        try {
-          exportFile.write(content);
-          await Sharing.shareAsync(exportFile.uri, {
-            dialogTitle: 'Save or share your Spottr account export',
-            mimeType: 'application/json',
-            UTI: 'public.json',
-          });
-        } finally {
-          if (exportFile.exists) exportFile.delete();
-        }
-      }
+      await saveAccountExport(content, fileName);
       setMessage({ type: 'success', text: result.message ?? 'Your export is ready.' });
     } catch {
       setMessage({

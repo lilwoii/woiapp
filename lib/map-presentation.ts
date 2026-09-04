@@ -1,6 +1,6 @@
 import type FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 
-import type { BusinessCategory } from '@/types/marketplace';
+import type { BusinessCategory, Place } from '@/types/marketplace';
 
 export type MapMarkerShape = 'capsule' | 'circle' | 'market' | 'cup' | 'home';
 
@@ -60,4 +60,35 @@ export const mapCategoryPresentation: Record<BusinessCategory, MapCategoryPresen
 
 export function categoryMarkerLabel(category: BusinessCategory, name: string) {
   return `${name}, ${mapCategoryPresentation[category].label}`;
+}
+
+export function mapClusterCategorySummary(
+  counts: Partial<Record<BusinessCategory, number>>,
+  limit = 3
+) {
+  const ranked = mapCategoryOrder
+    .map((category) => ({ category, count: counts[category] ?? 0 }))
+    .filter((entry) => Number.isFinite(entry.count) && entry.count > 0)
+    .sort((left, right) => right.count - left.count || mapCategoryOrder.indexOf(left.category) - mapCategoryOrder.indexOf(right.category));
+  return {
+    badges: ranked.slice(0, Math.max(1, limit)).map((entry) => mapCategoryPresentation[entry.category].badge),
+    accessibilityLabel: ranked.map((entry) => `${mapCategoryPresentation[entry.category].label}: ${entry.count}`).join(', '),
+  };
+}
+
+export function mapClusterCategorySignature(counts: Partial<Record<BusinessCategory, number>>) {
+  return mapCategoryOrder.map((category) => `${category}:${counts[category] ?? 0}`).join('|');
+}
+
+export function mapPlaceMarkerSignature(
+  place: Pick<Place, 'id' | 'name' | 'category' | 'logoUrl' | 'distanceMiles' | 'mobility'>,
+) {
+  return JSON.stringify([
+    place.id,
+    place.name,
+    place.category,
+    place.logoUrl,
+    place.distanceMiles,
+    place.mobility?.state ?? null,
+  ]);
 }

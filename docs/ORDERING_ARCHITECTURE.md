@@ -1,9 +1,13 @@
 # Spottr pickup-ordering architecture
 
-Status: phase O1 foundation implemented; prepaid ordering remains gated. The repository does not prove that payments,
-merchant onboarding, tax calculation, refunds, payouts, or delivery are
-production-enabled. Policy notes were last checked on 2026-08-01 and require
-review for the exact release, legal entity, processor contract, and storefront.
+Status: the production pay-in-person slice and the Stripe Connect hosted-checkout
+slice are implemented behind independent fail-closed gates. The prepaid path
+includes hosted merchant onboarding, server-priced carts, automatic-tax
+checkout, destination charges, signed webhook completion, durable refunds, and
+customer/merchant receipts. The repository does not prove that live processor
+credentials, merchant underwriting, tax registrations, payouts, or delivery are
+production-enabled. Policy notes require review for the exact release, legal
+entity, processor contract, and storefront.
 
 See [MONETIZATION.md](MONETIZATION.md) for the pricing ledger, sponsored-order
 attribution, and mobile-store boundary.
@@ -524,22 +528,70 @@ checkout evidence for exact signed binaries.
   behind server/client feature flags defaulted off.
 - Run employee-only zero-money shadow orders to verify timing and operations.
 
-The reviewed migration
-`supabase/migrations/20260802000000_shadow_ordering_foundation.sql` now provides
-an immutable catalog, capacity locking, opaque order receipts, append-only
-event history, participant RLS, idempotent creation and merchant transitions,
-rate limits, and audit events for employee-only zero-money shadow orders. It
-cannot represent or create a charge: `payment_state` is constrained to
-`not_required`, every financial addition is constrained to zero, and creation
-requires AAL2 platform staff. Cart/quote UX, modifier selection, notification
-outbox, support issue intake, scheduled expiry, and an operations pilot remain
-before phase O1 is complete.
+The reviewed migrations
+`supabase/migrations/20260802000000_shadow_ordering_foundation.sql` and
+`supabase/migrations/20260831000000_zero_money_pickup_ordering_vertical_slice.sql`,
+plus the bounded merchant projection in
+`supabase/migrations/20260901000000_shadow_order_merchant_queue.sql` and the
+server-policy/expiry hardening in
+`supabase/migrations/20260902000000_shadow_order_transition_maintenance_hardening.sql`,
+provide an immutable catalog, expiring immutable quote snapshots, capacity
+locking, opaque order receipts, append-only event history, participant/owner
+RLS, idempotent menu/quote/place/cancel RPCs, rate limits, and audit events for
+employee-only zero-money shadow orders. The vertical slice derives every item,
+modifier, pickup binding, policy version, and money field on the server. A
+quote never consumes capacity; placement locks and consumes one slot, while
+pending-owner cancellation releases its reserved bucket and merchant
+transitions release accepted capacity. Acceptance is deliberately manual-only
+in this slice: mode and timeout are copied into the immutable quote, and a
+settings change before placement invalidates the quote instead of silently
+changing its behavior. Service-role-only, overlap-safe maintenance RPCs expire
+elapsed open quotes and pending acceptance windows in bounded batches, release
+reserved capacity, and are wired into the checked-in five-minute production
+maintenance control plane. It cannot
+represent or create a charge: `payment_state` is constrained to
+`not_required`, every financial addition is constrained to zero, and every
+new menu/quote/place/cancel RPC requires an active AAL2 platform staff account plus
+`pilot_mode = 'shadow'`. Public/live ordering and payment remain disabled and
+fail closed. The staff client now renders the server-owned menu, modifiers,
+capacity windows, expiring quote, zero-money receipt, and pending cancellation;
+it rejects malformed or non-zero server responses. Before either placement or
+cancellation can mutate server state, the client durably stores the original
+idempotency attempt in device-protected native storage or origin-scoped web
+storage. A killed or disconnected client replays that exact request and blocks
+new ordering mutations until the result is confirmed, preventing a fresh key
+from creating a duplicate. The record contains scoped opaque IDs, versions, the
+fixed cancellation reason, a retry key, and a timestamp—never menu contents,
+prices, contact data, or payment material—and is removed after confirmation.
+Compare/write/delete operations are serialized per account and business; web
+checkout fails closed when cross-tab Web Locks are unavailable, while the native
+client serializes its protected-store operations inside the app runtime.
+The AAL2 business Studio now exposes the active internal queue with immutable
+item/modifier snapshots, exact pickup site or scheduled truck-stop context,
+explicit local dates/time zones, and optimistic order versions. It can accept, reject,
+start preparation, mark ready, complete, or cancel only through the existing
+server transition state machine. The queue is capped, response-size bounded,
+contains no customer identity or contact data, refreshes automatically, and
+reuses an action's idempotency key after an uncertain network result. Merchant
+reason codes are an exact server allowlist rather than a client convention. A
+notification outbox, support issue intake, and the operational pilot still
+require separate release evidence.
+
+The customer cancellation RPC is intentionally narrower than merchant
+operations: it only cancels `pending_acceptance` orders and releases their
+reserved slot. Once a merchant accepts an order, only the existing AAL2
+merchant transition path can resolve that commitment.
 
 ### Phase O2 — capped prepaid pickup pilot
 
-- One processor, country, currency, city cohort, and verified merchant group.
+- The checked-in Stripe Connect implementation supports one currency per cart,
+  one verified restaurant or food truck, Stripe-hosted card/wallet checkout,
+  provider-calculated tax, destination charges, and durable refund processing.
+  It remains disabled until production credentials and the acceptance program
+  below are complete.
+- Start with one country, currency, city cohort, and verified merchant group.
 - No promotions, guest checkout, partial modifications, delivery, or home
-  kitchens. Use authorization/capture only for approved payment methods.
+  kitchens.
 - Daily payment/payout/refund/ledger reconciliation and published support hours.
 
 ### Phase O3 — reliability and scale

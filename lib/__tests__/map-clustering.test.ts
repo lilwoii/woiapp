@@ -2,7 +2,9 @@ import { seedPlaces } from '@/data/places';
 import {
   clusterInventoryFeatures,
   clusterPlaces,
+  clusterPlacesWithSelection,
   normalizeLongitude,
+  shouldRenderMapInventory,
   viewportIsLiveInventoryEligible,
   zoomFromLongitudeDelta,
 } from '@/lib/map-clustering';
@@ -52,6 +54,18 @@ describe('map clustering', () => {
     expect(viewportIsLiveInventoryEligible({ west: -20, south: -2, east: 20, north: 2 })).toBe(false);
   });
 
+  it.each([
+    { viewportEligible: true, inventorySuppressed: false, expected: true },
+    { viewportEligible: true, inventorySuppressed: true, expected: false },
+    { viewportEligible: false, inventorySuppressed: false, expected: false },
+    { viewportEligible: false, inventorySuppressed: true, expected: false },
+  ])(
+    'renders markers only for a current eligible viewport: %o',
+    ({ expected, ...state }) => {
+      expect(shouldRenderMapInventory(state)).toBe(expected);
+    }
+  );
+
   it('bounds a 1,200-feature viewport without losing represented places', () => {
     const features = Array.from({ length: 1_200 }, (_, index) => ({
       type: 'place' as const,
@@ -68,5 +82,39 @@ describe('map clustering', () => {
     const rendered = clusterInventoryFeatures(features, 14, 300);
     expect(rendered.length).toBeLessThanOrEqual(300);
     expect(rendered.reduce((count, feature) => count + feature.count, 0)).toBe(1_200);
+
+    const nativeRendered = clusterInventoryFeatures(features, 14, 120);
+    expect(nativeRendered.length).toBeLessThanOrEqual(120);
+    expect(nativeRendered.reduce((count, feature) => count + feature.count, 0)).toBe(1_200);
+  });
+
+  it('bounds dense client results without dropping represented places or the selection', () => {
+    const places = Array.from({ length: 10_000 }, (_, index) => ({
+      ...seedPlaces[index % seedPlaces.length],
+      id: `dense-${index}`,
+      latitude: -60 + (index % 400) * 0.3,
+      longitude: -170 + Math.floor(index / 400) * 13.5,
+    }));
+    const rendered = clusterPlacesWithSelection(places, 18, 'dense-9', undefined, 300);
+    expect(rendered.length).toBeLessThanOrEqual(300);
+    expect(rendered.reduce(
+      (count, feature) => count + (feature.kind === 'cluster' ? feature.count : 1),
+      0,
+    )).toBe(10_000);
+    expect(rendered.some((feature) => feature.kind === 'place' && feature.place.id === 'dense-9')).toBe(true);
+  });
+
+  it('keeps branches of the same business distinct and selects the requested location', () => {
+    const branches = [
+      { ...seedPlaces[0], id: 'chain', locationId: 'north', latitude: 34.05, longitude: -118.25 },
+      { ...seedPlaces[0], id: 'chain', locationId: 'south', latitude: 34.01, longitude: -118.28 },
+    ];
+
+    const rendered = clusterPlacesWithSelection(branches, 18, 'chain', 'south', 20);
+    expect(rendered).toHaveLength(2);
+    expect(rendered.map((feature) => feature.id)).toEqual(
+      expect.arrayContaining(['place:chain:north', 'place:chain:south']),
+    );
+    expect(rendered.at(-1)).toMatchObject({ kind: 'place', place: { locationId: 'south' } });
   });
 });

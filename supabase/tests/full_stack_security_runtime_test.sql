@@ -47,11 +47,153 @@ begin
     )
     or has_function_privilege(
       'authenticated',
+      'public.finalize_account_deletion_receipt(uuid)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.finalize_next_account_deletion_receipt()',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
       'public.cleanup_marketplace_chat_ephemera()',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.expire_shadow_order_quotes(integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.expire_shadow_orders(integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.reconcile_licensed_provider_lifecycle(integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.select_sponsored_placement(text,double precision,double precision,integer,public.business_kind[],text,text,uuid)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.record_sponsored_interaction(text,text,text,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.reconcile_sponsored_reservations(integer)',
       'execute'
     )
   then
     raise exception 'Authenticated users can execute a service-only maintenance RPC';
+  end if;
+
+  if has_function_privilege(
+      'anon',
+      'public.respond_creator_invitation(uuid,text,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.respond_creator_invitation(uuid,text,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.respond_creator_invitation(uuid,text,text)',
+      'execute'
+    )
+  then
+    raise exception 'Creator invitation response RPC has an unsafe effective ACL';
+  end if;
+
+  if has_function_privilege(
+      'anon',
+      'public.review_business_revision(uuid,text,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.review_business_revision(uuid,text,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.review_business_revision(uuid,text,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.send_creator_invitation(uuid,uuid,text,text,timestamptz,timestamptz,boolean,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.send_creator_invitation(uuid,uuid,text,text,timestamptz,timestamptz,boolean,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.send_creator_invitation(uuid,uuid,text,text,timestamptz,timestamptz,boolean,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.respond_business_invitation(uuid,text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.respond_business_invitation(uuid,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.respond_business_invitation(uuid,text)',
+      'execute'
+    )
+  then
+    raise exception 'A null-safe authority RPC has an unsafe effective ACL';
+  end if;
+
+  if has_function_privilege(
+      'anon',
+      'public.set_user_block_by_public_id(uuid,boolean)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.set_user_block_by_public_id(uuid,boolean)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.set_user_block_by_public_id(uuid,boolean)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.set_profile_follow_by_public_id(uuid,boolean)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.set_profile_follow_by_public_id(uuid,boolean)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'public.set_profile_follow_by_public_id(uuid,boolean)',
+      'execute'
+    )
+  then
+    raise exception 'A null-safe social mutation RPC has an unsafe effective ACL';
   end if;
 
   if not exists (
@@ -67,6 +209,73 @@ begin
 end;
 $contract$;
 
+do $business_core_acl$
+declare
+  expected_core_count constant integer := 15;
+  actual_core_count integer;
+begin
+  select count(*)
+  into actual_core_count
+  from pg_catalog.pg_proc function_row
+  join pg_catalog.pg_namespace schema_row
+    on schema_row.oid = function_row.pronamespace
+  where schema_row.nspname = 'private'
+    and function_row.proname = any(array[
+      'invite_business_member_core',
+      'respond_business_invitation_core',
+      'set_business_member_role_core',
+      'revoke_business_member_core',
+      'revoke_business_invitation_core',
+      'transfer_business_ownership_core',
+      'nominate_business_logo_core',
+      'schedule_mobile_stop_core',
+      'cancel_mobile_stop_core',
+      'submit_business_revision_core',
+      'submit_business_for_review_core',
+      'submit_business_update_core',
+      'submit_business_response_core',
+      'set_business_live_status_core',
+      'set_menu_item_availability_core'
+    ]::text[]);
+
+  if actual_core_count <> expected_core_count then
+    raise exception 'A serialized business core function is missing after migrations';
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.pg_proc function_row
+    join pg_catalog.pg_namespace schema_row
+      on schema_row.oid = function_row.pronamespace
+    where schema_row.nspname = 'private'
+      and function_row.proname = any(array[
+        'invite_business_member_core',
+        'respond_business_invitation_core',
+        'set_business_member_role_core',
+        'revoke_business_member_core',
+        'revoke_business_invitation_core',
+        'transfer_business_ownership_core',
+        'nominate_business_logo_core',
+        'schedule_mobile_stop_core',
+        'cancel_mobile_stop_core',
+        'submit_business_revision_core',
+        'submit_business_for_review_core',
+        'submit_business_update_core',
+        'submit_business_response_core',
+        'set_business_live_status_core',
+        'set_menu_item_availability_core'
+      ]::text[])
+      and pg_catalog.has_function_privilege(
+        'service_role',
+        function_row.oid,
+        'execute'
+      )
+  ) then
+    raise exception 'Service role can bypass a serialized business RPC wrapper';
+  end if;
+end;
+$business_core_acl$;
+
 set local role anon;
 
 select count(*)
@@ -74,6 +283,13 @@ from public.public_business_directory;
 
 do $anon$
 begin
+  begin
+    perform private.is_business_publicly_eligible(null);
+    raise exception 'Anonymous role unexpectedly invoked the private eligibility helper directly';
+  exception
+    when insufficient_privilege then null;
+  end;
+
   begin
     perform 1 from public.profiles limit 1;
     raise exception 'Anonymous role unexpectedly read the profile base table';
@@ -125,6 +341,17 @@ values
     '{"username":"runtime_b","display_name":"Runtime B","terms_accepted":true}'::jsonb,
     now(),
     now()
+  ),
+  (
+    '60000000-0000-4000-8000-000000000006',
+    'authenticated',
+    'authenticated',
+    'runtime-c@spottr.invalid',
+    now(),
+    '{}'::jsonb,
+    '{"username":"runtime_c","display_name":"Runtime C","terms_accepted":true}'::jsonb,
+    now(),
+    now()
   );
 
 set local role authenticated;
@@ -163,4 +390,6165 @@ end;
 $rls$;
 
 reset role;
+
+insert into public.businesses (
+  id, kind, name, slug, state, provenance, created_by
+)
+values (
+  '70000000-0000-4000-8000-000000000007',
+  'restaurant',
+  'Runtime Claim Guard',
+  'runtime-claim-guard',
+  'draft',
+  'licensed_provider',
+  '10000000-0000-4000-8000-000000000001'
+);
+
+insert into public.business_claims (
+  id, business_id, claimant_id, method, state
+)
+values (
+  '80000000-0000-4000-8000-000000000008',
+  '70000000-0000-4000-8000-000000000007',
+  '10000000-0000-4000-8000-000000000001',
+  'listed_phone',
+  'pending'
+);
+
+do $legacy_claim_approval$
+begin
+  begin
+    update public.business_claims
+    set state = 'approved'
+    where id = '80000000-0000-4000-8000-000000000008';
+    raise exception 'Legacy claim was approved without a verification receipt';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'CLAIM_VERIFICATION_RECEIPT_REQUIRED' then
+        raise;
+      end if;
+  end;
+
+  update public.business_claims
+  set state = 'rejected'
+  where id = '80000000-0000-4000-8000-000000000008';
+
+  if not exists (
+    select 1 from public.business_claims
+    where id = '80000000-0000-4000-8000-000000000008'
+      and state = 'rejected'
+  ) then
+    raise exception 'Unsafe legacy claim could not be rejected';
+  end if;
+end;
+$legacy_claim_approval$;
+
+insert into public.businesses (
+  id, kind, name, slug, state, verification, provenance, created_by
+)
+values (
+  '71000000-0000-4000-8000-000000000007',
+  'restaurant',
+  'Runtime Publication Guard',
+  'runtime-publication-guard',
+  'draft',
+  'pending',
+  'owner',
+  '10000000-0000-4000-8000-000000000001'
+);
+
+do $publication_authority$
+begin
+  begin
+    update public.businesses
+    set state = 'published', verification = 'verified'
+    where id = '71000000-0000-4000-8000-000000000007';
+    raise exception 'Owner draft bypassed the review lifecycle';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'BUSINESS_REVIEW_REQUIRED' then
+        raise;
+      end if;
+  end;
+
+  begin
+    update public.businesses
+    set state = 'published'
+    where id = '70000000-0000-4000-8000-000000000007';
+    raise exception 'Provider draft published without an active licensed source';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'LICENSED_SOURCE_NOT_ACTIVE' then
+        raise;
+      end if;
+  end;
+
+  if exists (
+    select 1 from public.businesses
+    where id in (
+      '70000000-0000-4000-8000-000000000007',
+      '71000000-0000-4000-8000-000000000007'
+    )
+      and state = 'published'
+  ) then
+    raise exception 'Publication authority guard did not preserve private state';
+  end if;
+end;
+$publication_authority$;
+
+insert into private.provider_accounts (
+  provider_slug,
+  enabled,
+  stale_after,
+  archive_after,
+  license_agreement_id,
+  license_effective_on,
+  license_expires_on,
+  allowed_field_classes,
+  accepted_signing_key_ids,
+  retention_terms,
+  deletion_terms,
+  configuration_version
+)
+values (
+  'runtime_provider',
+  true,
+  interval '1 day',
+  interval '30 days',
+  'runtime-license',
+  current_date - 30,
+  current_date + 30,
+  array['profile']::text[],
+  array['runtime-key']::text[],
+  'Runtime retention terms',
+  'Runtime deletion terms',
+  'runtime-v1'
+);
+
+insert into private.provider_business_sources (
+  provider_slug,
+  provider_external_id,
+  business_id,
+  source_status,
+  source_updated_at,
+  first_seen_at,
+  last_seen_at,
+  missing_since,
+  license_agreement_id,
+  normalized_payload_hash
+)
+values (
+  'runtime_provider',
+  'runtime-missing-listing',
+  '70000000-0000-4000-8000-000000000007',
+  'missing',
+  now() - interval '3 days',
+  now() - interval '3 days',
+  now() - interval '3 days',
+  now() - interval '2 days',
+  'runtime-license',
+  repeat('c', 64)
+);
+
+do $provider_lifecycle$
+declare
+  result jsonb;
+begin
+  result := public.reconcile_licensed_provider_lifecycle(100);
+  if result->>'sources_marked_stale' <> '1'
+    or result->>'businesses_archived' <> '0'
+    or result->>'more_work' <> 'false'
+    or result->>'skipped' <> 'false'
+  then
+    raise exception 'Provider lifecycle returned an unsafe or incomplete result';
+  end if;
+
+  if not exists (
+    select 1
+    from private.provider_business_sources source
+    where source.provider_slug = 'runtime_provider'
+      and source.provider_external_id = 'runtime-missing-listing'
+      and source.source_status = 'stale'
+      and source.missing_since is not null
+      and source.inactive_at is null
+  ) then
+    raise exception 'Missing provider source did not advance to stale';
+  end if;
+
+  if not exists (
+    select 1
+    from private.provider_ingest_audit_events event
+    where event.provider_slug = 'runtime_provider'
+      and event.event_type = 'sources_marked_stale'
+      and event.metadata->>'count' = '1'
+  ) then
+    raise exception 'Provider stale transition was not audited';
+  end if;
+
+  if exists (
+    select 1
+    from public.businesses business
+    where business.id = '70000000-0000-4000-8000-000000000007'
+      and business.state = 'archived'
+  ) then
+    raise exception 'Provider listing was archived before its archive grace period';
+  end if;
+end;
+$provider_lifecycle$;
+
+-- Build one fully eligible licensed listing to exercise the sponsored-serving
+-- path without weakening the publication authority trigger.
+update private.provider_business_sources
+set source_status = 'active',
+    last_seen_at = now(),
+    missing_since = null,
+    inactive_at = null,
+    inactive_reason = null
+where provider_slug = 'runtime_provider'
+  and provider_external_id = 'runtime-missing-listing';
+
+insert into public.media_assets (
+  id, owner_id, business_id, storage_path, mime_type, width, height,
+  byte_size, sha256, source, license_note, quarantine_state,
+  processed_storage_path, scan_completed_at, moderation
+) values (
+  '72000000-0000-4000-8000-000000000007',
+  '10000000-0000-4000-8000-000000000001',
+  '70000000-0000-4000-8000-000000000007',
+  'published/runtime/provider-logo.jpg', 'image/jpeg', 512, 512,
+  4096, repeat('d', 64), 'licensed_provider', 'Runtime licensed fixture',
+  'clean', 'published/runtime/provider-logo-processed.jpg', now(), 'approved'
+);
+
+update public.businesses
+set description = 'A complete licensed runtime listing.',
+    logo_asset_id = '72000000-0000-4000-8000-000000000007'
+where id = '70000000-0000-4000-8000-000000000007';
+
+insert into public.business_private_details (
+  business_id, business_email, business_phone
+) values (
+  '70000000-0000-4000-8000-000000000007',
+  'runtime-business@spottr.invalid', '+12135550100'
+);
+
+insert into public.business_locations (
+  id, business_id, label, address_line, city, region, postal_code,
+  point, is_primary, is_approximate, public_address, publication_state
+) values
+  (
+    '73000000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    'Runtime location', '100 Runtime Way', 'Los Angeles', 'CA', '90001',
+    public.st_setsrid(public.st_makepoint(-118.24, 34.05), 4326)::public.geography,
+    true, false, true, 'published'
+  ),
+  (
+    '73100000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    'Private runtime pickup', null, 'Los Angeles', 'CA', '90001',
+    public.st_setsrid(public.st_makepoint(-118.237, 34.043), 4326)::public.geography,
+    false, false, false, 'published'
+  ),
+  (
+    '73200000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    'Private dateline pickup', null, 'Dateline', 'AA', '00000',
+    public.st_setsrid(public.st_makepoint(-179.987, 10.013), 4326)::public.geography,
+    false, false, false, 'published'
+  );
+
+insert into public.weekly_hours (business_id, weekday, opens_at, closes_at, is_closed)
+select
+  '70000000-0000-4000-8000-000000000007',
+  weekday::smallint, '00:00'::time, '23:59'::time, false
+from generate_series(0, 6) weekday;
+
+insert into public.business_payments (business_id, payment)
+values ('70000000-0000-4000-8000-000000000007', 'cash');
+
+insert into public.menu_sections (id, business_id, name, is_published)
+values (
+  '74000000-0000-4000-8000-000000000007',
+  '70000000-0000-4000-8000-000000000007', 'Runtime menu', true
+);
+insert into public.menu_items (
+  id, section_id, name, price_minor, currency, availability, is_published
+) values (
+  '75000000-0000-4000-8000-000000000007',
+  '74000000-0000-4000-8000-000000000007', 'Runtime meal',
+  1200, 'USD', 'available', true
+);
+
+update public.businesses
+set state = 'published', verification = 'verified'
+where id = '70000000-0000-4000-8000-000000000007';
+
+do $prepaid_pickup_acl_contract$
+begin
+  if has_function_privilege(
+    'anon',
+    'public.prepare_prepaid_pickup_checkout_server(uuid,uuid,uuid,timestamptz,jsonb,text,text)',
+    'execute'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.prepare_prepaid_pickup_checkout_server(uuid,uuid,uuid,timestamptz,jsonb,text,text)',
+    'execute'
+  ) or not has_function_privilege(
+    'service_role',
+    'public.prepare_prepaid_pickup_checkout_server(uuid,uuid,uuid,timestamptz,jsonb,text,text)',
+    'execute'
+  ) then
+    raise exception 'Prepaid pickup checkout RPC privileges are unsafe';
+  end if;
+
+  if has_table_privilege('authenticated', 'private.merchant_payment_accounts', 'select')
+    or has_table_privilege('service_role', 'private.merchant_payment_accounts', 'select')
+  then
+    raise exception 'Merchant payment account storage is directly readable';
+  end if;
+end;
+$prepaid_pickup_acl_contract$;
+
+insert into public.business_pickup_ordering_preferences (
+  business_id, opted_in, accepted_payment_options, updated_by
+) values (
+  '70000000-0000-4000-8000-000000000007', true,
+  array['pay_in_person']::text[], '10000000-0000-4000-8000-000000000001'
+) on conflict (business_id) do update set
+  opted_in = excluded.opted_in,
+  accepted_payment_options = excluded.accepted_payment_options,
+  updated_by = excluded.updated_by,
+  updated_at = now();
+
+set local role service_role;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"role":"service_role"}',
+  true
+);
+
+do $prepaid_pickup_disabled_contract$
+begin
+  begin
+    perform public.prepare_prepaid_pickup_checkout_server(
+      '20000000-0000-4000-8000-000000000002',
+      '70000000-0000-4000-8000-000000000007',
+      '73000000-0000-4000-8000-000000000007',
+      now() + interval '2 hours',
+      '[{"menu_item_id":"75000000-0000-4000-8000-000000000007","quantity":1}]'::jsonb,
+      null,
+      'runtime-disabled-prepaid-0007'
+    );
+    raise exception 'Prepaid checkout bypassed its disabled runtime gate';
+  exception
+    when object_not_in_prerequisite_state then
+      if sqlerrm <> 'PREPAID_PICKUP_DISABLED' then raise; end if;
+  end;
+end;
+$prepaid_pickup_disabled_contract$;
+
+reset role;
+update private.pickup_ordering_runtime_config set enabled = true, updated_at = now() where singleton;
+update private.prepaid_pickup_runtime_config set enabled = true, updated_at = now() where singleton;
+
+set local role service_role;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"role":"service_role"}',
+  true
+);
+select public.upsert_payment_account_server(
+  '70000000-0000-4000-8000-000000000007',
+  'acct_RuntimePay000007', 'US', 'USD', true, true, true, 0
+);
+
+reset role;
+update private.merchant_payment_accounts
+set accept_prepaid = true, updated_at = now()
+where business_id = '70000000-0000-4000-8000-000000000007';
+
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"role":"service_role"}',
+  true
+);
+
+do $prepaid_pickup_runtime_contract$
+declare
+  prepared jsonb;
+  replayed jsonb;
+  attached jsonb;
+  completed jsonb;
+  duplicate_result jsonb;
+  checkout_public_id uuid;
+  runtime_order_id uuid;
+  refund_claim jsonb;
+  refund_public_id uuid;
+  refund_lease_token uuid;
+  pickup_at timestamptz := now() + interval '2 hours';
+begin
+  prepared := public.prepare_prepaid_pickup_checkout_server(
+    '20000000-0000-4000-8000-000000000002',
+    '70000000-0000-4000-8000-000000000007',
+    '73000000-0000-4000-8000-000000000007',
+    pickup_at,
+    '[{"menu_item_id":"75000000-0000-4000-8000-000000000007","quantity":1}]'::jsonb,
+    'No utensils, please.',
+    'runtime-prepaid-checkout-0007'
+  );
+  checkout_public_id := (prepared ->> 'checkout_public_id')::uuid;
+  if checkout_public_id is null
+    or (prepared ->> 'item_subtotal_minor')::integer <> 1200
+    or (prepared ->> 'application_fee_minor')::integer <> 120
+    or prepared ->> 'provider_account_id' <> 'acct_RuntimePay000007'
+  then
+    raise exception 'Prepaid checkout did not use authoritative menu pricing and merchant binding: %', prepared;
+  end if;
+
+  replayed := public.prepare_prepaid_pickup_checkout_server(
+    '20000000-0000-4000-8000-000000000002',
+    '70000000-0000-4000-8000-000000000007',
+    '73000000-0000-4000-8000-000000000007',
+    pickup_at,
+    '[{"menu_item_id":"75000000-0000-4000-8000-000000000007","quantity":1}]'::jsonb,
+    'No utensils, please.',
+    'runtime-prepaid-checkout-0007'
+  );
+  if replayed ->> 'checkout_public_id' <> checkout_public_id::text then
+    raise exception 'Prepaid checkout idempotency did not replay the same checkout';
+  end if;
+
+  attached := public.attach_prepaid_checkout_provider_server(
+    checkout_public_id, 'cs_test_runtime_checkout_0007'
+  );
+  if attached ->> 'state' <> 'open' then
+    raise exception 'Prepaid checkout did not enter the provider-open state';
+  end if;
+
+  completed := public.complete_prepaid_checkout_server(
+    'evt_runtimeprepaid0007', 'checkout.session.completed', checkout_public_id,
+    'cs_test_runtime_checkout_0007', 'pi_runtimeprepaid0007', 'USD', 1320, 120
+  );
+  if completed ->> 'status' <> 'completed' then
+    raise exception 'Valid prepaid completion did not create an order: %', completed;
+  end if;
+
+  duplicate_result := public.complete_prepaid_checkout_server(
+    'evt_runtimeprepaid0007', 'checkout.session.completed', checkout_public_id,
+    'cs_test_runtime_checkout_0007', 'pi_runtimeprepaid0007', 'USD', 1320, 120
+  );
+  if duplicate_result ->> 'status' <> 'duplicate' then
+    raise exception 'Duplicate Stripe event was not idempotent';
+  end if;
+
+  select checkout.order_id into runtime_order_id
+  from private.pickup_checkout_drafts checkout
+  where checkout.public_id = checkout_public_id;
+  if runtime_order_id is null or not exists (
+    select 1 from private.pickup_orders pickup_order
+    where pickup_order.id = runtime_order_id
+      and pickup_order.payment_method = 'card_or_wallet'
+      and pickup_order.payment_state = 'captured'
+      and pickup_order.item_subtotal_minor = 1200
+      and pickup_order.tax_minor = 120
+      and pickup_order.platform_fee_minor = 120
+      and pickup_order.total_minor = 1320
+  ) then
+    raise exception 'Captured prepaid order totals or payment state are invalid';
+  end if;
+
+  update private.pickup_orders set state = 'rejected', updated_at = now()
+  where id = runtime_order_id;
+  if not exists (
+    select 1 from private.pickup_payment_refunds refund
+    where refund.order_id = runtime_order_id and refund.state = 'pending'
+      and refund.amount_minor = 1320 and refund.currency = 'USD'
+  ) then
+    raise exception 'Terminal prepaid order did not enqueue its refund';
+  end if;
+
+  refund_claim := public.claim_pickup_payment_refunds(1) -> 0;
+  refund_public_id := (refund_claim ->> 'public_id')::uuid;
+  refund_lease_token := (refund_claim ->> 'lease_token')::uuid;
+  if refund_public_id is null or refund_lease_token is null
+    or refund_claim ->> 'provider_payment_intent_id' <> 'pi_runtimeprepaid0007'
+    or (refund_claim ->> 'refund_application_fee')::boolean is not true
+  then
+    raise exception 'Refund worker claim omitted required provider data: %', refund_claim;
+  end if;
+
+  perform public.finish_pickup_payment_refund(
+    refund_public_id, refund_lease_token, 'succeeded', 're_runtimeprepaid0007', null
+  );
+  if not exists (
+    select 1 from private.pickup_orders pickup_order
+    where pickup_order.id = runtime_order_id and pickup_order.payment_state = 'refunded'
+  ) then
+    raise exception 'Successful provider refund did not finalize the pickup order';
+  end if;
+end;
+$prepaid_pickup_runtime_contract$;
+
+reset role;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $business_follow_authority$
+declare
+  first_result boolean;
+  second_result boolean;
+  saved_count bigint;
+begin
+  begin
+    insert into public.follows (user_id, business_id) values (
+      '20000000-0000-4000-8000-000000000002',
+      '70000000-0000-4000-8000-000000000007'
+    );
+    raise exception 'Authenticated user bypassed the business follow RPC';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform public.set_business_follow(
+      '70000000-0000-4000-8000-000000000007', null
+    );
+    raise exception 'Null business follow intent bypassed validation';
+  exception
+    when invalid_parameter_value then
+      if sqlerrm <> 'INVALID_BUSINESS_FOLLOW_REQUEST' then raise; end if;
+  end;
+
+  first_result := public.set_business_follow(
+    '70000000-0000-4000-8000-000000000007', true
+  );
+  second_result := public.set_business_follow(
+    '70000000-0000-4000-8000-000000000007', true
+  );
+  select count(*)
+  into saved_count
+  from public.follows follow
+  where follow.user_id = '20000000-0000-4000-8000-000000000002'
+    and follow.business_id = '70000000-0000-4000-8000-000000000007';
+
+  if first_result is distinct from true
+    or second_result is distinct from true
+    or saved_count <> 1
+  then
+    raise exception 'Business follow was not idempotent (first %, second %, count %)',
+      first_result, second_result, saved_count;
+  end if;
+end;
+$business_follow_authority$;
+
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+update private.provider_business_sources
+set source_status = 'stale',
+    missing_since = coalesce(missing_since, now())
+where provider_slug = 'runtime_provider'
+  and provider_external_id = 'runtime-missing-listing';
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $business_unfollow_ineligible$
+declare
+  attempt integer;
+  first_result boolean;
+  second_result boolean;
+  still_saved boolean;
+begin
+  first_result := public.set_business_follow(
+    '70000000-0000-4000-8000-000000000007', false
+  );
+  second_result := public.set_business_follow(
+    '70000000-0000-4000-8000-000000000007', false
+  );
+  select exists (
+    select 1
+    from public.follows follow
+    where follow.user_id = '20000000-0000-4000-8000-000000000002'
+      and follow.business_id = '70000000-0000-4000-8000-000000000007'
+  ) into still_saved;
+
+  if first_result is distinct from false
+    or second_result is distinct from false
+    or still_saved
+  then
+    raise exception 'An ineligible saved business could not be unfollowed idempotently (first %, second %, still saved %)',
+      first_result, second_result, still_saved;
+  end if;
+
+  for attempt in 1..116 loop
+    perform public.set_business_follow(
+      '70000000-0000-4000-8000-000000000007', false
+    );
+  end loop;
+  begin
+    perform public.set_business_follow(
+      '70000000-0000-4000-8000-000000000007', false
+    );
+    raise exception 'Business follow mutation bypassed its rate limit';
+  exception
+    when sqlstate 'P0001' then
+      if sqlerrm <> 'RATE_LIMITED' then raise; end if;
+  end;
+end;
+$business_unfollow_ineligible$;
+
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+update private.provider_business_sources
+set source_status = 'active',
+    missing_since = null
+where provider_slug = 'runtime_provider'
+  and provider_external_id = 'runtime-missing-listing';
+
+do $business_follow_audit$
+begin
+  if (
+      select count(*)
+      from public.audit_events event
+      where event.actor_id = '20000000-0000-4000-8000-000000000002'
+        and event.business_id = '70000000-0000-4000-8000-000000000007'
+        and event.event_type = 'business.followed'
+    ) <> 1
+    or (
+      select count(*)
+      from public.audit_events event
+      where event.actor_id = '20000000-0000-4000-8000-000000000002'
+        and event.business_id = '70000000-0000-4000-8000-000000000007'
+        and event.event_type = 'business.unfollowed'
+    ) <> 1
+  then
+    raise exception 'Business follow audit was not change-bound';
+  end if;
+end;
+$business_follow_audit$;
+
+-- Reports against already-approved reviews must be visible to staff and must
+-- have an audited, optimistic-locking keep/remove path.
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal1"}',
+  true
+);
+insert into public.reviews (
+  id, business_id, author_id, rating, body, moderation
+) values (
+  '75100000-0000-4000-8000-000000000007',
+  '70000000-0000-4000-8000-000000000007',
+  '20000000-0000-4000-8000-000000000002',
+  4,
+  'Approved runtime review that can be reported.',
+  'approved'
+);
+
+-- Account portability must cover every enabled social workflow without
+-- exposing media paths, idempotency hashes, or another account's Auth ID.
+insert into auth.users (
+  id, aud, role, email, email_confirmed_at, raw_app_meta_data,
+  raw_user_meta_data, created_at, updated_at
+) values (
+  '61000000-0000-4000-8000-000000000006',
+  'authenticated', 'authenticated', 'runtime-social-delete@spottr.invalid', now(),
+  '{}'::jsonb,
+  '{"username":"runtime_social_delete","display_name":"Runtime Social Delete","terms_accepted":true}'::jsonb,
+  now(), now()
+);
+
+update public.profiles profile
+set bio = 'Runtime social profile biography.',
+    links = '[{"label":"Website","url":"https://spottr.com"}]'::jsonb,
+    show_favorites = false,
+    show_following = false,
+    allow_business_invitations = true
+where profile.user_id = '10000000-0000-4000-8000-000000000001';
+
+insert into public.profile_follows (follower_id, followed_id) values
+  ('10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002'),
+  ('61000000-0000-4000-8000-000000000006', '10000000-0000-4000-8000-000000000001');
+
+select pg_catalog.set_config(
+  'spottr.runtime.social_target_public_id',
+  (
+    select profile.public_id::text
+    from public.profiles profile
+    where profile.user_id = '20000000-0000-4000-8000-000000000002'
+  ),
+  true
+);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $profile_follow_null_intent$
+declare
+  target_public_id uuid;
+begin
+  target_public_id := pg_catalog.current_setting(
+    'spottr.runtime.social_target_public_id',
+    true
+  )::uuid;
+
+  begin
+    perform public.set_profile_follow_by_public_id(target_public_id, null);
+    raise exception 'Null profile follow intent bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid follow intent' then
+        raise;
+      end if;
+  end;
+end;
+$profile_follow_null_intent$;
+
+reset role;
+insert into public.user_blocks (blocker_id, blocked_id)
+values (
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002'
+);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $user_block_null_intent$
+declare
+  target_public_id uuid;
+begin
+  target_public_id := pg_catalog.current_setting(
+    'spottr.runtime.social_target_public_id',
+    true
+  )::uuid;
+
+  begin
+    perform public.set_user_block_by_public_id(target_public_id, null);
+    raise exception 'Null user block intent bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid block intent' then
+        raise;
+      end if;
+  end;
+end;
+$user_block_null_intent$;
+
+reset role;
+do $social_boolean_null_state$
+begin
+  if not exists (
+      select 1
+      from public.profile_follows follow
+      where follow.follower_id = '10000000-0000-4000-8000-000000000001'
+        and follow.followed_id = '20000000-0000-4000-8000-000000000002'
+    )
+  then
+    raise exception 'Null follow intent removed an existing follow';
+  end if;
+  if not exists (
+      select 1
+      from public.user_blocks block
+      where block.blocker_id = '10000000-0000-4000-8000-000000000001'
+        and block.blocked_id = '20000000-0000-4000-8000-000000000002'
+    )
+  then
+    raise exception 'Null block intent removed an existing safety block';
+  end if;
+end;
+$social_boolean_null_state$;
+
+delete from public.user_blocks
+where blocker_id = '10000000-0000-4000-8000-000000000001'
+  and blocked_id = '20000000-0000-4000-8000-000000000002';
+
+insert into public.review_reactions (review_id, user_id, reaction) values
+  ('75100000-0000-4000-8000-000000000007', '10000000-0000-4000-8000-000000000001', 1),
+  ('75100000-0000-4000-8000-000000000007', '61000000-0000-4000-8000-000000000006', -1);
+
+insert into public.review_profile_comments (
+  id, review_id, author_id, body, moderation
+) values
+  (
+    '75200000-0000-4000-8000-000000000007',
+    '75100000-0000-4000-8000-000000000007',
+    '10000000-0000-4000-8000-000000000001',
+    'Runtime authored profile comment.',
+    'approved'
+  ),
+  (
+    '75300000-0000-4000-8000-000000000007',
+    '75100000-0000-4000-8000-000000000007',
+    '61000000-0000-4000-8000-000000000006',
+    'Runtime deletion cascade comment.',
+    'approved'
+  );
+
+insert into public.business_posts (
+  id, business_id, author_id, body, moderation
+) values
+  (
+    '75400000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    '10000000-0000-4000-8000-000000000001',
+    'Runtime authored business post.',
+    'approved'
+  ),
+  (
+    '75500000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    '61000000-0000-4000-8000-000000000006',
+    'Runtime deletion anonymization post.',
+    'approved'
+  );
+
+insert into public.business_post_media (post_id, asset_id, sort_order) values (
+  '75400000-0000-4000-8000-000000000007',
+  '72000000-0000-4000-8000-000000000007',
+  0
+);
+
+-- Cursor paging must remain complete when more than one page shares the exact
+-- same timestamp. These fixtures are removed immediately after the check.
+insert into public.follows (user_id, business_id) values (
+  '60000000-0000-4000-8000-000000000006',
+  '70000000-0000-4000-8000-000000000007'
+);
+insert into public.profile_follows (follower_id, followed_id) values (
+  '60000000-0000-4000-8000-000000000006',
+  '20000000-0000-4000-8000-000000000002'
+);
+insert into public.business_posts (
+  id, business_id, author_id, body, moderation, created_at, updated_at
+)
+select
+  ('75610000-0000-4000-8000-' || lpad(item::text, 12, '0'))::uuid,
+  '70000000-0000-4000-8000-000000000007'::uuid,
+  '60000000-0000-4000-8000-000000000006'::uuid,
+  'Runtime tied cursor post ' || item::text || '.',
+  'approved'::public.moderation_state,
+  '2026-01-01 12:00:00+00'::timestamptz,
+  '2026-01-01 12:00:00+00'::timestamptz
+from generate_series(1, 22) item;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"60000000-0000-4000-8000-000000000006","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $followed_feed_keyset_pagination$
+declare
+  first_ids uuid[];
+  second_ids uuid[];
+  cursor_time timestamptz;
+  cursor_type text;
+  cursor_id uuid;
+  first_has_more boolean;
+  second_has_more boolean;
+  user_review_count integer;
+  all_count integer;
+begin
+  select
+    array_agg(page.content_id order by page.created_at desc, page.feed_type desc, page.content_id desc),
+    bool_and(page.has_more)
+  into first_ids, first_has_more
+  from public.list_followed_feed('business_post', null, null, null, 100) page;
+
+  select page.created_at, page.feed_type, page.content_id
+  into cursor_time, cursor_type, cursor_id
+  from public.list_followed_feed('business_post', null, null, null, 100) page
+  order by page.created_at desc, page.feed_type desc, page.content_id desc
+  offset 19 limit 1;
+
+  select
+    array_agg(page.content_id order by page.created_at desc, page.feed_type desc, page.content_id desc),
+    bool_or(page.has_more)
+  into second_ids, second_has_more
+  from public.list_followed_feed(
+    'business_post', cursor_time, cursor_type, cursor_id, 20
+  ) page;
+
+  select count(*) into user_review_count
+  from public.list_followed_feed('user_review', null, null, null, 20);
+  select count(*) into all_count
+  from public.list_followed_feed('all', null, null, null, 20);
+
+  if cardinality(first_ids) <> 20
+    or first_has_more is distinct from true
+    or cardinality(second_ids) <> 4
+    or second_has_more is distinct from false
+    or exists (
+      select 1 from unnest(first_ids) as first_page(id)
+      join unnest(second_ids) as second_page(id) using (id)
+    )
+    or user_review_count <> 1
+    or all_count <> 20
+  then
+    raise exception 'Followed feed cursor skipped, repeated, or misfiltered tied rows';
+  end if;
+
+  begin
+    perform public.list_followed_feed('all', now(), null, null, 20);
+    raise exception 'Partial followed feed cursor bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid followed feed cursor' then
+        raise;
+      end if;
+  end;
+end;
+$followed_feed_keyset_pagination$;
+
+reset role;
+delete from public.business_posts
+where id::text like '75610000-0000-4000-8000-%';
+delete from public.profile_follows
+where follower_id = '60000000-0000-4000-8000-000000000006'
+  and followed_id = '20000000-0000-4000-8000-000000000002';
+delete from public.follows
+where user_id = '60000000-0000-4000-8000-000000000006'
+  and business_id = '70000000-0000-4000-8000-000000000007';
+
+insert into public.creator_invitations (
+  id, public_id, business_id, sender_id, recipient_id, title, message,
+  event_starts_at, event_ends_at, idempotency_key_hash, request_hash
+) values
+  (
+    '75600000-0000-4000-8000-000000000007',
+    '75700000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    'Runtime creator invitation',
+    'Runtime invitation content remains independent from reviews.',
+    now() + interval '1 day', now() + interval '2 days', repeat('e', 64), repeat('f', 64)
+  ),
+  (
+    '75800000-0000-4000-8000-000000000007',
+    '75900000-0000-4000-8000-000000000007',
+    '70000000-0000-4000-8000-000000000007',
+    '61000000-0000-4000-8000-000000000006',
+    '10000000-0000-4000-8000-000000000001',
+    'Runtime received invitation',
+    'Runtime received invitation tests subject-scoped export.',
+    now() + interval '1 day', now() + interval '2 days', repeat('a', 64), repeat('b', 64)
+  );
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $creator_invitation_null_decision$
+begin
+  begin
+    perform public.respond_creator_invitation(
+      '75700000-0000-4000-8000-000000000007',
+      null,
+      null
+    );
+    raise exception 'Null creator invitation response bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid invitation response' then
+        raise;
+      end if;
+  end;
+end;
+$creator_invitation_null_decision$;
+
+reset role;
+
+do $social_account_export_contract$
+declare
+  social_user_id constant uuid := '10000000-0000-4000-8000-000000000001';
+  other_user_id constant uuid := '20000000-0000-4000-8000-000000000002';
+  payload jsonb := public.account_export_payload(social_user_id);
+  other_payload jsonb := public.account_export_payload(other_user_id);
+begin
+  if payload ->> 'schema_version' is distinct from '2026-10-08'
+    or pg_catalog.jsonb_typeof(payload -> 'profile') is distinct from 'object'
+    or payload #>> '{profile,bio}' is distinct from 'Runtime social profile biography.'
+    or pg_catalog.jsonb_typeof(payload #> '{profile,links}') is distinct from 'array'
+    or pg_catalog.jsonb_array_length(payload #> '{profile,links}') is distinct from 1
+    or payload #>> '{profile,show_favorites}' is distinct from 'false'
+    or payload #>> '{profile,show_following}' is distinct from 'false'
+    or payload #>> '{profile,allow_business_invitations}' is distinct from 'true'
+    or not (payload -> 'profile' ? 'banner_asset_id')
+  then
+    raise exception 'Social profile fields were absent from the account export';
+  end if;
+
+  if pg_catalog.jsonb_typeof(payload -> 'marketplace_chat') is distinct from 'object'
+    or pg_catalog.jsonb_typeof(payload -> 'marketplace_meetup_consents') is distinct from 'array'
+    or pg_catalog.jsonb_typeof(payload -> 'notification_consents') is distinct from 'array'
+    or pg_catalog.jsonb_typeof(payload -> 'notification_devices') is distinct from 'array'
+  then
+    raise exception 'Final account export dropped chat, meetup, or notification sections';
+  end if;
+
+  if pg_catalog.jsonb_typeof(payload -> 'profile_follows') is distinct from 'array'
+    or pg_catalog.jsonb_array_length(payload -> 'profile_follows') is distinct from 1
+    or payload #>> '{profile_follows,0,followed_public_id}' is null
+    or pg_catalog.jsonb_typeof(payload -> 'profile_followers') is distinct from 'array'
+    or pg_catalog.jsonb_array_length(payload -> 'profile_followers') is distinct from 1
+    or payload #>> '{profile_followers,0,follower_public_id}' is null
+    or pg_catalog.jsonb_array_length(payload -> 'review_reactions') is distinct from 1
+    or payload #>> '{review_reactions,0,reaction}' is distinct from '1'
+    or pg_catalog.jsonb_array_length(payload -> 'review_profile_comments') is distinct from 1
+    or payload #>> '{review_profile_comments,0,body}' is distinct from 'Runtime authored profile comment.'
+    or pg_catalog.jsonb_array_length(payload -> 'authored_business_posts') is distinct from 1
+    or payload #>> '{authored_business_posts,0,body}' is distinct from 'Runtime authored business post.'
+    or pg_catalog.jsonb_array_length(payload #> '{authored_business_posts,0,media}') is distinct from 1
+    or pg_catalog.jsonb_array_length(payload -> 'creator_invitations') is distinct from 2
+  then
+    raise exception 'Enabled social records were absent or not subject-scoped in the account export';
+  end if;
+
+  if payload::text ~ '"(avatar_path|banner_path|storage_path|processed_storage_path)"[[:space:]]*:'
+    or exists (
+      select 1
+      from pg_catalog.jsonb_array_elements(payload -> 'authored_business_posts') post,
+        lateral pg_catalog.jsonb_array_elements(post -> 'media') media
+      where media ? 'storage_path'
+    )
+    or exists (
+      select 1
+      from pg_catalog.jsonb_array_elements(payload -> 'creator_invitations') invitation
+      where invitation ?| array[
+        'idempotency_key_hash', 'request_hash', 'sender_id', 'recipient_id'
+      ]
+    )
+  then
+    raise exception 'Social export leaked a private path, request hash, or Auth identifier';
+  end if;
+
+  if pg_catalog.jsonb_array_length(other_payload -> 'profile_follows') is distinct from 0
+    or pg_catalog.jsonb_array_length(other_payload -> 'profile_followers') is distinct from 1
+    or pg_catalog.jsonb_array_length(other_payload -> 'review_reactions') is distinct from 0
+    or pg_catalog.jsonb_array_length(other_payload -> 'review_profile_comments') is distinct from 0
+    or pg_catalog.jsonb_array_length(other_payload -> 'authored_business_posts') is distinct from 0
+    or pg_catalog.jsonb_array_length(other_payload -> 'creator_invitations') is distinct from 1
+    or other_payload #>> '{creator_invitations,0,direction}' is distinct from 'received'
+  then
+    raise exception 'Social account export included another user''s authored records';
+  end if;
+end;
+$social_account_export_contract$;
+
+delete from auth.users auth_user
+where auth_user.id = '61000000-0000-4000-8000-000000000006';
+
+do $social_account_deletion_contract$
+begin
+  if exists (
+      select 1 from public.profile_follows follow
+      where follow.follower_id = '61000000-0000-4000-8000-000000000006'
+    )
+    or exists (
+      select 1 from public.review_reactions reaction
+      where reaction.user_id = '61000000-0000-4000-8000-000000000006'
+    )
+    or exists (
+      select 1 from public.review_profile_comments comment
+      where comment.author_id = '61000000-0000-4000-8000-000000000006'
+    )
+  then
+    raise exception 'Social rows survived Auth-account deletion';
+  end if;
+
+  if not exists (
+      select 1 from public.business_posts post
+      where post.id = '75500000-0000-4000-8000-000000000007'
+        and post.author_id is null
+    )
+    or not exists (
+      select 1 from public.creator_invitations invitation
+      where invitation.id = '75800000-0000-4000-8000-000000000007'
+        and invitation.sender_id is null
+    )
+  then
+    raise exception 'Business-owned social history was not anonymized after account deletion';
+  end if;
+end;
+$social_account_deletion_contract$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"60000000-0000-4000-8000-000000000006","role":"authenticated","aal":"aal1"}',
+  true
+);
+select public.submit_content_report(
+  'review',
+  '75100000-0000-4000-8000-000000000007',
+  'spam',
+  'Runtime report for the protected review queue.'
+);
+select public.submit_content_report(
+  'business_post',
+  '75400000-0000-4000-8000-000000000007',
+  'spam',
+  'Runtime report for the protected business post queue.'
+);
+select public.submit_content_report(
+  'review_comment',
+  '75200000-0000-4000-8000-000000000007',
+  'spam',
+  'Runtime report for the protected review comment queue.'
+);
+
+do $social_moderation_auth_before_validation$
+begin
+  begin
+    perform public.decide_reported_review(
+      '75100000-0000-4000-8000-000000000007',
+      null,
+      'Runtime authorization precedes decision validation.',
+      now()
+    );
+    raise exception 'AAL1 caller reached social moderation validation';
+  exception
+    when sqlstate '42501' then null;
+  end;
+end;
+$social_moderation_auth_before_validation$;
+reset role;
+
+insert into private.platform_roles (user_id, role, active)
+values ('10000000-0000-4000-8000-000000000001', 'moderator', true);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $review_and_comment_null_decision_guard$
+declare
+  queued_review record;
+  queued_comment record;
+begin
+  select * into queued_review
+  from public.list_pending_content_moderation(100, 0)
+  where target_type = 'review'
+    and target_id = '75100000-0000-4000-8000-000000000007';
+
+  select * into queued_comment
+  from public.list_pending_content_moderation(100, 0)
+  where target_type = 'review_comment'
+    and target_id = '75200000-0000-4000-8000-000000000007';
+
+  if queued_review.target_id is null or queued_comment.target_id is null then
+    raise exception 'Reported review or comment was absent from the moderation queue';
+  end if;
+
+  begin
+    perform public.decide_reported_review(
+      queued_review.target_id,
+      null,
+      'Runtime decision must be explicit.',
+      queued_review.updated_at
+    );
+    raise exception 'Null review decision bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid moderation decision' then
+        raise;
+      end if;
+  end;
+
+  begin
+    perform public.decide_reported_review_comment(
+      queued_comment.target_id,
+      null,
+      'Runtime decision must be explicit.',
+      queued_comment.updated_at
+    );
+    raise exception 'Null review-comment decision bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid moderation decision' then
+        raise;
+      end if;
+  end;
+
+end;
+$review_and_comment_null_decision_guard$;
+
+reset role;
+
+do $review_and_comment_null_decision_state$
+begin
+  if not exists (
+      select 1 from public.reviews review
+      where review.id = '75100000-0000-4000-8000-000000000007'
+        and review.moderation = 'approved'
+        and review.deleted_at is null
+    )
+    or not exists (
+      select 1 from public.review_profile_comments comment
+      where comment.id = '75200000-0000-4000-8000-000000000007'
+        and comment.moderation = 'approved'
+        and comment.deleted_at is null
+    )
+    or (
+      select count(*)
+      from public.content_reports report
+      where (report.target_type, report.target_id) in (
+        ('review', '75100000-0000-4000-8000-000000000007'::uuid),
+        ('review_comment', '75200000-0000-4000-8000-000000000007'::uuid)
+      )
+        and report.state = 'open'
+    ) <> 2
+  then
+    raise exception 'Null review decision changed content or report state';
+  end if;
+end;
+$review_and_comment_null_decision_state$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $reported_review_moderation$
+declare
+  queued record;
+  decision_updated_at timestamptz;
+begin
+  select * into queued
+  from public.list_pending_content_moderation(100, 0)
+  where target_type = 'review'
+    and target_id = '75100000-0000-4000-8000-000000000007';
+
+  if queued.target_id is null
+    or queued.context->>'reported' <> 'true'
+    or (queued.context->>'report_count')::integer <> 1
+  then
+    raise exception 'Reported approved review was absent from the moderation queue';
+  end if;
+
+  decision_updated_at := public.decide_reported_review(
+    queued.target_id,
+    'rejected',
+    'Runtime removal after reviewing the report.',
+    queued.updated_at
+  );
+
+  if decision_updated_at is null
+    or exists (
+      select 1 from public.public_reviews review
+      where review.review_id = queued.target_id
+    )
+  then
+    raise exception 'Reported review removal remained in the public projection';
+  end if;
+end;
+$reported_review_moderation$;
+
+do $business_post_null_decision_guard$
+declare
+  queued record;
+begin
+  select * into queued
+  from public.list_reported_business_posts(100, 0)
+  where target_id = '75400000-0000-4000-8000-000000000007';
+
+  if queued.target_id is null then
+    raise exception 'Reported business post was absent from the moderation queue';
+  end if;
+
+  begin
+    perform public.decide_reported_business_post(
+      queued.target_id,
+      null,
+      'Runtime decision must be explicit.',
+      queued.updated_at
+    );
+    raise exception 'Null business-post decision bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid moderation decision' then
+        raise;
+      end if;
+  end;
+
+end;
+$business_post_null_decision_guard$;
+
+reset role;
+
+do $business_post_null_decision_state$
+begin
+  if not exists (
+      select 1
+      from public.business_posts post
+      where post.id = '75400000-0000-4000-8000-000000000007'
+        and post.deleted_at is null
+    )
+    or not exists (
+      select 1
+      from public.content_reports report
+      where report.target_type = 'business_post'
+        and report.target_id = '75400000-0000-4000-8000-000000000007'
+        and report.state = 'open'
+    )
+  then
+    raise exception 'Null business-post decision changed post or report state';
+  end if;
+end;
+$business_post_null_decision_state$;
+
+do $reported_review_report_state$
+begin
+  if not exists (
+      select 1 from public.reviews review
+      where review.id = '75100000-0000-4000-8000-000000000007'
+        and review.moderation = 'removed'
+    )
+    or not exists (
+      select 1 from public.content_reports report
+      where report.target_type = 'review'
+        and report.target_id = '75100000-0000-4000-8000-000000000007'
+        and report.state = 'resolved'
+    )
+  then
+    raise exception 'Reported review removal was not atomic across review and report state';
+  end if;
+end;
+$reported_review_report_state$;
+
+-- Mobile vendors can submit several candidate pins and draft stops, but only
+-- the exact staff-reviewed selection may cross into public discovery.
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+insert into auth.users (
+  id, aud, role, email, email_confirmed_at, raw_app_meta_data,
+  raw_user_meta_data, created_at, updated_at
+) values (
+  'a1000000-0000-4000-8000-000000000001',
+  'authenticated', 'authenticated', 'runtime-mobile-admin@spottr.invalid', now(),
+  '{}'::jsonb,
+  '{"username":"runtime_mobile_admin","display_name":"Runtime Mobile Admin","terms_accepted":true}'::jsonb,
+  now(), now()
+);
+
+insert into private.platform_roles (user_id, role, active)
+values ('a1000000-0000-4000-8000-000000000001', 'admin', true);
+
+insert into public.businesses (
+  id, kind, name, slug, description, state, verification, provenance, created_by
+) values (
+  '79000000-0000-4000-8000-000000000009',
+  'food_truck',
+  'Runtime Route Truck',
+  'runtime-route-truck',
+  'A complete mobile vendor submission for runtime approval tests.',
+  'draft',
+  'pending',
+  'owner',
+  '10000000-0000-4000-8000-000000000001'
+);
+
+insert into public.business_members (
+  business_id, user_id, role, status, accepted_at
+) values (
+  '79000000-0000-4000-8000-000000000009',
+  '10000000-0000-4000-8000-000000000001',
+  'owner', 'active', now()
+);
+
+select public.create_media_stage_grant(
+  '10000000-0000-4000-8000-000000000001',
+  'quarantine/10000000-0000-4000-8000-000000000001/79100000-0000-4000-8000-000000000009.jpg',
+  'business_logo',
+  '79000000-0000-4000-8000-000000000009',
+  null,
+  'image/jpeg',
+  4096
+);
+
+insert into public.media_assets (
+  id, owner_id, business_id, storage_path, mime_type, width, height,
+  byte_size, sha256, source, quarantine_state, processed_storage_path,
+  scan_completed_at, moderation
+) values (
+  '79100000-0000-4000-8000-000000000009',
+  '10000000-0000-4000-8000-000000000001',
+  '79000000-0000-4000-8000-000000000009',
+  'quarantine/10000000-0000-4000-8000-000000000001/79100000-0000-4000-8000-000000000009.jpg',
+  'image/jpeg', 512, 512,
+  4096, repeat('e', 64), 'owner_upload', 'clean',
+  'published/runtime/mobile-review-logo-processed.jpg', now(), 'approved'
+);
+
+update public.businesses
+set logo_asset_id = '79100000-0000-4000-8000-000000000009'
+where id = '79000000-0000-4000-8000-000000000009';
+
+insert into public.business_private_details (
+  business_id, business_email
+) values (
+  '79000000-0000-4000-8000-000000000009',
+  'runtime-route-truck@spottr.invalid'
+);
+
+insert into public.business_locations (
+  id, business_id, label, address_line, city, region, postal_code,
+  point, is_primary, is_approximate, public_address, publication_state
+) values
+  (
+    '79200000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    'Runtime home route', '900 Runtime Avenue', 'Los Angeles', 'CA', '90009',
+    public.st_setsrid(public.st_makepoint(-118.250, 34.050), 4326)::public.geography,
+    true, false, true, 'private'
+  ),
+  (
+    '79300000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    'Runtime market stop', '910 Runtime Avenue', 'Los Angeles', 'CA', '90009',
+    public.st_setsrid(public.st_makepoint(-118.245, 34.055), 4326)::public.geography,
+    false, false, true, 'private'
+  ),
+  (
+    '79400000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    'Runtime unapproved stop', '920 Runtime Avenue', 'Los Angeles', 'CA', '90009',
+    public.st_setsrid(public.st_makepoint(-118.240, 34.060), 4326)::public.geography,
+    false, false, true, 'private'
+  );
+
+insert into public.weekly_hours (business_id, weekday, opens_at, closes_at, is_closed)
+select
+  '79000000-0000-4000-8000-000000000009',
+  weekday::smallint, '09:00'::time, '18:00'::time, false
+from generate_series(0, 6) weekday;
+
+insert into public.business_payments (business_id, payment)
+values ('79000000-0000-4000-8000-000000000009', 'cash');
+
+insert into public.menu_sections (id, business_id, name, is_published)
+values (
+  '79700000-0000-4000-8000-000000000009',
+  '79000000-0000-4000-8000-000000000009',
+  'Runtime truck menu', true
+);
+
+insert into public.menu_items (
+  id, section_id, name, price_minor, currency, availability, is_published
+) values (
+  '79800000-0000-4000-8000-000000000009',
+  '79700000-0000-4000-8000-000000000009',
+  'Runtime route plate', 1400, 'USD', 'available', true
+);
+
+insert into public.mobile_stops (
+  id, business_id, location_id, starts_at, ends_at, state
+) values
+  (
+    '79500000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    '79300000-0000-4000-8000-000000000009',
+    now() + interval '1 day', now() + interval '1 day 2 hours', 'draft'
+  ),
+  (
+    '79600000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    '79400000-0000-4000-8000-000000000009',
+    now() + interval '1 day 1 hour', now() + interval '1 day 3 hours', 'draft'
+  ),
+  (
+    '79900000-0000-4000-8000-000000000009',
+    '79000000-0000-4000-8000-000000000009',
+    '79200000-0000-4000-8000-000000000009',
+    now() - interval '2 hours', now() + interval '1 hour', 'draft'
+  );
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $mobile_owner_publication_guard$
+begin
+  begin
+    perform public.set_business_location_publication(
+      '79300000-0000-4000-8000-000000000009',
+      'published'
+    );
+    raise exception 'Mobile owner published an unreviewed secondary pin';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'MOBILE_SUBMISSION_SELECTION_REQUIRED' then raise; end if;
+  end;
+end;
+$mobile_owner_publication_guard$;
+
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+update public.businesses
+set state = 'pending'
+where id = '79000000-0000-4000-8000-000000000009';
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $mobile_review_aal_guard$
+begin
+  begin
+    perform public.get_pending_business_submission(
+      '79000000-0000-4000-8000-000000000009'
+    );
+    raise exception 'AAL1 administrator read an exact mobile submission';
+  exception
+    when insufficient_privilege then
+      if sqlerrm <> 'AAL2_REQUIRED' then raise; end if;
+  end;
+end;
+$mobile_review_aal_guard$;
+
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $mobile_submission_review_guards$
+declare
+  submission jsonb;
+begin
+  submission := public.get_pending_business_submission(
+    '79000000-0000-4000-8000-000000000009'
+  );
+  if jsonb_array_length(submission->'locations') <> 3
+    or jsonb_array_length(submission->'draft_stops') <> 3
+    or submission->'locations'->0->>'id' <> '79200000-0000-4000-8000-000000000009'
+    or submission ? 'business_email'
+    or submission ? 'business_phone'
+  then
+    raise exception 'Pending mobile submission detail was incomplete or leaked private contact data';
+  end if;
+
+  begin
+    perform public.set_business_publication(
+      '79000000-0000-4000-8000-000000000009',
+      'published', 'verified', 'Legacy mobile approval must be rejected.'
+    );
+    raise exception 'Legacy publication bypassed explicit mobile selection';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'MOBILE_SUBMISSION_SELECTION_REQUIRED' then raise; end if;
+  end;
+
+  begin
+    perform public.review_business_submission(
+      '79000000-0000-4000-8000-000000000009',
+      array['79200000-0000-4000-8000-000000000009']::uuid[],
+      array['79900000-0000-4000-8000-000000000009']::uuid[],
+      'Reject an expired initial stop window.'
+    );
+    raise exception 'Mobile review accepted a stale initial stop';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Approved mobile stop selection is invalid' then raise; end if;
+  end;
+
+  begin
+    perform public.review_business_submission(
+      '79000000-0000-4000-8000-000000000009',
+      array['79300000-0000-4000-8000-000000000009']::uuid[],
+      '{}'::uuid[],
+      'Reject selection without the primary pin.'
+    );
+    raise exception 'Mobile review accepted a selection without the primary pin';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Primary location approval is required' then raise; end if;
+  end;
+
+  begin
+    perform public.review_business_submission(
+      '79000000-0000-4000-8000-000000000009',
+      array[
+        '79200000-0000-4000-8000-000000000009',
+        '79300000-0000-4000-8000-000000000009',
+        '79400000-0000-4000-8000-000000000009'
+      ]::uuid[],
+      array[
+        '79500000-0000-4000-8000-000000000009',
+        '79600000-0000-4000-8000-000000000009'
+      ]::uuid[],
+      'Reject overlapping initial mobile stops.'
+    );
+    raise exception 'Mobile review accepted overlapping initial stops';
+  exception
+    when sqlstate '23P01' then
+      if sqlerrm <> 'MOBILE_STOP_TIME_OVERLAP' then raise; end if;
+  end;
+
+  begin
+    perform public.review_business_submission(
+      '79000000-0000-4000-8000-000000000009',
+      array[
+        '79200000-0000-4000-8000-000000000009',
+        '79300000-0000-4000-8000-000000000009'
+      ]::uuid[],
+      array['79500000-0000-4000-8000-000000000009']::uuid[],
+      'Require a complete verified contact before approval.'
+    );
+    raise exception 'Mobile review published a submission without complete contact data';
+  exception
+    when sqlstate '23514' then
+      if sqlerrm <> 'SUBMISSION_MISSING_CONTACT' then raise; end if;
+  end;
+
+  if exists (
+      select 1 from public.businesses business
+      where business.id = '79000000-0000-4000-8000-000000000009'
+        and business.state <> 'pending'
+    )
+    or exists (
+      select 1 from public.business_locations location
+      where location.business_id = '79000000-0000-4000-8000-000000000009'
+        and location.publication_state <> 'private'
+    )
+    or exists (
+      select 1 from public.mobile_stops stop
+      where stop.business_id = '79000000-0000-4000-8000-000000000009'
+        and (stop.state <> 'draft' or stop.confirmed_at is not null)
+    )
+  then
+    raise exception 'Rejected mobile review did not roll back atomically';
+  end if;
+end;
+$mobile_submission_review_guards$;
+
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+update public.business_private_details
+set business_phone = '+12135550199'
+where business_id = '79000000-0000-4000-8000-000000000009';
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+select public.review_business_submission(
+  '79000000-0000-4000-8000-000000000009',
+  array[
+    '79200000-0000-4000-8000-000000000009',
+    '79300000-0000-4000-8000-000000000009'
+  ]::uuid[],
+  array['79500000-0000-4000-8000-000000000009']::uuid[],
+  'Approved the primary pin, reviewed market location, and verified the initial schedule.'
+);
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+do $mobile_submission_review_state$
+begin
+  if not exists (
+      select 1 from public.businesses business
+      where business.id = '79000000-0000-4000-8000-000000000009'
+        and business.state = 'published'
+        and business.verification = 'verified'
+    )
+    or (
+      select count(*) from public.business_locations location
+      where location.business_id = '79000000-0000-4000-8000-000000000009'
+        and location.publication_state = 'published'
+    ) <> 2
+    or not exists (
+      select 1 from public.business_locations location
+      where location.id = '79400000-0000-4000-8000-000000000009'
+        and location.publication_state = 'private'
+    )
+    or not exists (
+      select 1 from public.mobile_stops stop
+      where stop.id = '79500000-0000-4000-8000-000000000009'
+        and stop.state = 'scheduled'
+        and stop.confirmed_at is not null
+    )
+    or not exists (
+      select 1 from public.mobile_stops stop
+      where stop.id = '79600000-0000-4000-8000-000000000009'
+        and stop.state = 'draft'
+        and stop.confirmed_at is null
+    )
+    or not exists (
+      select 1 from public.mobile_stops stop
+      where stop.id = '79900000-0000-4000-8000-000000000009'
+        and stop.state = 'draft'
+        and stop.confirmed_at is null
+    )
+    or not exists (
+      select 1 from public.audit_events event
+      where event.actor_id = 'a1000000-0000-4000-8000-000000000001'
+        and event.business_id = '79000000-0000-4000-8000-000000000009'
+        and event.event_type = 'business.submission_approved'
+    )
+  then
+    raise exception 'Approved mobile submission did not preserve its exact reviewed state';
+  end if;
+end;
+$mobile_submission_review_state$;
+
+insert into private.business_revision_requests (
+  id, business_id, requested_by, base_updated_at, proposed_patch
+)
+select
+  '79a00000-0000-4000-8000-000000000009',
+  business.id,
+  '10000000-0000-4000-8000-000000000001',
+  business.updated_at,
+  '{"profile":{"description":"A null decision must never apply this revision."}}'::jsonb
+from public.businesses business
+where business.id = '79000000-0000-4000-8000-000000000009';
+
+insert into private.business_invitations (
+  id, business_id, target_type, target_normalized, target_hint,
+  target_user_id, role, state, invited_by, expires_at
+) values (
+  '79b00000-0000-4000-8000-000000000009',
+  '79000000-0000-4000-8000-000000000009',
+  'username', 'runtime_b', 'r***b',
+  '20000000-0000-4000-8000-000000000002',
+  'staff', 'pending', '10000000-0000-4000-8000-000000000001',
+  now() + interval '7 days'
+);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $business_revision_null_decision$
+begin
+  begin
+    perform public.review_business_revision(
+      '79a00000-0000-4000-8000-000000000009',
+      null,
+      'An explicit review decision is required.'
+    );
+    raise exception 'Null business revision decision bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid revision decision' then
+        raise;
+      end if;
+  end;
+end;
+$business_revision_null_decision$;
+
+reset role;
+do $business_revision_null_state$
+begin
+  if not exists (
+      select 1
+      from private.business_revision_requests revision
+      where revision.id = '79a00000-0000-4000-8000-000000000009'
+        and revision.state = 'pending'
+        and revision.reviewed_at is null
+    )
+    or exists (
+      select 1
+      from public.businesses business
+      where business.id = '79000000-0000-4000-8000-000000000009'
+        and business.description = 'A null decision must never apply this revision.'
+    )
+  then
+    raise exception 'Null business revision decision changed revision or business state';
+  end if;
+end;
+$business_revision_null_state$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $business_invitation_null_decision$
+begin
+  begin
+    perform public.respond_business_invitation(
+      '79b00000-0000-4000-8000-000000000009',
+      null
+    );
+    raise exception 'Null business invitation response bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Invalid invitation decision' then
+        raise;
+      end if;
+  end;
+end;
+$business_invitation_null_decision$;
+
+reset role;
+do $business_invitation_null_state$
+begin
+  if not exists (
+    select 1
+    from private.business_invitations invitation
+    where invitation.id = '79b00000-0000-4000-8000-000000000009'
+      and invitation.state = 'pending'
+      and invitation.responded_at is null
+  ) then
+    raise exception 'Null business invitation response changed invitation state';
+  end if;
+end;
+$business_invitation_null_state$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $creator_invitation_null_acknowledgment$
+begin
+  begin
+    perform public.send_creator_invitation(
+      '79000000-0000-4000-8000-000000000009',
+      '79c00000-0000-4000-8000-000000000009',
+      'Runtime invitation',
+      'This invitation never requires a favorable review.',
+      now() + interval '1 day',
+      now() + interval '1 day 2 hours',
+      null,
+      'spottr:invite:runtime-null-ack'
+    );
+    raise exception 'Null creator invitation acknowledgment bypassed validation';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'Review independence acknowledgment required' then
+        raise;
+      end if;
+  end;
+end;
+$creator_invitation_null_acknowledgment$;
+
+reset role;
+
+set local role anon;
+do $mobile_submission_public_projection$
+begin
+  if not exists (
+      select 1 from public.public_business_directory directory
+      where directory.business_id = '79000000-0000-4000-8000-000000000009'
+    )
+    or (
+      select count(*) from public.public_business_locations location
+      where location.business_id = '79000000-0000-4000-8000-000000000009'
+    ) <> 2
+    or exists (
+      select 1 from public.public_business_locations location
+      where location.location_id = '79400000-0000-4000-8000-000000000009'
+    )
+    or (
+      select count(*) from public.mobile_stops stop
+      where stop.business_id = '79000000-0000-4000-8000-000000000009'
+    ) <> 1
+    or not exists (
+      select 1 from public.mobile_stops stop
+      where stop.id = '79500000-0000-4000-8000-000000000009'
+    )
+  then
+    raise exception 'Anonymous discovery did not match the reviewed mobile selection';
+  end if;
+end;
+$mobile_submission_public_projection$;
+reset role;
+
+-- The reviewed logo fixture is complete at this point. Retire only its
+-- serialized upload capability so it cannot leak into the independent
+-- account-deletion seal scenarios later in this rollback-only test.
+update private.media_stage_grants
+set
+  state = 'cancelled',
+  registered_asset_id = null,
+  updated_at = now()
+where storage_path =
+  'quarantine/10000000-0000-4000-8000-000000000001/79100000-0000-4000-8000-000000000009.jpg';
+
+insert into public.pricing_versions (
+  id, version, region_code, currency, click_floor_minor, click_ceiling_minor,
+  state, effective_at, approval_reference, approved_at
+) values (
+  '76000000-0000-4000-8000-000000000007', 'runtime-v1', 'US', 'USD',
+  25, 500, 'approved', now() - interval '1 day',
+  'runtime pricing approval', now() - interval '1 day'
+);
+
+insert into public.business_members (
+  business_id, user_id, role, status, accepted_at
+) values
+  (
+    '70000000-0000-4000-8000-000000000007',
+    '10000000-0000-4000-8000-000000000001',
+    'owner', 'active', now()
+  ),
+  (
+    '70000000-0000-4000-8000-000000000007',
+    '20000000-0000-4000-8000-000000000002',
+    'staff', 'active', now()
+  );
+
+-- Exercise merchant authoring as an AAL2 owner. This stays inside the
+-- rollback-only runtime fixture so it cannot create production data.
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $sponsored_authoring$
+declare
+  quote jsonb;
+  draft_public_id uuid;
+  replay_public_id uuid;
+  expected_updated_at timestamptz;
+  submit_result text;
+begin
+  quote := public.get_sponsored_campaign_quote(
+    '70000000-0000-4000-8000-000000000007'
+  );
+  if quote is null
+    or quote->>'currency' <> 'USD'
+    or quote->>'disclosure' <> 'Sponsored ad'
+    or quote->>'term_days' <> '30'
+  then
+    raise exception 'Sponsored campaign quote was not server-authoritative';
+  end if;
+
+  draft_public_id := public.create_sponsored_campaign_draft(
+    '70000000-0000-4000-8000-000000000007',
+    15000, 1609, now() + interval '1 hour',
+    'spottr:sponsor:runtime-authoring-0001'
+  );
+  replay_public_id := public.create_sponsored_campaign_draft(
+    '70000000-0000-4000-8000-000000000007',
+    15000, 1609, now() + interval '1 hour',
+    'spottr:sponsor:runtime-authoring-0001'
+  );
+  if replay_public_id <> draft_public_id then
+    raise exception 'Sponsored draft replay was not idempotent';
+  end if;
+
+  begin
+    perform public.create_sponsored_campaign_draft(
+      '70000000-0000-4000-8000-000000000007',
+      15000, 3218, now() + interval '1 hour',
+      'spottr:sponsor:runtime-authoring-0001'
+    );
+    raise exception 'Sponsored idempotency key was accepted for a different payload';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'IDEMPOTENCY_KEY_REUSED' then raise; end if;
+  end;
+
+  begin
+    perform public.create_sponsored_campaign_draft(
+      '70000000-0000-4000-8000-000000000007',
+      15000, 1609, null,
+      'spottr:sponsor:runtime-authoring-null'
+    );
+    raise exception 'Sponsored authoring accepted a NULL campaign start';
+  exception
+    when sqlstate '22023' then null;
+  end;
+
+  select campaign.updated_at into expected_updated_at
+  from public.ad_campaigns campaign
+  where campaign.public_id = draft_public_id;
+  submit_result := public.submit_sponsored_campaign(
+    draft_public_id, expected_updated_at
+  );
+  if submit_result <> 'submitted' then
+    raise exception 'Sponsored campaign did not submit from a valid draft';
+  end if;
+  perform pg_catalog.set_config(
+    'spottr.runtime.sponsor_campaign_id', draft_public_id::text, true
+  );
+  select campaign.updated_at into expected_updated_at
+  from public.ad_campaigns campaign
+  where campaign.public_id = draft_public_id;
+  perform pg_catalog.set_config(
+    'spottr.runtime.sponsor_campaign_updated_at', expected_updated_at::text, true
+  );
+end;
+$sponsored_authoring$;
+
+reset role;
+
+-- A staff member may not read campaign financials or terminate a campaign.
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $sponsored_staff_boundary$
+declare
+  visible_campaigns integer;
+begin
+  select count(*) into visible_campaigns from public.ad_campaigns;
+  if visible_campaigns <> 0 then
+    raise exception 'Staff unexpectedly read sponsored campaign financials';
+  end if;
+  begin
+    perform public.end_sponsored_campaign(
+      current_setting('spottr.runtime.sponsor_campaign_id')::uuid,
+      current_setting('spottr.runtime.sponsor_campaign_updated_at')::timestamptz
+    );
+    raise exception 'Staff unexpectedly terminated a sponsored campaign';
+  exception
+    when sqlstate '42501' then null;
+  end;
+end;
+$sponsored_staff_boundary$;
+
+reset role;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $sponsored_owner_end$
+declare
+  end_result text;
+begin
+  end_result := public.end_sponsored_campaign(
+    current_setting('spottr.runtime.sponsor_campaign_id')::uuid,
+    current_setting('spottr.runtime.sponsor_campaign_updated_at')::timestamptz
+  );
+  if end_result <> 'ended' then
+    raise exception 'Owner could not end a submitted sponsored campaign';
+  end if;
+end;
+$sponsored_owner_end$;
+
+reset role;
+
+insert into public.ad_campaigns (
+  id, business_id, billing_model, state, currency, bid_cap_minor,
+  daily_budget_minor, lifetime_budget_minor, pricing_version_id,
+  starts_at, ends_at, approved_at, approval_reference
+) values (
+  '77000000-0000-4000-8000-000000000007',
+  '70000000-0000-4000-8000-000000000007', 'shadow', 'active', 'USD',
+  100, 1000, 10000, '76000000-0000-4000-8000-000000000007',
+  now() - interval '1 hour', now() + interval '1 day', now() - interval '1 hour',
+  'runtime campaign approval'
+);
+
+insert into public.ad_targets (
+  campaign_id, business_kinds, center, radius_meters
+) values (
+  '77000000-0000-4000-8000-000000000007',
+  array['restaurant']::public.business_kind[],
+  public.st_setsrid(public.st_makepoint(-118.24, 34.05), 4326)::public.geography,
+  10000
+);
+
+insert into public.ad_creatives (
+  id, campaign_id, business_id, moderation, moderation_version
+) values (
+  '78000000-0000-4000-8000-000000000007',
+  '77000000-0000-4000-8000-000000000007',
+  '70000000-0000-4000-8000-000000000007', 'approved', 'runtime-v1'
+);
+
+update private.ad_runtime_config
+set enabled = true,
+    shadow_only = true,
+    approval_reference = 'runtime shadow-only approval',
+    updated_at = now()
+where singleton;
+
+-- The private pickup is exactly at the request origin, but its public
+-- projection is snapped away from that coordinate. Sponsored selection must
+-- use the redacted projection and therefore return no placement within 500m.
+set local role service_role;
+do $sponsored_redacted_location_boundary$
+declare
+  result jsonb;
+begin
+  result := public.select_sponsored_placement(
+    'discover', 34.043, -118.237, 500,
+    array['restaurant']::public.business_kind[],
+    repeat('c', 64), repeat('d', 64), null
+  );
+  if result is not null then
+    raise exception 'Sponsored selector exposed a raw redacted location';
+  end if;
+end;
+$sponsored_redacted_location_boundary$;
+reset role;
+
+create temporary table runtime_sponsored_result (payload jsonb not null);
+grant select, insert on runtime_sponsored_result to service_role, anon;
+
+set local role service_role;
+insert into runtime_sponsored_result (payload)
+select public.select_sponsored_placement(
+  'discover', 34.05, -118.24, 16093,
+  array['food_truck', 'restaurant', 'pop_up', 'cafe_bakery']::public.business_kind[],
+  repeat('a', 64), repeat('b', 64), null
+);
+reset role;
+
+do $sponsored_selection$
+declare
+  result jsonb;
+  selected_decision_id uuid;
+begin
+  select payload into result from runtime_sponsored_result;
+  selected_decision_id := (result->>'placement_id')::uuid;
+  if result->>'business_id' <> '70000000-0000-4000-8000-000000000007'
+    or result->>'disclosure' <> 'Sponsored ad'
+    or result->>'placement_token' !~ '^[0-9a-f-]{36}\.[0-9]{10}\.[0-9a-f]{64}$'
+  then
+    raise exception 'Sponsored selector returned an invalid public projection';
+  end if;
+  if exists (
+      select 1 from private.ad_events event
+      where event.decision_id = selected_decision_id
+    )
+    or exists (
+      select 1 from private.ad_budget_reservations reservation
+      where reservation.decision_id = selected_decision_id
+    )
+  then
+    raise exception 'Sponsored selection recorded an unseen impression or reservation';
+  end if;
+end;
+$sponsored_selection$;
+
+insert into private.provider_location_sources (
+  provider_slug,
+  business_external_id,
+  location_external_id,
+  materialized_location_id,
+  source_status,
+  source_updated_at,
+  source_url,
+  license_agreement_id,
+  normalized_payload,
+  normalized_payload_hash
+) values (
+  'runtime_provider',
+  'runtime-missing-listing',
+  'runtime-primary-location',
+  '73000000-0000-4000-8000-000000000007',
+  'active',
+  now(),
+  null,
+  'runtime-license',
+  '{"externalId":"runtime-primary-location"}'::jsonb,
+  repeat('e', 64)
+);
+
+create temporary table runtime_sponsored_stale_result (payload jsonb not null);
+grant select, insert on runtime_sponsored_stale_result to service_role;
+
+set local role service_role;
+insert into runtime_sponsored_stale_result (payload)
+select public.select_sponsored_placement(
+  'discover', 34.05, -118.24, 16093,
+  array['restaurant']::public.business_kind[],
+  repeat('e', 64), repeat('f', 64), null
+);
+reset role;
+
+update private.provider_location_sources
+set source_status = 'missing',
+    missing_since = now()
+where provider_slug = 'runtime_provider'
+  and business_external_id = 'runtime-missing-listing'
+  and location_external_id = 'runtime-primary-location';
+
+create temporary table runtime_sponsored_stale_receipt (payload jsonb not null);
+grant select, insert on runtime_sponsored_stale_receipt to service_role;
+
+set local role service_role;
+insert into runtime_sponsored_stale_receipt (payload)
+select public.record_sponsored_interaction(
+  stale.payload->>'placement_token',
+  'impression',
+  'runtime:sponsor:stale-location',
+  repeat('f', 64)
+)
+from runtime_sponsored_stale_result stale;
+reset role;
+
+do $sponsored_location_revalidation$
+declare
+  selected_decision_id uuid;
+  receipt jsonb;
+begin
+  select
+    (payload->>'placement_id')::uuid
+  into selected_decision_id
+  from runtime_sponsored_stale_result;
+  select payload into receipt from runtime_sponsored_stale_receipt;
+  if receipt->>'accepted' <> 'false'
+    or not exists (
+      select 1 from private.ad_events event
+      where event.decision_id = selected_decision_id
+        and event.event_type = 'impression'
+        and not event.valid
+        and event.invalid_reason = 'location_ineligible'
+    )
+    or exists (
+      select 1 from private.ad_budget_reservations reservation
+      where reservation.decision_id = selected_decision_id
+    )
+  then
+    raise exception 'Sponsored impression ignored a withdrawn public location';
+  end if;
+end;
+$sponsored_location_revalidation$;
+
+update private.provider_location_sources
+set source_status = 'active',
+    missing_since = null,
+    last_seen_at = now()
+where provider_slug = 'runtime_provider'
+  and business_external_id = 'runtime-missing-listing'
+  and location_external_id = 'runtime-primary-location';
+
+set local role service_role;
+do $sponsored_public_boundary$
+declare
+  token text;
+  impression_receipt jsonb;
+  duplicate_impression_receipt jsonb;
+  first_receipt jsonb;
+  duplicate_receipt jsonb;
+begin
+  select payload->>'placement_token' into token from runtime_sponsored_result;
+  begin
+    perform public.record_sponsored_interaction(
+      token, 'impression', 'runtime:sponsor:subject-mismatch', repeat('e', 64)
+    );
+    raise exception 'Sponsored interaction accepted a different subject digest';
+  exception
+    when sqlstate '22023' then
+      if sqlerrm <> 'SPONSORED_TOKEN_EXPIRED' then raise; end if;
+  end;
+  impression_receipt := public.record_sponsored_interaction(
+    token, 'impression', 'runtime:sponsor:impression:0001', repeat('b', 64)
+  );
+  duplicate_impression_receipt := public.record_sponsored_interaction(
+    token, 'impression', 'runtime:sponsor:impression:0002', repeat('b', 64)
+  );
+  first_receipt := public.record_sponsored_interaction(
+    token, 'open', 'runtime:sponsor:open:0001', repeat('b', 64)
+  );
+  duplicate_receipt := public.record_sponsored_interaction(
+    token, 'open', 'runtime:sponsor:open:0002', repeat('b', 64)
+  );
+  if impression_receipt->>'accepted' <> 'true'
+    or impression_receipt->>'duplicate' <> 'false'
+    or duplicate_impression_receipt->>'accepted' <> 'true'
+    or duplicate_impression_receipt->>'duplicate' <> 'true'
+    or first_receipt->>'accepted' <> 'true'
+    or first_receipt->>'billed' <> 'false'
+    or first_receipt->>'duplicate' <> 'false'
+    or duplicate_receipt->>'duplicate' <> 'true'
+    or duplicate_receipt->>'billed' <> 'false'
+  then
+    raise exception 'Shadow sponsored interaction was not safely idempotent';
+  end if;
+end;
+$sponsored_public_boundary$;
+reset role;
+
+set local role anon;
+do $sponsored_direct_rpc_denial$
+declare
+  token text;
+begin
+  select payload->>'placement_token' into token from runtime_sponsored_result;
+
+  begin
+    perform public.record_sponsored_interaction(
+      token, 'impression', 'runtime:sponsor:direct-denial', repeat('b', 64)
+    );
+    raise exception 'Anonymous role unexpectedly recorded a sponsored interaction';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform public.select_sponsored_placement(
+      'discover', 34.05, -118.24, 16093,
+      array['restaurant']::public.business_kind[],
+      repeat('a', 64), repeat('b', 64), null
+    );
+    raise exception 'Anonymous role unexpectedly selected a sponsored placement';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform 1 from private.billing_ledger limit 1;
+    raise exception 'Anonymous role unexpectedly read the billing ledger';
+  exception
+    when insufficient_privilege then null;
+  end;
+end;
+$sponsored_direct_rpc_denial$;
+reset role;
+
+do $sponsored_financial_state$
+begin
+  if exists (select 1 from private.billing_ledger) then
+    raise exception 'Shadow-only sponsored interaction created a financial debit';
+  end if;
+  if not exists (
+    select 1 from private.ad_budget_reservations
+    where campaign_id = '77000000-0000-4000-8000-000000000007'
+      and state = 'released'
+  ) then
+    raise exception 'Shadow sponsored interaction did not release its reservation';
+  end if;
+end;
+$sponsored_financial_state$;
+
+set local role service_role;
+do $sponsored_reconcile$
+declare result jsonb;
+begin
+  result := public.reconcile_sponsored_reservations(100);
+  if result->>'released' <> '0'
+    or result->>'more_work' <> 'false'
+    or result->>'skipped' <> 'false'
+  then
+    raise exception 'Sponsored reservation reconciliation returned an unsafe result';
+  end if;
+end;
+$sponsored_reconcile$;
+reset role;
+
+insert into private.account_deletion_requests (
+  id,
+  user_id,
+  request_fingerprint,
+  state,
+  expires_at
+)
+values (
+  '30000000-0000-4000-8000-000000000003',
+  '20000000-0000-4000-8000-000000000002',
+  repeat('b', 64),
+  'started',
+  now() + interval '24 hours'
+);
+
+insert into private.account_deletion_freezes (user_id, request_id)
+values (
+  '20000000-0000-4000-8000-000000000002',
+  '30000000-0000-4000-8000-000000000003'
+);
+
+select public.advance_account_deletion(
+  '30000000-0000-4000-8000-000000000003',
+  'processing',
+  null
+);
+
+insert into private.account_deletion_storage_items (
+  request_id,
+  storage_path,
+  state
+)
+values (
+  '30000000-0000-4000-8000-000000000003',
+  'published/runtime/deleted.jpg',
+  'pending'
+);
+
+do $storage_checkpoint$
+declare
+  checkpoint jsonb;
+begin
+  checkpoint := public.checkpoint_account_deletion_storage_batch(
+    '30000000-0000-4000-8000-000000000003',
+    '20000000-0000-4000-8000-000000000002',
+    array['published/runtime/deleted.jpg']::text[]
+  );
+  if checkpoint->>'storage_complete' <> 'true' then
+    raise exception 'Valid account deletion storage receipt did not checkpoint';
+  end if;
+end;
+$storage_checkpoint$;
+
+select public.advance_account_deletion(
+  '30000000-0000-4000-8000-000000000003',
+  'storage_deleted',
+  null
+);
+
+-- Failure injection: Auth deletion succeeds, but the completion receipt is
+-- deliberately left at storage_deleted until the autonomous worker recovers it.
+delete from auth.users
+where id = '20000000-0000-4000-8000-000000000002';
+
+do $orphaned_receipt$
+begin
+  if not exists (
+    select 1
+    from private.account_deletion_requests request
+    where request.id = '30000000-0000-4000-8000-000000000003'
+      and request.user_id is null
+      and request.state = 'storage_deleted'
+  ) then
+    raise exception 'Auth deletion did not leave the expected recoverable receipt';
+  end if;
+end;
+$orphaned_receipt$;
+
+set local role authenticated;
+
+do $receipt_privilege$
+begin
+  begin
+    perform public.finalize_account_deletion_receipt(
+      '30000000-0000-4000-8000-000000000003'
+    );
+    raise exception 'Authenticated role unexpectedly finalized a deletion receipt';
+  exception
+    when insufficient_privilege then null;
+  end;
+end;
+$receipt_privilege$;
+
+reset role;
+set local role service_role;
+
+do $receipt_recovery$
+declare
+  recovered_id uuid;
+begin
+  select receipt.request_id
+  into recovered_id
+  from public.finalize_next_account_deletion_receipt() receipt;
+
+  if recovered_id is distinct from '30000000-0000-4000-8000-000000000003'::uuid then
+    raise exception 'Autonomous receipt recovery did not finalize the orphaned request';
+  end if;
+
+  if not public.finalize_account_deletion_receipt(recovered_id) then
+    raise exception 'Exact receipt finalization is not idempotent';
+  end if;
+end;
+$receipt_recovery$;
+
+reset role;
+
+do $receipt_completed$
+begin
+  if not exists (
+    select 1
+    from private.account_deletion_requests request
+    where request.id = '30000000-0000-4000-8000-000000000003'
+      and request.user_id is null
+      and request.state = 'completed'
+  ) then
+    raise exception 'Recovered account deletion receipt was not completed';
+  end if;
+end;
+$receipt_completed$;
+
+insert into private.account_deletion_requests (
+  id,
+  user_id,
+  request_fingerprint,
+  state,
+  expires_at
+)
+values
+  (
+    '40000000-0000-4000-8000-000000000004',
+    '10000000-0000-4000-8000-000000000001',
+    repeat('c', 64),
+    'started',
+    now() + interval '24 hours'
+  ),
+  (
+    '50000000-0000-4000-8000-000000000005',
+    '60000000-0000-4000-8000-000000000006',
+    repeat('d', 64),
+    'started',
+    now() + interval '24 hours'
+  );
+
+insert into private.account_deletion_freezes (user_id, request_id)
+values
+  (
+    '10000000-0000-4000-8000-000000000001',
+    '40000000-0000-4000-8000-000000000004'
+  ),
+  (
+    '60000000-0000-4000-8000-000000000006',
+    '50000000-0000-4000-8000-000000000005'
+  );
+
+select public.advance_account_deletion(
+  '40000000-0000-4000-8000-000000000004',
+  'processing',
+  null
+);
+select public.advance_account_deletion(
+  '40000000-0000-4000-8000-000000000004',
+  'storage_deleted',
+  null
+);
+select public.advance_account_deletion(
+  '50000000-0000-4000-8000-000000000005',
+  'processing',
+  null
+);
+select public.advance_account_deletion(
+  '50000000-0000-4000-8000-000000000005',
+  'storage_deleted',
+  null
+);
+
+insert into private.account_deletion_storage_items (
+  request_id,
+  storage_path,
+  state
+)
+values (
+  '50000000-0000-4000-8000-000000000005',
+  'published/runtime/pending.jpg',
+  'pending'
+);
+
+do $storage_path_contract$
+begin
+  if not private.is_valid_media_storage_path('published/runtime/pending.jpg')
+    or private.is_valid_media_storage_path('published/runtime/../escape.jpg')
+    or private.is_valid_media_storage_path('quarantine/' || repeat('a', 502))
+  then
+    raise exception 'Media storage path validation does not enforce the bounded safe contract';
+  end if;
+
+  begin
+    insert into private.account_deletion_storage_items (
+      request_id,
+      storage_path,
+      state
+    )
+    values (
+      '50000000-0000-4000-8000-000000000005',
+      'published/runtime/../escape.jpg',
+      'pending'
+    );
+    raise exception 'Account deletion storage accepted an unsafe path';
+  exception
+    when check_violation then null;
+  end;
+end;
+$storage_path_contract$;
+
+do $effective_storage_functions$
+declare
+  definitions text;
+begin
+  definitions := pg_catalog.pg_get_functiondef(
+      'public.prepare_media_cleanup_batch()'::regprocedure
+    ) || pg_catalog.pg_get_functiondef(
+      'public.finalize_media_cleanup_batch(uuid,text[])'::regprocedure
+    ) || pg_catalog.pg_get_functiondef(
+      'public.checkpoint_account_deletion_storage_batch(uuid,uuid,text[])'::regprocedure
+    );
+
+  if position('{0,499}' in definitions) > 0
+    or position('{0,510}' in definitions) > 0
+    or position('private.is_valid_media_storage_path' in definitions) = 0
+  then
+    raise exception 'Effective media functions retain an unsupported regex bound';
+  end if;
+end;
+$effective_storage_functions$;
+
+delete from auth.users
+where id = '60000000-0000-4000-8000-000000000006';
+
+set local role service_role;
+
+do $receipt_rejections$
+begin
+  begin
+    perform public.finalize_account_deletion_receipt(
+      '40000000-0000-4000-8000-000000000004'
+    );
+    raise exception 'Receipt finalization accepted a request with a live Auth user';
+  exception
+    when sqlstate '55000' then null;
+  end;
+
+  begin
+    perform public.finalize_account_deletion_receipt(
+      '50000000-0000-4000-8000-000000000005'
+    );
+    raise exception 'Receipt finalization accepted pending storage';
+  exception
+    when sqlstate '55000' then null;
+  end;
+
+  if exists (
+    select 1
+    from public.finalize_next_account_deletion_receipt()
+  ) then
+    raise exception 'Queue finalization accepted an unsealed orphan receipt';
+  end if;
+end;
+$receipt_rejections$;
+
+-- Public discovery is reachable only through the service-role proxy.  The
+-- proxy supplies HMAC digests; this runtime drill never inserts a raw IP.
+set local role anon;
+
+do $public_discovery_denial$
+begin
+  begin
+    perform public.acquire_public_discovery_lease(
+      'map', repeat('a', 64), null, repeat('b', 64)
+    );
+    raise exception 'Anonymous role unexpectedly acquired a discovery lease';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform public.release_public_discovery_lease(repeat('b', 64));
+    raise exception 'Anonymous role unexpectedly released a discovery lease';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform public.attach_public_discovery_account(
+      repeat('b', 64), repeat('c', 64)
+    );
+    raise exception 'Anonymous role unexpectedly attached a discovery account';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    perform public.cleanup_public_discovery_leases();
+    raise exception 'Anonymous role unexpectedly cleaned discovery leases';
+  exception
+    when insufficient_privilege then null;
+  end;
+end;
+$public_discovery_denial$;
+
+reset role;
+
+do $public_discovery_privileges$
+begin
+  if has_function_privilege(
+      'anon',
+      'public.map_food_places(double precision,double precision,double precision,double precision,integer,text[],integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.map_food_places(double precision,double precision,double precision,double precision,integer,text[],integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.nearby_businesses(double precision,double precision,integer,integer,integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.nearby_businesses(double precision,double precision,integer,integer,integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'public.search_businesses(text,integer,integer)',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.search_businesses(text,integer,integer)',
+      'execute'
+    )
+  then
+    raise exception 'Anonymous or authenticated discovery execution was not revoked';
+  end if;
+
+  if not has_function_privilege(
+      'service_role',
+      'public.map_food_places(double precision,double precision,double precision,double precision,integer,text[],integer)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.nearby_businesses(double precision,double precision,integer,integer,integer)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.search_businesses(text,integer,integer)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.acquire_public_discovery_lease(text,text,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.attach_public_discovery_account(text,text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.release_public_discovery_lease(text)',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.cleanup_public_discovery_leases()',
+      'execute'
+    )
+  then
+    raise exception 'Service role lost a discovery query grant';
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.pg_attribute attribute
+    join pg_catalog.pg_class relation on relation.oid = attribute.attrelid
+    join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'private'
+      and relation.relname in (
+        'public_discovery_rate_buckets',
+        'public_discovery_leases'
+      )
+      and attribute.attnum > 0
+      and not attribute.attisdropped
+      and pg_catalog.format_type(attribute.atttypid, attribute.atttypmod) in ('inet', 'cidr')
+  ) then
+    raise exception 'Public discovery state stores a raw network address';
+  end if;
+end;
+$public_discovery_privileges$;
+
+set local role service_role;
+
+do $public_discovery_service_execution$
+declare
+  lease_response jsonb;
+  attach_response jsonb;
+  generated_lease text;
+  map_lease text;
+  search_lease text;
+begin
+  lease_response := public.acquire_public_discovery_lease(
+    'nearby', repeat('f', 64), null
+  );
+  generated_lease := lease_response->>'lease_hmac';
+  if generated_lease is null or generated_lease !~ '^[0-9a-f]{64}$' then
+    raise exception 'Service role did not receive a generated lease digest';
+  end if;
+
+  attach_response := public.attach_public_discovery_account(
+    generated_lease, repeat('e', 64)
+  );
+  if not coalesce((attach_response->>'attached')::boolean, false)
+    or attach_response->>'operation' <> 'nearby'
+  then
+    raise exception 'Service role did not attach an account quota';
+  end if;
+
+  perform 1 from public.nearby_businesses(34.0, -118.4, 500, 1, 0) limit 1;
+  if not (public.release_public_discovery_lease(generated_lease)->>'released')::boolean then
+    raise exception 'Service role could not release a generated lease';
+  end if;
+
+  map_lease := public.acquire_public_discovery_lease(
+    'map', repeat('1', 64), null
+  )->>'lease_hmac';
+  if map_lease = generated_lease then
+    raise exception 'Generated discovery lease digests were not unique';
+  end if;
+  perform 1 from public.map_food_places(
+    -118.5, 33.9, -118.4, 34.0, 11, array['food_truck']::text[], 1
+  ) limit 1;
+
+  if exists (
+    select 1 from public.map_food_places(
+      -118.238, 34.042, -118.236, 34.044, 18, null, 100
+    ) place
+    where place.location_id = '73100000-0000-4000-8000-000000000007'
+  ) then
+    raise exception 'Tiny viewport revealed a private raw location';
+  end if;
+  if not exists (
+    select 1 from public.map_food_places(
+      -118.251, 34.049, -118.249, 34.051, 18, null, 100
+    ) place
+    where place.location_id = '73100000-0000-4000-8000-000000000007'
+      and abs(place.longitude - (-118.25)) < 0.0000001
+      and abs(place.latitude - 34.05) < 0.0000001
+  ) then
+    raise exception 'Private location was not filtered and returned at its redacted point';
+  end if;
+  if exists (
+    select 1 from public.map_food_places(
+      -179.988, 10.012, -179.986, 10.014, 18, null, 100
+    ) place
+    where place.location_id = '73200000-0000-4000-8000-000000000007'
+  ) then
+    raise exception 'Tiny dateline viewport revealed a private raw location';
+  end if;
+  if not exists (
+    select 1 from public.map_food_places(
+      179.999, 9.999, -179.999, 10.001, 18, null, 100
+    ) place
+    where place.location_id = '73200000-0000-4000-8000-000000000007'
+      and abs(abs(place.longitude) - 180) < 0.0000001
+      and abs(place.latitude - 10) < 0.0000001
+  ) then
+    raise exception 'Antimeridian viewport did not use the redacted coordinate';
+  end if;
+  perform public.release_public_discovery_lease(map_lease);
+
+  search_lease := public.acquire_public_discovery_lease(
+    'search', repeat('2', 64), null
+  )->>'lease_hmac';
+  if search_lease in (generated_lease, map_lease) then
+    raise exception 'Generated discovery lease digests were not unique';
+  end if;
+  perform 1 from public.search_businesses('Los Angeles', 1, 0) limit 1;
+  perform public.release_public_discovery_lease(search_lease);
+end;
+$public_discovery_service_execution$;
+
+reset role;
+
+do $mobile_map_location_authority$
+declare
+  visible_count integer;
+  visible_location_id uuid;
+  sponsored_result jsonb;
+  sponsored_impression jsonb;
+  sponsored_open jsonb;
+  sponsored_decision_id uuid;
+begin
+  update public.businesses
+  set kind = 'food_truck'
+  where id = '70000000-0000-4000-8000-000000000007';
+
+  select count(*)::integer, min(place.location_id::text)::uuid
+  into visible_count, visible_location_id
+  from public.map_food_places(
+    -118.3, 34.0, -118.2, 34.1, 18,
+    array['food_truck']::text[], 100
+  ) place
+  where place.business_id = '70000000-0000-4000-8000-000000000007';
+  if visible_count <> 1
+    or visible_location_id <> '73000000-0000-4000-8000-000000000007'
+  then
+    raise exception 'Mobile map did not use the primary fallback';
+  end if;
+
+  insert into public.mobile_stops (
+    id, business_id, location_id, starts_at, ends_at, state, confirmed_at
+  ) values
+    (
+      '76000000-0000-4000-8000-000000000001',
+      '70000000-0000-4000-8000-000000000007',
+      '73100000-0000-4000-8000-000000000007',
+      now() - interval '2 hours', now() - interval '1 hour',
+      'completed', now() - interval '2 hours'
+    ),
+    (
+      '76000000-0000-4000-8000-000000000002',
+      '70000000-0000-4000-8000-000000000007',
+      '73200000-0000-4000-8000-000000000007',
+      now() + interval '1 day', now() + interval '2 days',
+      'scheduled', now()
+    );
+
+  select count(*)::integer, min(place.location_id::text)::uuid
+  into visible_count, visible_location_id
+  from public.map_food_places(
+    -118.3, 34.0, -118.2, 34.1, 18,
+    array['food_truck']::text[], 100
+  ) place
+  where place.business_id = '70000000-0000-4000-8000-000000000007';
+  if visible_count <> 1
+    or visible_location_id <> '73000000-0000-4000-8000-000000000007'
+  then
+    raise exception 'Mobile map treated stale or future stops as current';
+  end if;
+
+  insert into public.mobile_stops (
+    id, business_id, location_id, starts_at, ends_at, state, confirmed_at
+  ) values (
+    '76000000-0000-4000-8000-000000000003',
+    '70000000-0000-4000-8000-000000000007',
+    '73100000-0000-4000-8000-000000000007',
+    now() - interval '5 minutes', now() + interval '1 hour',
+    'live', now()
+  );
+
+  select count(*)::integer, min(place.location_id::text)::uuid
+  into visible_count, visible_location_id
+  from public.map_food_places(
+    -118.3, 34.0, -118.2, 34.1, 18,
+    array['food_truck']::text[], 100
+  ) place
+  where place.business_id = '70000000-0000-4000-8000-000000000007';
+  if visible_count <> 1
+    or visible_location_id <> '73100000-0000-4000-8000-000000000007'
+  then
+    raise exception 'Mobile map ignored the current active stop';
+  end if;
+
+  -- sponsored_mobile_location_authority: the paid projection must select the
+  -- same active branch as nearby/map discovery, never a historical branch.
+  update public.ad_targets
+  set business_kinds = array['food_truck']::public.business_kind[]
+  where campaign_id = '77000000-0000-4000-8000-000000000007';
+
+  sponsored_result := public.select_sponsored_placement(
+    'discover', 34.05, -118.24, 16093,
+    array['food_truck']::public.business_kind[],
+    repeat('7', 64), repeat('8', 64), null
+  );
+  sponsored_decision_id := (sponsored_result->>'placement_id')::uuid;
+  if sponsored_result->>'location_id' <> '73100000-0000-4000-8000-000000000007' then
+    raise exception 'Sponsored selector ignored the current mobile branch';
+  end if;
+
+  sponsored_impression := public.record_sponsored_interaction(
+    sponsored_result->>'placement_token',
+    'impression',
+    'runtime:sponsor:mobile:impression',
+    repeat('8', 64)
+  );
+  if sponsored_impression->>'accepted' <> 'true' then
+    raise exception 'Sponsored mobile impression was not accepted at the active branch';
+  end if;
+
+  update public.mobile_stops
+  set state = 'completed'
+  where id = '76000000-0000-4000-8000-000000000003';
+
+  sponsored_open := public.record_sponsored_interaction(
+    sponsored_result->>'placement_token',
+    'open',
+    'runtime:sponsor:mobile:open',
+    repeat('8', 64)
+  );
+  if sponsored_open->>'accepted' <> 'false'
+    or sponsored_open->>'billed' <> 'false'
+    or not exists (
+      select 1
+      from private.ad_events event
+      where event.decision_id = sponsored_decision_id
+        and event.event_type = 'open'
+        and not event.valid
+        and event.invalid_reason = 'location_ineligible'
+    )
+    or not exists (
+      select 1
+      from private.ad_budget_reservations reservation
+      where reservation.decision_id = sponsored_decision_id
+        and reservation.state = 'released'
+    )
+    or exists (
+      select 1
+      from private.billing_ledger ledger
+      join private.ad_events event on event.id = ledger.source_id
+      where ledger.source_type = 'sponsored_open'
+        and event.decision_id = sponsored_decision_id
+    )
+  then
+    raise exception 'Sponsored open ignored an impression-to-open location change';
+  end if;
+
+  update public.ad_targets
+  set business_kinds = array['restaurant']::public.business_kind[]
+  where campaign_id = '77000000-0000-4000-8000-000000000007';
+
+  select count(*)::integer, min(place.location_id::text)::uuid
+  into visible_count, visible_location_id
+  from public.map_food_places(
+    -118.3, 34.0, -118.2, 34.1, 18,
+    array['food_truck']::text[], 100
+  ) place
+  where place.business_id = '70000000-0000-4000-8000-000000000007';
+  if visible_count <> 1
+    or visible_location_id <> '73000000-0000-4000-8000-000000000007'
+  then
+    raise exception 'Mobile map did not restore the primary fallback';
+  end if;
+
+  delete from public.mobile_stops
+  where id in (
+    '76000000-0000-4000-8000-000000000001',
+    '76000000-0000-4000-8000-000000000002',
+    '76000000-0000-4000-8000-000000000003'
+  );
+  update public.businesses
+  set kind = 'restaurant'
+  where id = '70000000-0000-4000-8000-000000000007';
+end;
+$mobile_map_location_authority$;
+
+do $public_discovery_service_success$
+declare
+  response jsonb;
+  acquired_lease_hmac text;
+  release_response jsonb;
+begin
+  response := public.acquire_public_discovery_lease(
+    'map', repeat('a', 64), null, repeat('b', 64)
+  );
+  acquired_lease_hmac := response->>'lease_hmac';
+  if acquired_lease_hmac is null or acquired_lease_hmac !~ '^[0-9a-f]{64}$'
+    or response->>'operation' <> 'map'
+  then
+    raise exception 'Service role did not receive a valid discovery lease';
+  end if;
+
+  if not exists (
+    select 1
+    from private.public_discovery_leases lease
+    where lease.lease_hmac = acquired_lease_hmac
+      and lease.ip_hmac = repeat('a', 64)
+      and lease.account_hmac is null
+      and lease.expires_at > clock_timestamp()
+      and lease.expires_at <= lease.created_at + interval '2 minutes'
+  ) then
+    raise exception 'Discovery lease state was not persisted as digest-only data';
+  end if;
+
+  release_response := public.release_public_discovery_lease(acquired_lease_hmac);
+  if not (release_response->>'released')::boolean
+    or exists (
+      select 1 from private.public_discovery_leases lease
+      where lease.lease_hmac = acquired_lease_hmac
+    )
+  then
+    raise exception 'Discovery lease release did not remove the active lease';
+  end if;
+end;
+$public_discovery_service_success$;
+
+-- The pre-auth IP admission persists, while a rejected account attachment must
+-- leave the lease anonymous and the exhausted account bucket unchanged.
+insert into private.public_discovery_rate_buckets (
+  operation,
+  subject_kind,
+  subject_hmac,
+  bucket_started_at,
+  request_count
+)
+values (
+  'search',
+  'account',
+  repeat('c', 64),
+  to_timestamp(floor(extract(epoch from clock_timestamp()) / 60) * 60),
+  240
+);
+
+do $public_discovery_quota_atomicity$
+begin
+  perform public.acquire_public_discovery_lease(
+    'search', repeat('d', 64), null, repeat('e', 64)
+  );
+
+  begin
+    perform public.attach_public_discovery_account(
+      repeat('e', 64), repeat('c', 64)
+    );
+    raise exception 'An exhausted account quota unexpectedly admitted a request';
+  exception
+    when sqlstate 'P0001' then null;
+  end;
+
+  if not exists (
+    select 1
+    from private.public_discovery_rate_buckets bucket
+    where bucket.operation = 'search'
+      and bucket.subject_kind = 'ip'
+      and bucket.subject_hmac = repeat('d', 64)
+      and bucket.bucket_started_at = to_timestamp(floor(extract(epoch from clock_timestamp()) / 60) * 60)
+      and bucket.request_count = 1
+  ) then
+    raise exception 'Pre-authenticated IP admission was not retained';
+  end if;
+
+  if not exists (
+    select 1
+    from private.public_discovery_rate_buckets bucket
+    where bucket.operation = 'search'
+      and bucket.subject_kind = 'account'
+      and bucket.subject_hmac = repeat('c', 64)
+      and bucket.request_count = 240
+  ) then
+    raise exception 'Authenticated account quota bucket changed after rejection';
+  end if;
+
+  if not exists (
+    select 1
+    from private.public_discovery_leases lease
+    where lease.lease_hmac = repeat('e', 64)
+      and lease.account_hmac is null
+  ) then
+    raise exception 'Rejected account attachment changed the anonymous lease';
+  end if;
+
+  perform public.release_public_discovery_lease(repeat('e', 64));
+end;
+$public_discovery_quota_atomicity$;
+
+-- Fill the map cap with distinct digest identities, then prove that one stale
+-- lease is reclaimed without waiting and that cleanup/release remain effective.
+do $public_discovery_lease_cap$
+declare
+  index_value integer;
+  ip_digest text;
+  lease_digest text;
+  response jsonb;
+  stale_lease text := repeat('b', 62) || '01';
+  cleanup_response jsonb;
+  release_response jsonb;
+begin
+  for index_value in 1..32 loop
+    ip_digest := repeat('a', 62) || lpad(to_hex(index_value), 2, '0');
+    lease_digest := repeat('b', 62) || lpad(to_hex(index_value), 2, '0');
+    perform public.acquire_public_discovery_lease(
+      'map', ip_digest, null, lease_digest
+    );
+  end loop;
+
+  begin
+    perform public.acquire_public_discovery_lease(
+      'map', repeat('a', 62) || '21', null, repeat('b', 62) || '21'
+    );
+    raise exception 'Map concurrency cap unexpectedly admitted a 33rd lease';
+  exception
+    when sqlstate '55P03' then null;
+  end;
+
+  update private.public_discovery_leases lease
+  set created_at = clock_timestamp() - interval '20 seconds',
+      expires_at = clock_timestamp() - interval '1 second'
+  where lease.lease_hmac = stale_lease;
+
+  response := public.acquire_public_discovery_lease(
+    'map', repeat('a', 62) || '21', null, repeat('b', 62) || '21'
+  );
+  if response->>'lease_hmac' <> repeat('b', 62) || '21'
+    or exists (
+      select 1 from private.public_discovery_leases lease
+      where lease.lease_hmac = stale_lease
+    )
+  then
+    raise exception 'Stale map lease was not recovered during admission';
+  end if;
+
+  update private.public_discovery_leases lease
+  set created_at = clock_timestamp() - interval '20 seconds',
+      expires_at = clock_timestamp() - interval '1 second'
+  where lease.lease_hmac = repeat('b', 62) || '02';
+
+  cleanup_response := public.cleanup_public_discovery_leases();
+  if coalesce((cleanup_response->>'leases_deleted')::integer, 0) < 1
+    or coalesce((cleanup_response->>'buckets_deleted')::integer, -1) < 0
+    or coalesce((cleanup_response->>'more_work')::boolean, true)
+    or jsonb_typeof(cleanup_response->'skipped_operations') <> 'array'
+    or exists (
+      select 1 from private.public_discovery_leases lease
+      where lease.lease_hmac = repeat('b', 62) || '02'
+    )
+  then
+    raise exception 'Discovery cleanup did not reclaim a stale lease';
+  end if;
+
+  release_response := public.release_public_discovery_lease(response->>'lease_hmac');
+  if not (release_response->>'released')::boolean
+    or exists (
+      select 1 from private.public_discovery_leases lease
+      where lease.lease_hmac = response->>'lease_hmac'
+    )
+  then
+    raise exception 'Discovery release did not remove the recovered lease';
+  end if;
+end;
+$public_discovery_lease_cap$;
+
+reset role;
+
+do $professional_content$
+begin
+  if private.content_is_professional('f.u.c.k')
+    or private.content_is_professional('f!u!c!k')
+    or private.content_is_professional('sh1t')
+    or private.content_is_professional('m0therfuuucker')
+    or not private.content_is_professional('Bastille pastries and classical bass')
+  then
+    raise exception 'Professional-content enforcement is bypassable or over-broad after migrations';
+  end if;
+end;
+$professional_content$;
+
+do $business_claim_verification_guard$
+declare
+  claim_review_wrapper_definition text := pg_catalog.pg_get_functiondef(
+    'public.review_business_claim(uuid,text,text)'::regprocedure
+  );
+  claim_review_core_definition text := pg_catalog.pg_get_functiondef(
+    'private.review_business_claim_provider_serialized_core(uuid,text,text)'::regprocedure
+  );
+begin
+  if pg_catalog.pg_get_functiondef(
+    'public.submit_business_claim(uuid,text,text)'::regprocedure
+  ) not like '%CLAIM_VERIFICATION_SERVICE_REQUIRED%'
+    or pg_catalog.pg_get_functiondef(
+      'public.submit_business_claim(uuid,text,text)'::regprocedure
+    ) like '%submit_business_claim_core%'
+    or pg_catalog.has_function_privilege(
+      'anon', 'public.submit_business_claim(uuid,text,text)', 'execute'
+    )
+    or not pg_catalog.has_function_privilege(
+      'authenticated', 'public.submit_business_claim(uuid,text,text)', 'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'service_role', 'public.submit_business_claim(uuid,text,text)', 'execute'
+    )
+    or pg_catalog.has_table_privilege(
+      'anon', 'public.business_claims', 'insert'
+    )
+    or pg_catalog.has_table_privilege(
+      'anon', 'public.business_claims', 'update'
+    )
+    or pg_catalog.has_table_privilege(
+      'anon', 'public.business_claims', 'delete'
+    )
+    or pg_catalog.has_table_privilege(
+      'authenticated', 'public.business_claims', 'insert'
+    )
+    or pg_catalog.has_table_privilege(
+      'authenticated', 'public.business_claims', 'update'
+    )
+    or pg_catalog.has_table_privilege(
+      'authenticated', 'public.business_claims', 'delete'
+    )
+    or pg_catalog.has_function_privilege(
+      'anon', 'public.review_business_claim(uuid,text,text)', 'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'service_role', 'public.review_business_claim(uuid,text,text)', 'execute'
+    )
+    or not pg_catalog.has_function_privilege(
+      'authenticated', 'public.review_business_claim(uuid,text,text)', 'execute'
+    )
+    or pg_catalog.strpos(
+      claim_review_wrapper_definition,
+      'private.require_aal2()'
+    ) = 0
+    or pg_catalog.strpos(
+      claim_review_wrapper_definition,
+      'private.is_platform_staff('
+    ) <= pg_catalog.strpos(
+      claim_review_wrapper_definition,
+      'private.require_aal2()'
+    )
+    or pg_catalog.strpos(
+      claim_review_wrapper_definition,
+      'pg_advisory_xact_lock('
+    ) <= pg_catalog.strpos(
+      claim_review_wrapper_definition,
+      'private.is_platform_staff('
+    )
+    or claim_review_wrapper_definition not like '%if decision = ''approved'' then%'
+    or claim_review_wrapper_definition not like '%spottr:provider-lifecycle%'
+    or claim_review_wrapper_definition not like '%review_business_claim_provider_serialized_core%'
+    or claim_review_core_definition not like '%if decision is null%'
+    or claim_review_core_definition not like '%for update of b%'
+    or claim_review_core_definition not like '%CLAIM_ALREADY_DECIDED%'
+    or claim_review_core_definition not like '%CLAIMANT_ALREADY_BUSINESS_MEMBER%'
+    or pg_catalog.has_function_privilege(
+      'anon',
+      'private.review_business_claim_provider_serialized_core(uuid,text,text)',
+      'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'authenticated',
+      'private.review_business_claim_provider_serialized_core(uuid,text,text)',
+      'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'service_role',
+      'private.review_business_claim_provider_serialized_core(uuid,text,text)',
+      'execute'
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_trigger trigger_row
+      join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
+      join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
+      where schema_row.nspname = 'private'
+        and table_row.relname = 'provider_accounts'
+        and trigger_row.tgname = 'provider_accounts_mutation_barrier'
+        and not trigger_row.tgisinternal
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_trigger trigger_row
+      join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
+      join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
+      where schema_row.nspname = 'private'
+        and table_row.relname = 'provider_business_sources'
+        and trigger_row.tgname = 'provider_sources_mutation_barrier'
+        and not trigger_row.tgisinternal
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_trigger trigger_row
+      join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
+      join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
+      where schema_row.nspname = 'private'
+        and table_row.relname = 'provider_rate_limit_buckets'
+        and trigger_row.tgname = 'provider_ingest_mutation_barrier'
+        and not trigger_row.tgisinternal
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_trigger trigger_row
+      join pg_catalog.pg_class table_row on table_row.oid = trigger_row.tgrelid
+      join pg_catalog.pg_namespace schema_row on schema_row.oid = table_row.relnamespace
+      where schema_row.nspname = 'public'
+        and table_row.relname = 'business_claims'
+        and trigger_row.tgname = 'require_business_claim_verification_receipt'
+        and not trigger_row.tgisinternal
+    )
+    or pg_catalog.pg_get_functiondef(
+      'private.require_business_claim_verification_receipt()'::regprocedure
+    ) not like '%CLAIM_VERIFICATION_RECEIPT_REQUIRED%'
+    or pg_catalog.has_table_privilege(
+      'anon', 'public.business_claims', 'select'
+    )
+    or pg_catalog.has_table_privilege(
+      'authenticated', 'public.business_claims', 'select'
+    )
+    or not pg_catalog.has_table_privilege(
+      'service_role', 'public.business_claims', 'select'
+    )
+    or pg_catalog.has_function_privilege(
+      'anon', 'public.list_my_business_claims(uuid,integer)', 'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'service_role', 'public.list_my_business_claims(uuid,integer)', 'execute'
+    )
+    or not pg_catalog.has_function_privilege(
+      'authenticated', 'public.list_my_business_claims(uuid,integer)', 'execute'
+    )
+    or pg_catalog.pg_get_functiondef(
+      'public.list_my_business_claims(uuid,integer)'::regprocedure
+    ) not like '%private.require_aal2%'
+    or pg_catalog.pg_get_functiondef(
+      'public.list_my_business_claims(uuid,integer)'::regprocedure
+    ) not like '%private.is_active_user(actor)%'
+    or pg_catalog.pg_get_functiondef(
+      'public.list_my_business_claims(uuid,integer)'::regprocedure
+    ) like '%evidence_private_path%'
+    or pg_catalog.pg_get_functiondef(
+      'public.list_my_business_claims(uuid,integer)'::regprocedure
+    ) like '%reviewed_by%'
+    or pg_catalog.has_function_privilege(
+      'anon', 'public.withdraw_own_business_claim(uuid)', 'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'service_role', 'public.withdraw_own_business_claim(uuid)', 'execute'
+    )
+    or not pg_catalog.has_function_privilege(
+      'authenticated', 'public.withdraw_own_business_claim(uuid)', 'execute'
+    )
+    or pg_catalog.has_function_privilege(
+      'authenticated', 'public.withdraw_business_claim(uuid)', 'execute'
+    )
+    or pg_catalog.pg_get_functiondef(
+      'public.withdraw_business_claim(uuid)'::regprocedure
+    ) not like '%withdraw_own_business_claim%'
+    or pg_catalog.strpos(
+      pg_catalog.pg_get_functiondef(
+        'public.withdraw_own_business_claim(uuid)'::regprocedure
+      ),
+      'from public.businesses business'
+    ) = 0
+    or pg_catalog.strpos(
+      pg_catalog.pg_get_functiondef(
+        'public.withdraw_own_business_claim(uuid)'::regprocedure
+      ),
+      'select claim.state'
+    ) = 0
+    or pg_catalog.strpos(
+      pg_catalog.pg_get_functiondef(
+        'public.withdraw_own_business_claim(uuid)'::regprocedure
+      ),
+      'from public.businesses business'
+    ) >= pg_catalog.strpos(
+      pg_catalog.pg_get_functiondef(
+        'public.withdraw_own_business_claim(uuid)'::regprocedure
+      ),
+      'select claim.state'
+    )
+    or pg_catalog.pg_get_functiondef(
+      'public.withdraw_own_business_claim(uuid)'::regprocedure
+    ) not like '%business.claim_withdrawn%'
+    or exists (
+      select 1
+      from pg_catalog.pg_constraint constraint_row
+      where constraint_row.conrelid = 'public.business_claims'::regclass
+        and constraint_row.conname = 'business_claims_business_id_claimant_id_state_key'
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_index index_row
+      join pg_catalog.pg_class index_class on index_class.oid = index_row.indexrelid
+      where index_row.indrelid = 'public.business_claims'::regclass
+        and index_class.relname = 'business_claims_one_pending_per_claimant_business_idx'
+        and index_row.indisunique
+        and pg_catalog.pg_get_indexdef(index_row.indexrelid) like '%(business_id, claimant_id)%'
+        and pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid) like '%state = ''pending''%'
+    )
+    or not exists (
+      select 1
+      from pg_catalog.pg_index index_row
+      join pg_catalog.pg_class index_class on index_class.oid = index_row.indexrelid
+      where index_row.indrelid = 'public.business_claims'::regclass
+        and index_class.relname = 'business_claims_one_approved_per_business_idx'
+        and index_row.indisunique
+        and pg_catalog.pg_get_indexdef(index_row.indexrelid) like '%(business_id)%'
+        and pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid) like '%state = ''approved''%'
+    )
+  then
+    raise exception 'Business claim authority guard was weakened after migrations';
+  end if;
+end;
+$business_claim_verification_guard$;
+
+-- Prove the replacement partial indexes enforce live authority while allowing
+-- repeated terminal history. These writes are rollback-only test fixtures.
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+insert into public.businesses (
+  id, kind, name, slug, state, provenance, created_by
+)
+values
+  (
+    '70110000-0000-4000-8000-000000000001',
+    'restaurant',
+    'Runtime Claim History',
+    'runtime-claim-history',
+    'draft',
+    'community',
+    '10000000-0000-4000-8000-000000000001'
+  ),
+  (
+    '70110000-0000-4000-8000-000000000002',
+    'restaurant',
+    'Runtime Approved Claim Invariant',
+    'runtime-approved-claim-invariant',
+    'draft',
+    'community',
+    '10000000-0000-4000-8000-000000000001'
+  ),
+  (
+    '70110000-0000-4000-8000-000000000003',
+    'restaurant',
+    'Runtime Claim Replay',
+    'runtime-claim-replay',
+    'draft',
+    'community',
+    '10000000-0000-4000-8000-000000000001'
+  ),
+  (
+    '70110000-0000-4000-8000-000000000004',
+    'restaurant',
+    'Runtime Invited Claim Guard',
+    'runtime-invited-claim-guard',
+    'archived',
+    'community',
+    '10000000-0000-4000-8000-000000000001'
+  ),
+  (
+    '70110000-0000-4000-8000-000000000005',
+    'restaurant',
+    'Runtime Revoked Claim Restore',
+    'runtime-revoked-claim-restore',
+    'archived',
+    'community',
+    '10000000-0000-4000-8000-000000000001'
+  );
+
+insert into public.business_members (
+  business_id, user_id, role, status, invited_by, revoked_at
+) values
+  (
+    '70110000-0000-4000-8000-000000000004',
+    '10000000-0000-4000-8000-000000000001',
+    'staff',
+    'invited',
+    'a1000000-0000-4000-8000-000000000001',
+    null
+  ),
+  (
+    '70110000-0000-4000-8000-000000000005',
+    '10000000-0000-4000-8000-000000000001',
+    'manager',
+    'revoked',
+    'a1000000-0000-4000-8000-000000000001',
+    now()
+  );
+
+insert into public.business_claims (
+  id, business_id, claimant_id, method, state
+)
+values
+  (
+    '80110000-0000-4000-8000-000000000001',
+    '70110000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'rejected'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000002',
+    '70110000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'rejected'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000003',
+    '70110000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'withdrawn'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000004',
+    '70110000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'pending'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000007',
+    '70110000-0000-4000-8000-000000000003',
+    'a1000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'pending'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000009',
+    '70110000-0000-4000-8000-000000000004',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'pending'
+  ),
+  (
+    '80110000-0000-4000-8000-000000000010',
+    '70110000-0000-4000-8000-000000000005',
+    '10000000-0000-4000-8000-000000000001',
+    'listed_phone',
+    'pending'
+  );
+
+do $business_claim_partial_index_behavior$
+begin
+  begin
+    insert into public.business_claims (
+      id, business_id, claimant_id, method, state
+    ) values (
+      '80110000-0000-4000-8000-000000000005',
+      '70110000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000001',
+      'domain_email',
+      'pending'
+    );
+    raise exception 'Duplicate pending claim bypassed the live-claim invariant';
+  exception
+    when unique_violation then null;
+  end;
+
+  if (
+    select count(*)
+    from public.business_claims claim
+    where claim.business_id = '70110000-0000-4000-8000-000000000001'
+      and claim.claimant_id = '10000000-0000-4000-8000-000000000001'
+      and claim.state in ('rejected', 'withdrawn')
+  ) <> 3 then
+    raise exception 'Repeated terminal claim history was not preserved';
+  end if;
+end;
+$business_claim_partial_index_behavior$;
+
+alter table public.business_claims
+  disable trigger require_business_claim_verification_receipt;
+
+do $business_claim_membership_escalation_behavior$
+begin
+  begin
+    update public.business_members membership
+    set status = 'active',
+        revoked_at = null,
+        accepted_at = now()
+    where membership.business_id = '70110000-0000-4000-8000-000000000005'
+      and membership.user_id = '10000000-0000-4000-8000-000000000001';
+    raise exception 'Pending ownership claim allowed a conflicting membership activation';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'BUSINESS_CLAIM_PENDING_FOR_MEMBER' then
+        raise;
+      end if;
+  end;
+
+  begin
+    update public.business_claims claim
+    set state = 'approved'
+    where claim.id = '80110000-0000-4000-8000-000000000009';
+    raise exception 'Invited membership was silently escalated by claim approval';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'CLAIMANT_ALREADY_BUSINESS_MEMBER' then
+        raise;
+      end if;
+  end;
+
+  if not exists (
+    select 1
+    from public.business_claims claim
+    join public.business_members membership
+      on membership.business_id = claim.business_id
+     and membership.user_id = claim.claimant_id
+    where claim.id = '80110000-0000-4000-8000-000000000009'
+      and claim.state = 'pending'
+      and membership.status = 'invited'
+      and membership.role = 'staff'
+  ) then
+    raise exception 'Invited membership conflict mutated claim or team authority';
+  end if;
+
+  update public.business_claims claim
+  set state = 'approved'
+  where claim.id = '80110000-0000-4000-8000-000000000010';
+
+  if not exists (
+    select 1
+    from public.business_claims claim
+    join public.business_members membership
+      on membership.business_id = claim.business_id
+     and membership.user_id = claim.claimant_id
+    where claim.id = '80110000-0000-4000-8000-000000000010'
+      and claim.state = 'approved'
+      and membership.status = 'revoked'
+      and membership.role = 'manager'
+  ) then
+    raise exception 'Revoked membership was incorrectly blocked from verified restoration';
+  end if;
+end;
+$business_claim_membership_escalation_behavior$;
+
+insert into public.business_claims (
+  id, business_id, claimant_id, method, state
+) values (
+  '80110000-0000-4000-8000-000000000006',
+  '70110000-0000-4000-8000-000000000002',
+  '10000000-0000-4000-8000-000000000001',
+  'listed_phone',
+  'approved'
+);
+
+do $business_claim_identity_immutability$
+begin
+  begin
+    update public.business_claims claim
+    set id = '80110000-0000-4000-8000-000000000011'
+    where claim.id = '80110000-0000-4000-8000-000000000006';
+    raise exception 'Approved claim identifier was mutable';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'CLAIM_IDENTITY_IMMUTABLE' then
+        raise;
+      end if;
+  end;
+
+  begin
+    update public.business_claims claim
+    set claimant_id = 'a1000000-0000-4000-8000-000000000001'
+    where claim.id = '80110000-0000-4000-8000-000000000006';
+    raise exception 'Approved claim identity was mutable';
+  exception
+    when sqlstate '55000' then
+      if sqlerrm <> 'CLAIM_IDENTITY_IMMUTABLE' then
+        raise;
+      end if;
+  end;
+
+  if not exists (
+    select 1
+    from public.business_claims claim
+    where claim.id = '80110000-0000-4000-8000-000000000006'
+      and claim.business_id = '70110000-0000-4000-8000-000000000002'
+      and claim.claimant_id = '10000000-0000-4000-8000-000000000001'
+      and claim.method = 'listed_phone'
+      and claim.state = 'approved'
+  ) then
+    raise exception 'Rejected claim identity rewrite changed persisted authority';
+  end if;
+end;
+$business_claim_identity_immutability$;
+
+do $business_claim_approved_index_behavior$
+begin
+  begin
+    insert into public.business_claims (
+      id, business_id, claimant_id, method, state
+    ) values (
+      '80110000-0000-4000-8000-000000000008',
+      '70110000-0000-4000-8000-000000000002',
+      'a1000000-0000-4000-8000-000000000001',
+      'domain_email',
+      'approved'
+    );
+    raise exception 'A second approved claim bypassed the ownership invariant';
+  exception
+    when unique_violation then null;
+  end;
+end;
+$business_claim_approved_index_behavior$;
+
+alter table public.business_claims
+  enable trigger require_business_claim_verification_receipt;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $business_claim_null_decision_behavior$
+begin
+  begin
+    perform public.review_business_claim(
+      '80110000-0000-4000-8000-000000000007',
+      null,
+      'Runtime null decision must fail.'
+    );
+    raise exception 'A null business-claim decision was accepted';
+  exception
+    when invalid_parameter_value then null;
+  end;
+end;
+$business_claim_null_decision_behavior$;
+
+reset role;
+
+do $business_claim_null_decision_result$
+begin
+  if not exists (
+    select 1
+    from public.business_claims claim
+    where claim.id = '80110000-0000-4000-8000-000000000007'
+      and claim.state = 'pending'
+  ) then
+    raise exception 'A null claim decision mutated the pending claim';
+  end if;
+end;
+$business_claim_null_decision_result$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"a1000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $business_claim_decision_replay_behavior$
+begin
+  perform public.review_business_claim(
+    '80110000-0000-4000-8000-000000000007',
+    'rejected',
+    'Runtime verified rejection.'
+  );
+  perform public.review_business_claim(
+    '80110000-0000-4000-8000-000000000007',
+    'rejected',
+    'Runtime verified rejection replay.'
+  );
+end;
+$business_claim_decision_replay_behavior$;
+
+reset role;
+
+do $business_claim_decision_result$
+declare
+  decision_audit_count integer;
+begin
+  if not exists (
+    select 1
+    from public.business_claims claim
+    where claim.id = '80110000-0000-4000-8000-000000000007'
+      and claim.state = 'rejected'
+  ) then
+    raise exception 'Claim rejection did not produce the expected terminal state';
+  end if;
+
+  select count(*)
+  into decision_audit_count
+  from public.audit_events audit
+  where audit.event_type = 'business.claim_decided'
+    and audit.target_type = 'business_claim'
+    and audit.target_id = '80110000-0000-4000-8000-000000000007';
+
+  if decision_audit_count <> 1 then
+    raise exception 'Terminal claim replay duplicated its audit event';
+  end if;
+end;
+$business_claim_decision_result$;
+
+-- Push remains disabled in production, but the database foundation must prove
+-- consent/preference races, lease bounds, and identity consistency before a
+-- provider adapter can be considered.
+insert into auth.users (
+  id, aud, role, email, email_confirmed_at, raw_app_meta_data,
+  raw_user_meta_data, created_at, updated_at
+)
+values
+  (
+    '90000000-0000-4000-8000-000000000009',
+    'authenticated', 'authenticated', 'runtime-push@spottr.invalid', now(),
+    '{}'::jsonb,
+    '{"username":"runtime_push","display_name":"Runtime Push","terms_accepted":true}'::jsonb,
+    now(), now()
+  ),
+  (
+    '92000000-0000-4000-8000-000000000002',
+    'authenticated', 'authenticated', 'runtime-push-b@spottr.invalid', now(),
+    '{}'::jsonb,
+    '{"username":"runtime_push_b","display_name":"Runtime Push B","terms_accepted":true}'::jsonb,
+    now(), now()
+  );
+
+insert into auth.sessions (id, user_id, created_at, updated_at)
+values
+  (
+    '91000000-0000-4000-8000-000000000001',
+    '90000000-0000-4000-8000-000000000009',
+    now(), now()
+  ),
+  (
+    '91000000-0000-4000-8000-000000000002',
+    '90000000-0000-4000-8000-000000000009',
+    now(), now()
+  ),
+  (
+    '91000000-0000-4000-8000-000000000003',
+    '92000000-0000-4000-8000-000000000002',
+    now(), now()
+  );
+
+do $push_registration_session_guard$
+begin
+  begin
+    perform private.register_notification_device(
+      '90000000-0000-4000-8000-000000000009',
+      '91000000-0000-4000-8000-000000000099',
+      '81000000-0000-4000-8000-000000000099',
+      'ios', 'expo', '82000000-0000-4000-8000-000000000002',
+      repeat('e', 64), repeat('E', 48), repeat('F', 16), 1,
+      'America/Los_Angeles', '0.2.0', 'granted'
+    );
+    raise exception 'Registration accepted a missing Auth session';
+  exception when invalid_parameter_value then null;
+  end;
+
+  update auth.sessions set not_after = now() - interval '1 second'
+  where id = '91000000-0000-4000-8000-000000000002';
+  begin
+    perform private.register_notification_device(
+      '90000000-0000-4000-8000-000000000009',
+      '91000000-0000-4000-8000-000000000002',
+      '81000000-0000-4000-8000-000000000098',
+      'ios', 'expo', '82000000-0000-4000-8000-000000000002',
+      repeat('1', 64), repeat('G', 48), repeat('H', 16), 1,
+      'America/Los_Angeles', '0.2.0', 'granted'
+    );
+    raise exception 'Registration accepted an expired Auth session';
+  exception when invalid_parameter_value then null;
+  end;
+  update auth.sessions set not_after = null
+  where id = '91000000-0000-4000-8000-000000000002';
+end;
+$push_registration_session_guard$;
+
+insert into public.follows (user_id, business_id)
+values (
+  '90000000-0000-4000-8000-000000000009',
+  '70000000-0000-4000-8000-000000000007'
+)
+on conflict do nothing;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"90000000-0000-4000-8000-000000000009","role":"authenticated","aal":"aal2","session_id":"91000000-0000-4000-8000-000000000001"}',
+  true
+);
+
+select public.update_follow_notification_preferences(
+  array['70000000-0000-4000-8000-000000000007'::uuid],
+  'owner_bundle', true, 'America/Los_Angeles', '22:00'::time, '07:00'::time,
+  'spottr:notification-preference:runtime-enable-0001'
+);
+
+select public.update_follow_notification_preferences(
+  array['70000000-0000-4000-8000-000000000007'::uuid],
+  'live_nearby', false, null, null, null,
+  'spottr:notification-preference:runtime-live-0002'
+);
+
+do $push_quiet_hours_preserved$
+begin
+  if not exists (
+    select 1 from public.notification_preferences preference
+    where preference.user_id = '90000000-0000-4000-8000-000000000009'
+      and preference.business_id = '70000000-0000-4000-8000-000000000007'
+      and preference.owner_update and preference.location_change and preference.menu_return
+      and preference.quiet_hours_start = '22:00'::time
+      and preference.quiet_hours_end = '07:00'::time
+      and preference.timezone = 'America/Los_Angeles'
+  ) then raise exception 'Notification toggle erased quiet hours or bundle state'; end if;
+end;
+$push_quiet_hours_preserved$;
+
+reset role;
+
+-- The preservation assertion above intentionally uses real quiet hours. Clear
+-- them for the worker lease/handoff fixtures so this runtime test is stable at
+-- every wall-clock hour while production quiet-hour deferral remains enforced.
+update public.notification_preferences
+set quiet_hours_start = null,
+    quiet_hours_end = null,
+    timezone = null,
+    updated_at = now()
+where user_id = '90000000-0000-4000-8000-000000000009'
+  and business_id = '70000000-0000-4000-8000-000000000007';
+
+select public.register_notification_device_server(
+  '90000000-0000-4000-8000-000000000009',
+  '91000000-0000-4000-8000-000000000001',
+  '81000000-0000-4000-8000-000000000001',
+  'ios',
+  '82000000-0000-4000-8000-000000000002',
+  repeat('a', 64),
+  repeat('A', 48),
+  repeat('B', 16),
+  1,
+  'America/Los_Angeles',
+  '0.2.0',
+  'granted',
+  'product-updates-v1',
+  'native_settings'
+);
+
+update private.notification_runtime_settings
+set enqueue_enabled = true, delivery_enabled = true, updated_at = now()
+where singleton;
+
+do $push_runtime$
+declare
+  first_event_id bigint;
+  second_event_id bigint;
+  claimed_outbox record;
+  delivery_id uuid;
+  original_device_id uuid;
+  rebound_device_id uuid;
+  reclaimed_device_id uuid;
+  unmatched_device_id uuid;
+  unfollow_event_id bigint;
+  unfollow_outbox_claim record;
+  unfollow_delivery_id uuid;
+  unfollow_handoff_event_id bigint;
+  unfollow_handoff_outbox_claim record;
+  unfollow_handoff_delivery_claim record;
+  ineligible_claim_event_id bigint;
+  ineligible_claim_outbox record;
+  ineligible_handoff_event_id bigint;
+  ineligible_handoff_outbox record;
+  ineligible_handoff_delivery record;
+  affected integer;
+begin
+  -- Losing public eligibility after fanout must block both lease claim and the
+  -- final provider handoff. These rows are cleaned before the shared fixtures
+  -- continue so later delivery-count assertions remain isolated.
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '83100000-0000-4000-8000-000000000003'),
+    now() + interval '1 hour'
+  ) returning id into ineligible_claim_event_id;
+
+  select * into ineligible_claim_outbox
+  from private.claim_notification_outbox(
+    '84100000-0000-4000-8000-000000000004', 10, 60
+  ) where source_event_id = ineligible_claim_event_id;
+  if ineligible_claim_outbox.outbox_id is null then
+    raise exception 'Ineligible-claim fixture outbox was not claimed';
+  end if;
+  affected := private.expand_notification_outbox(
+    ineligible_claim_outbox.outbox_id,
+    ineligible_claim_outbox.lease_token,
+    20
+  );
+  if affected <> 1 then
+    raise exception 'Ineligible-claim fixture did not fan out exactly one delivery';
+  end if;
+
+  update public.businesses set state = 'suspended'
+  where id = '70000000-0000-4000-8000-000000000007';
+  if exists (
+    select 1 from private.claim_notification_deliveries(
+      '85100000-0000-4000-8000-000000000005', 20, 60
+    ) where source_event_id = ineligible_claim_event_id
+  ) or exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.source_event_id = ineligible_claim_event_id
+      and delivery.state = 'leased'
+  ) then
+    raise exception 'Ineligible business delivery crossed claim';
+  end if;
+  update private.notification_deliveries set
+    state = 'cancelled', last_provider_code = 'test_cleanup',
+    lease_token = null, lease_expires_at = null, updated_at = now()
+  where source_event_id = ineligible_claim_event_id;
+  update public.businesses set state = 'published'
+  where id = '70000000-0000-4000-8000-000000000007';
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '83200000-0000-4000-8000-000000000003'),
+    now() + interval '1 hour'
+  ) returning id into ineligible_handoff_event_id;
+
+  select * into ineligible_handoff_outbox
+  from private.claim_notification_outbox(
+    '84200000-0000-4000-8000-000000000004', 10, 60
+  ) where source_event_id = ineligible_handoff_event_id;
+  if ineligible_handoff_outbox.outbox_id is null then
+    raise exception 'Ineligible-handoff fixture outbox was not claimed';
+  end if;
+  affected := private.expand_notification_outbox(
+    ineligible_handoff_outbox.outbox_id,
+    ineligible_handoff_outbox.lease_token,
+    20
+  );
+  if affected <> 1 then
+    raise exception 'Ineligible-handoff fixture did not fan out exactly one delivery';
+  end if;
+  select * into ineligible_handoff_delivery
+  from private.claim_notification_deliveries(
+    '85200000-0000-4000-8000-000000000005', 20, 60
+  ) where source_event_id = ineligible_handoff_event_id;
+  if ineligible_handoff_delivery.delivery_id is null then
+    raise exception 'Ineligible-handoff fixture was not leased while eligible';
+  end if;
+
+  update public.businesses set state = 'suspended'
+  where id = '70000000-0000-4000-8000-000000000007';
+  begin
+    perform private.mark_notification_delivery_batch_sending(
+      array[ineligible_handoff_delivery.delivery_id],
+      array[ineligible_handoff_delivery.lease_token],
+      60
+    );
+    raise exception 'Ineligible business delivery crossed provider handoff';
+  exception when sqlstate '40001' then null;
+  end;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = ineligible_handoff_delivery.delivery_id
+      and delivery.state = 'leased'
+  ) then
+    raise exception 'Rejected ineligible handoff did not preserve the lease atomically';
+  end if;
+  update private.notification_deliveries set
+    state = 'cancelled', last_provider_code = 'test_cleanup',
+    lease_token = null, lease_expires_at = null, updated_at = now()
+  where id = ineligible_handoff_delivery.delivery_id;
+  update public.businesses set state = 'published'
+  where id = '70000000-0000-4000-8000-000000000007';
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '83000000-0000-4000-8000-000000000003', 'body', 'private body'),
+    now() + interval '1 hour'
+  ) returning id into first_event_id;
+
+  select * into claimed_outbox
+  from private.claim_notification_outbox(
+    '84000000-0000-4000-8000-000000000004', 10, 60
+  ) where source_event_id = first_event_id;
+  if claimed_outbox.outbox_id is null then raise exception 'Eligible notification outbox was not claimed'; end if;
+  affected := private.expand_notification_outbox(
+    claimed_outbox.outbox_id, claimed_outbox.lease_token, 20
+  );
+  if affected <> 1 then raise exception 'Eligible notification fanout did not create one device delivery'; end if;
+  select delivery.id into delivery_id from private.notification_deliveries delivery
+  where delivery.source_event_id = first_event_id;
+
+  select device.id into original_device_id
+  from private.notification_devices device
+  where device.user_id = '90000000-0000-4000-8000-000000000009'
+    and device.provider = 'expo'
+    and device.installation_id = '81000000-0000-4000-8000-000000000001'
+    and device.revoked_at is null;
+  if original_device_id is null or delivery_id is null then
+    raise exception 'Cross-account rebind fixture did not capture the original device and delivery';
+  end if;
+  rebound_device_id := private.register_notification_device(
+    '92000000-0000-4000-8000-000000000002',
+    '91000000-0000-4000-8000-000000000003',
+    '81000000-0000-4000-8000-000000000001',
+    'ios', 'expo', '82000000-0000-4000-8000-000000000002',
+    repeat('b', 64), repeat('J', 48), repeat('K', 16), 1,
+    'America/Los_Angeles', '0.2.0', 'granted'
+  );
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = original_device_id
+      and device.revoked_at is not null
+      and device.revoke_reason = 'ownership_changed'
+  ) then raise exception 'Cross-account installation rebind left the prior device active'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_id
+      and delivery.device_id = original_device_id
+      and delivery.user_id = '90000000-0000-4000-8000-000000000009'
+      and delivery.state = 'cancelled'
+      and delivery.last_provider_code = 'device_rebound'
+  ) then raise exception 'Cross-account installation rebind left prior-account delivery queued'; end if;
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = rebound_device_id
+      and device.user_id = '92000000-0000-4000-8000-000000000002'
+      and device.auth_session_id = '91000000-0000-4000-8000-000000000003'
+      and device.revoked_at is null
+  ) then raise exception 'Cross-account installation rebind did not install the new owner'; end if;
+  if rebound_device_id is null or (
+    select count(*) from private.notification_devices device
+    where device.provider = 'expo'
+      and device.installation_id = '81000000-0000-4000-8000-000000000001'
+      and device.revoked_at is null
+  ) <> 1 then raise exception 'Cross-account rebind allowed multiple active owners'; end if;
+
+  reclaimed_device_id := private.register_notification_device(
+    '90000000-0000-4000-8000-000000000009',
+    '91000000-0000-4000-8000-000000000001',
+    '81000000-0000-4000-8000-000000000001',
+    'ios', 'expo', '82000000-0000-4000-8000-000000000002',
+    repeat('a', 64), repeat('A', 48), repeat('B', 16), 1,
+    'America/Los_Angeles', '0.2.0', 'granted'
+  );
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = rebound_device_id
+      and device.revoked_at is not null
+      and device.revoke_reason = 'ownership_changed'
+  ) then raise exception 'Installation reclaim left the temporary owner active'; end if;
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = reclaimed_device_id
+      and device.user_id = '90000000-0000-4000-8000-000000000009'
+      and device.auth_session_id = '91000000-0000-4000-8000-000000000001'
+      and device.revoked_at is null
+  ) then raise exception 'Installation reclaim did not restore the verified owner session'; end if;
+  if reclaimed_device_id = original_device_id or exists (
+    select 1 from private.notification_devices device
+    where device.user_id = '92000000-0000-4000-8000-000000000002'
+      and device.provider = 'expo'
+      and device.installation_id = '81000000-0000-4000-8000-000000000001'
+      and device.revoked_at is null
+  ) then raise exception 'Installation reclaim reused stale ownership state'; end if;
+  if reclaimed_device_id is null or (
+    select count(*) from private.notification_devices device
+    where device.provider = 'expo'
+      and device.installation_id = '81000000-0000-4000-8000-000000000001'
+      and device.revoked_at is null
+  ) <> 1 then raise exception 'Installation ownership allowed multiple active owners'; end if;
+
+  unmatched_device_id := private.register_notification_device(
+    '90000000-0000-4000-8000-000000000009',
+    '91000000-0000-4000-8000-000000000002',
+    '81000000-0000-4000-8000-000000000009',
+    'ios', 'expo', '82000000-0000-4000-8000-000000000002',
+    repeat('c', 64), repeat('C', 48), repeat('D', 16), 1,
+    'America/Los_Angeles', '0.2.0', 'granted'
+  );
+
+  begin
+    insert into private.notification_deliveries (
+      outbox_id, device_id, user_id, business_id, source_event_id, notification_kind
+    ) values (
+      claimed_outbox.outbox_id,
+      unmatched_device_id,
+      '10000000-0000-4000-8000-000000000001',
+      '70000000-0000-4000-8000-000000000007', first_event_id, 'owner_update'
+    );
+    raise exception 'Delivery accepted a mismatched device owner';
+  exception when foreign_key_violation then null;
+  end;
+
+  delete from auth.sessions
+  where id = '91000000-0000-4000-8000-000000000002';
+  affected := private.revoke_notification_devices_without_session();
+  if affected <> 1 then raise exception 'Ended auth session did not retire one device'; end if;
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = unmatched_device_id
+      and device.revoked_at is not null
+      and device.revoke_reason = 'auth_session_ended'
+  ) then raise exception 'Ended auth session left an active notification device'; end if;
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '83000000-0000-4000-8000-000000000010'),
+    now() + interval '2 hours'
+  ) returning id into unfollow_event_id;
+  select * into unfollow_outbox_claim
+  from private.claim_notification_outbox(
+    '85000000-0000-4000-8000-000000000010', 10, 60
+  ) where source_event_id = unfollow_event_id;
+  if unfollow_outbox_claim.outbox_id is null then
+    raise exception 'Unfollow fixture outbox was not claimed';
+  end if;
+  if private.expand_notification_outbox(
+    unfollow_outbox_claim.outbox_id, unfollow_outbox_claim.lease_token, 20
+  ) <> 1 then
+    raise exception 'Unfollow fixture did not fan out exactly one delivery';
+  end if;
+  select delivery.id into unfollow_delivery_id
+  from private.notification_deliveries delivery
+  where delivery.source_event_id = unfollow_event_id
+    and delivery.user_id = '90000000-0000-4000-8000-000000000009';
+  if unfollow_delivery_id is null then
+    raise exception 'Unfollow fixture delivery was not created';
+  end if;
+
+  delete from public.follows
+  where user_id = '90000000-0000-4000-8000-000000000009'
+    and business_id = '70000000-0000-4000-8000-000000000007';
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = unfollow_delivery_id
+      and delivery.state = 'cancelled'
+      and delivery.last_provider_code = 'follow_removed'
+      and delivery.lease_token is null
+      and delivery.lease_expires_at is null
+  ) then raise exception 'Unfollow left the queued delivery claimable'; end if;
+  if exists (
+    select 1 from private.claim_notification_deliveries(
+      '85000000-0000-4000-8000-000000000011', 20, 60
+    ) where source_event_id = unfollow_event_id
+  ) then raise exception 'Unfollowed delivery was still claimable'; end if;
+
+  -- Recreate the follow for a leased delivery so the handoff guard is also
+  -- exercised after the follow-delete trigger has run.
+  insert into public.follows (user_id, business_id)
+  values (
+    '90000000-0000-4000-8000-000000000009',
+    '70000000-0000-4000-8000-000000000007'
+  );
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '83000000-0000-4000-8000-000000000011'),
+    now() + interval '2 hours'
+  ) returning id into unfollow_handoff_event_id;
+  select * into unfollow_handoff_outbox_claim
+  from private.claim_notification_outbox(
+    '85000000-0000-4000-8000-000000000012', 10, 60
+  ) where source_event_id = unfollow_handoff_event_id;
+  if unfollow_handoff_outbox_claim.outbox_id is null then
+    raise exception 'Unfollow handoff fixture outbox was not claimed';
+  end if;
+  if private.expand_notification_outbox(
+    unfollow_handoff_outbox_claim.outbox_id,
+    unfollow_handoff_outbox_claim.lease_token,
+    20
+  ) <> 1 then
+    raise exception 'Unfollow handoff fixture did not fan out exactly one delivery';
+  end if;
+  select * into unfollow_handoff_delivery_claim
+  from private.claim_notification_deliveries(
+    '85000000-0000-4000-8000-000000000013', 20, 60
+  ) where source_event_id = unfollow_handoff_event_id;
+  if unfollow_handoff_delivery_claim.delivery_id is null then
+    raise exception 'Unfollow handoff fixture delivery was not leased';
+  end if;
+  delete from public.follows
+  where user_id = '90000000-0000-4000-8000-000000000009'
+    and business_id = '70000000-0000-4000-8000-000000000007';
+  begin
+    perform private.mark_notification_delivery_batch_sending(
+      array[unfollow_handoff_delivery_claim.delivery_id],
+      array[unfollow_handoff_delivery_claim.lease_token], 60
+    );
+    raise exception 'Unfollowed delivery crossed provider handoff';
+  exception when sqlstate '40001' then null;
+  end;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = unfollow_handoff_delivery_claim.delivery_id
+      and delivery.state = 'cancelled'
+      and delivery.last_provider_code = 'follow_removed'
+  ) then raise exception 'Unfollow handoff guard did not preserve cancellation'; end if;
+
+  insert into public.follows (user_id, business_id)
+  values (
+    '90000000-0000-4000-8000-000000000009',
+    '70000000-0000-4000-8000-000000000007'
+  ) on conflict do nothing;
+end;
+$push_runtime$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"90000000-0000-4000-8000-000000000009","role":"authenticated","aal":"aal2","session_id":"91000000-0000-4000-8000-000000000001"}',
+  true
+);
+select public.update_follow_notification_preferences(
+  array['70000000-0000-4000-8000-000000000007'::uuid],
+  'owner_bundle', false, null, null, null,
+  'spottr:notification-preference:runtime-disable-0003'
+);
+reset role;
+
+do $push_preference_revocation$
+begin
+  if exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.user_id = '90000000-0000-4000-8000-000000000009'
+      and delivery.state in ('pending', 'leased', 'retry', 'unknown')
+  ) then raise exception 'Preference revocation left a claimable delivery'; end if;
+  if exists (
+    select 1 from private.claim_notification_deliveries(
+      '85000000-0000-4000-8000-000000000005', 20, 60
+    )
+  ) then raise exception 'Claim-time preference enforcement was bypassed'; end if;
+end;
+$push_preference_revocation$;
+
+select private.set_notification_consent(
+  '90000000-0000-4000-8000-000000000009',
+  'product_updates', false, 'product-updates-v1', 'native_settings'
+);
+
+do $push_consent_revocation$
+begin
+  if exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.user_id = '90000000-0000-4000-8000-000000000009'
+      and delivery.state in ('pending', 'leased', 'retry', 'unknown')
+  ) then raise exception 'Consent revocation left a claimable delivery'; end if;
+  if has_table_privilege('authenticated', 'private.notification_devices', 'select')
+    or has_function_privilege(
+      'authenticated',
+      'public.register_notification_device_server(uuid,uuid,uuid,text,uuid,text,text,text,integer,text,text,text,text,text)',
+      'execute'
+    )
+  then raise exception 'Notification device secrets or server registration are client-accessible'; end if;
+end;
+$push_consent_revocation$;
+
+-- The provider remains external and disabled in production. Exercise only the
+-- service-role dispatch/receipt state machine with synthetic tickets.
+select private.set_notification_consent(
+  '90000000-0000-4000-8000-000000000009',
+  'product_updates', true, 'product-updates-v1', 'native_settings'
+);
+update public.notification_preferences set
+  owner_update = true, location_change = true, menu_return = true,
+  quiet_hours_start = null, quiet_hours_end = null, timezone = null,
+  updated_at = now()
+where user_id = '90000000-0000-4000-8000-000000000009'
+  and business_id = '70000000-0000-4000-8000-000000000007';
+update private.notification_devices set
+  revoked_at = now(), revoke_reason = 'user_revoked', updated_at = now()
+where user_id = '90000000-0000-4000-8000-000000000009'
+  and installation_id = '81000000-0000-4000-8000-000000000009'
+  and revoked_at is null;
+
+do $push_dispatch_receipt_runtime$
+declare
+  event_id bigint;
+  ambiguous_event_id bigint;
+  outbox_claim record;
+  ambiguous_outbox_claim record;
+  delivery_claim record;
+  ambiguous_delivery_claim record;
+  receipt_claim record;
+  receipt_claim_count integer;
+  receipt_finalization jsonb;
+  unknown_finalization jsonb;
+  outbox_finalization jsonb;
+  pending_outbox_event_id bigint;
+  retry_outbox_event_id bigint;
+  leased_outbox_event_id bigint;
+  active_outbox_event_id bigint;
+  pending_outbox_id uuid;
+  retry_outbox_id uuid;
+  leased_outbox_id uuid;
+  active_outbox_id uuid;
+begin
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object(
+      'update_id', '86000000-0000-4000-8000-000000000006',
+      'body', 'must never enter the provider payload'
+    ),
+    now() + interval '2 hours'
+  ) returning id into event_id;
+
+  select * into outbox_claim
+  from public.claim_notification_outbox_server(
+    '87000000-0000-4000-8000-000000000007', 10, 60
+  ) where source_event_id = event_id;
+  if outbox_claim.outbox_id is null then
+    raise exception 'Server dispatch wrapper did not claim the outbox event';
+  end if;
+  if public.expand_notification_outbox_server(
+    outbox_claim.outbox_id, outbox_claim.lease_token, 20
+  ) <> 1 then
+    raise exception 'Server dispatch wrapper did not fan out exactly one delivery';
+  end if;
+
+  select * into delivery_claim
+  from public.claim_notification_deliveries_server(
+    '88000000-0000-4000-8000-000000000008', 20, 60
+  ) where source_event_id = event_id;
+  if delivery_claim.delivery_id is null then
+    raise exception 'Server dispatch wrapper did not claim the delivery';
+  end if;
+  perform public.mark_notification_delivery_batch_sending_server(
+    array[delivery_claim.delivery_id], array[delivery_claim.lease_token], 60
+  );
+  perform public.record_notification_delivery_result_server(
+    delivery_claim.delivery_id,
+    delivery_claim.lease_token,
+    'accepted',
+    'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+    'ExpoAccepted',
+    null
+  );
+  if not exists (
+    select 1 from private.notification_receipt_checks receipt
+    where receipt.delivery_id = delivery_claim.delivery_id
+      and receipt.state = 'pending'
+      and receipt.available_at >= receipt.created_at + interval '14 minutes'
+  ) then raise exception 'Accepted provider ticket did not create a delayed receipt check'; end if;
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '86100000-0000-4000-8000-000000000006'),
+    now() + interval '2 hours'
+  ) returning id into ambiguous_event_id;
+  select * into ambiguous_outbox_claim
+  from public.claim_notification_outbox_server(
+    '87100000-0000-4000-8000-000000000007', 10, 60
+  ) where source_event_id = ambiguous_event_id;
+  if ambiguous_outbox_claim.outbox_id is null then
+    raise exception 'Ambiguous-send fixture outbox was not claimed';
+  end if;
+  if public.expand_notification_outbox_server(
+    ambiguous_outbox_claim.outbox_id, ambiguous_outbox_claim.lease_token, 20
+  ) <> 1 then raise exception 'Ambiguous-send fixture did not fan out'; end if;
+  select * into ambiguous_delivery_claim
+  from public.claim_notification_deliveries_server(
+    '88100000-0000-4000-8000-000000000008', 20, 60
+  ) where source_event_id = ambiguous_event_id;
+  if ambiguous_delivery_claim.delivery_id is null then
+    raise exception 'Ambiguous-send fixture delivery was not claimed';
+  end if;
+  perform public.mark_notification_delivery_batch_sending_server(
+    array[ambiguous_delivery_claim.delivery_id],
+    array[ambiguous_delivery_claim.lease_token],
+    60
+  );
+  update private.notification_deliveries set lease_expires_at = now() - interval '1 second'
+  where id = ambiguous_delivery_claim.delivery_id;
+  perform * from public.claim_notification_deliveries_server(
+    '88200000-0000-4000-8000-000000000008', 20, 60
+  );
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = ambiguous_delivery_claim.delivery_id
+      and delivery.state = 'unknown'
+      and delivery.last_provider_code = 'worker_handoff_ambiguous'
+  ) then raise exception 'Expired sending handoff was blindly retried'; end if;
+
+  update private.notification_receipt_checks set available_at = now()
+  where delivery_id = delivery_claim.delivery_id;
+  select * into receipt_claim
+  from public.claim_notification_receipts_server(
+    '89000000-0000-4000-8000-000000000009', 20, 60
+  ) where delivery_id = delivery_claim.delivery_id;
+  if receipt_claim.receipt_check_id is null then
+    raise exception 'Server receipt wrapper did not claim the provider ticket';
+  end if;
+  perform public.record_notification_receipt_result_server(
+    receipt_claim.receipt_check_id,
+    receipt_claim.lease_token,
+    'dead',
+    'DeviceNotRegistered',
+    null
+  );
+  if not exists (
+    select 1 from private.notification_devices device
+    where device.id = delivery_claim.device_id
+      and device.revoked_at is not null
+      and device.revoke_reason = 'provider_invalid'
+  ) then raise exception 'Invalid provider receipt did not retire the device'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_claim.delivery_id
+      and delivery.state = 'dead'
+      and delivery.last_provider_code = 'DeviceNotRegistered'
+  ) then raise exception 'Invalid provider receipt did not finalize the delivery'; end if;
+
+  -- An active receipt lease is preserved even when its receipt window has
+  -- expired; the provider request may still be in flight.
+  update private.notification_deliveries
+  set state = 'accepted', last_provider_code = 'ExpoAccepted', updated_at = now()
+  where id = delivery_claim.delivery_id;
+  update private.notification_receipt_checks
+  set state = 'leased', attempts = 1, created_at = now() - interval '2 hours',
+      expires_at = now() - interval '1 hour', available_at = now(),
+      lease_token = '8a000000-0000-4000-8000-000000000008',
+      lease_expires_at = now() + interval '1 hour',
+      last_provider_code = 'ExpoReceiptPending', updated_at = now()
+  where delivery_id = delivery_claim.delivery_id;
+  select count(*) into receipt_claim_count
+  from public.claim_notification_receipts_server(
+    '89a00000-0000-4000-8000-000000000009', 20, 60
+  ) where delivery_id = delivery_claim.delivery_id;
+  if receipt_claim_count <> 0
+  then raise exception 'Active receipt lease was finalized prematurely'; end if;
+  if not exists (
+    select 1 from private.notification_receipt_checks receipt
+    where receipt.delivery_id = delivery_claim.delivery_id
+      and receipt.state = 'leased'
+      and receipt.lease_token = '8a000000-0000-4000-8000-000000000008'
+      and receipt.lease_expires_at > now()
+  ) then raise exception 'Active receipt lease was cleared'; end if;
+
+  -- Receipt max-attempt finalization is atomic with the accepted delivery and
+  -- never leaves a row eligible for another provider attempt.
+  update private.notification_receipt_checks
+  set state = 'retry', attempts = 20, expires_at = now() + interval '1 day',
+      available_at = now(), lease_token = null, lease_expires_at = null,
+      last_provider_code = 'ExpoReceiptPending', updated_at = now()
+  where delivery_id = delivery_claim.delivery_id;
+  receipt_finalization := private.finalize_notification_receipt_expiry(20);
+  if coalesce((receipt_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((receipt_finalization->>'more_work')::boolean, true)
+  then raise exception 'Receipt max-attempt finalization did not settle its bounded batch'; end if;
+  if not exists (
+    select 1 from private.notification_receipt_checks receipt
+    where receipt.delivery_id = delivery_claim.delivery_id
+      and receipt.state = 'dead'
+      and receipt.last_provider_code = 'receipt_max_attempts'
+  ) or not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_claim.delivery_id
+      and delivery.state = 'failed'
+      and delivery.last_provider_code = 'receipt_max_attempts'
+  ) then raise exception 'Receipt max-attempt finalization left an accepted delivery retryable'; end if;
+
+  -- A fresh provider 5xx/lease ambiguity remains untouched during the fixed
+  -- two-hour grace window, including its lease fields.
+  update private.notification_deliveries
+  set state = 'unknown', lease_token = '8b000000-0000-4000-8000-000000000008',
+      lease_expires_at = now() + interval '1 hour', updated_at = now(),
+      last_provider_code = 'ExpoHttp503'
+  where id = ambiguous_delivery_claim.delivery_id;
+  unknown_finalization := private.finalize_unknown_notification_deliveries(20);
+  if coalesce((unknown_finalization->>'finalized')::integer, 0) <> 0
+    or coalesce((unknown_finalization->>'more_work')::boolean, true)
+  then raise exception 'Fresh unknown delivery was finalized prematurely'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = ambiguous_delivery_claim.delivery_id
+      and delivery.state = 'unknown'
+      and delivery.lease_token = '8b000000-0000-4000-8000-000000000008'
+      and delivery.lease_expires_at > now()
+  ) then raise exception 'Fresh unknown delivery lease was cleared'; end if;
+
+  -- A stale provider 5xx/lease ambiguity is finalized after the grace window
+  -- and clears any leftover lease fields.
+  update private.notification_deliveries
+  set updated_at = now() - interval '3 hours'
+  where id = ambiguous_delivery_claim.delivery_id;
+  unknown_finalization := private.finalize_unknown_notification_deliveries(20);
+  if coalesce((unknown_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((unknown_finalization->>'more_work')::boolean, true)
+  then raise exception 'Unknown delivery finalization did not settle its bounded batch'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = ambiguous_delivery_claim.delivery_id
+      and delivery.state = 'failed'
+      and delivery.lease_token is null
+      and delivery.lease_expires_at is null
+      and delivery.last_provider_code = 'provider_ambiguity_expired'
+  ) then raise exception 'Unknown provider outcome was not finalized terminally'; end if;
+
+  -- Delivery attempts that can no longer be claimed are finalized without
+  -- touching a provider-handoff `sending` row.
+  update private.notification_deliveries
+  set state = 'retry', attempts = 20, lease_token = null,
+      lease_expires_at = null, updated_at = now(),
+      last_provider_code = 'ExpoReceiptPending'
+  where id = delivery_claim.delivery_id;
+  unknown_finalization := private.finalize_unknown_notification_deliveries(20);
+  if coalesce((unknown_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((unknown_finalization->>'more_work')::boolean, true)
+  then raise exception 'Exhausted retry delivery was not finalized'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_claim.delivery_id
+      and delivery.state = 'failed'
+      and delivery.last_provider_code = 'delivery_max_attempts'
+  ) then raise exception 'Exhausted retry delivery remained retryable'; end if;
+
+  update private.notification_deliveries
+  set state = 'leased', attempts = 20,
+      lease_token = '8c000000-0000-4000-8000-000000000008',
+      lease_expires_at = now() - interval '1 second', updated_at = now(),
+      last_provider_code = 'ExpoReceiptPending'
+  where id = ambiguous_delivery_claim.delivery_id;
+  unknown_finalization := private.finalize_unknown_notification_deliveries(20);
+  if coalesce((unknown_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((unknown_finalization->>'more_work')::boolean, true)
+  then raise exception 'Expired exhausted lease was not finalized'; end if;
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = ambiguous_delivery_claim.delivery_id
+      and delivery.state = 'failed'
+      and delivery.lease_token is null
+      and delivery.lease_expires_at is null
+      and delivery.last_provider_code = 'delivery_lease_max_attempts'
+  ) then raise exception 'Expired exhausted lease remained retryable'; end if;
+
+  -- Outbox attempts have their own terminal boundary. Pending/retry rows and
+  -- expired pre-fan-out leases are settled, while an active lease remains
+  -- untouched because its worker may still be in flight.
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007', 'owner_update',
+    jsonb_build_object('update_id', '86200000-0000-4000-8000-000000000006'),
+    now() + interval '2 hours'
+  ) returning id into pending_outbox_event_id;
+  select id into pending_outbox_id
+  from private.notification_outbox where source_event_id = pending_outbox_event_id;
+  update private.notification_outbox set
+    state = 'pending', attempts = 20, lease_token = null,
+    lease_expires_at = null, updated_at = now()
+  where id = pending_outbox_id;
+  outbox_finalization := private.finalize_notification_outbox(20);
+  if coalesce((outbox_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((outbox_finalization->>'more_work')::boolean, true)
+  then raise exception 'Exhausted pending outbox was not finalized'; end if;
+  if not exists (
+    select 1 from private.notification_outbox queue
+    where queue.id = pending_outbox_id
+      and queue.state = 'dead'
+      and queue.lease_token is null
+      and queue.lease_expires_at is null
+      and queue.last_error_code = 'outbox_max_attempts'
+  ) then raise exception 'Exhausted pending outbox remained claimable'; end if;
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007', 'owner_update',
+    jsonb_build_object('update_id', '86300000-0000-4000-8000-000000000006'),
+    now() + interval '2 hours'
+  ) returning id into retry_outbox_event_id;
+  select id into retry_outbox_id
+  from private.notification_outbox where source_event_id = retry_outbox_event_id;
+  update private.notification_outbox set
+    state = 'retry', attempts = 20, lease_token = null,
+    lease_expires_at = null, updated_at = now()
+  where id = retry_outbox_id;
+  outbox_finalization := private.finalize_notification_outbox(20);
+  if coalesce((outbox_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((outbox_finalization->>'more_work')::boolean, true)
+  then raise exception 'Exhausted retry outbox was not finalized'; end if;
+  if not exists (
+    select 1 from private.notification_outbox queue
+    where queue.id = retry_outbox_id
+      and queue.state = 'dead'
+      and queue.last_error_code = 'outbox_max_attempts'
+  ) then raise exception 'Exhausted retry outbox remained claimable'; end if;
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007', 'owner_update',
+    jsonb_build_object('update_id', '86400000-0000-4000-8000-000000000006'),
+    now() + interval '2 hours'
+  ) returning id into leased_outbox_event_id;
+  select id into leased_outbox_id
+  from private.notification_outbox where source_event_id = leased_outbox_event_id;
+  update private.notification_outbox set
+    state = 'leased', attempts = 20,
+    lease_token = '8d000000-0000-4000-8000-000000000008',
+    lease_expires_at = now() - interval '1 second', updated_at = now()
+  where id = leased_outbox_id;
+  outbox_finalization := private.finalize_notification_outbox(20);
+  if coalesce((outbox_finalization->>'finalized')::integer, 0) <> 1
+    or coalesce((outbox_finalization->>'more_work')::boolean, true)
+  then raise exception 'Expired exhausted outbox lease was not finalized'; end if;
+  if not exists (
+    select 1 from private.notification_outbox queue
+    where queue.id = leased_outbox_id
+      and queue.state = 'dead'
+      and queue.lease_token is null
+      and queue.lease_expires_at is null
+      and queue.last_error_code = 'outbox_max_attempts'
+  ) then raise exception 'Expired exhausted outbox lease remained claimable'; end if;
+
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007', 'owner_update',
+    jsonb_build_object('update_id', '86500000-0000-4000-8000-000000000006'),
+    now() + interval '2 hours'
+  ) returning id into active_outbox_event_id;
+  select id into active_outbox_id
+  from private.notification_outbox where source_event_id = active_outbox_event_id;
+  update private.notification_outbox set
+    state = 'leased', attempts = 20,
+    lease_token = '8e000000-0000-4000-8000-000000000008',
+    lease_expires_at = now() + interval '1 hour', updated_at = now()
+  where id = active_outbox_id;
+  outbox_finalization := private.finalize_notification_outbox(20);
+  if coalesce((outbox_finalization->>'finalized')::integer, 0) <> 0
+    or coalesce((outbox_finalization->>'more_work')::boolean, true)
+  then raise exception 'Active outbox lease was finalized prematurely'; end if;
+  if not exists (
+    select 1 from private.notification_outbox queue
+    where queue.id = active_outbox_id
+      and queue.state = 'leased'
+      and queue.lease_token = '8e000000-0000-4000-8000-000000000008'
+      and queue.lease_expires_at > now()
+  ) then raise exception 'Active outbox lease was cleared'; end if;
+end;
+$push_dispatch_receipt_runtime$;
+
+-- A deletion freeze is an immediate account-wide push boundary. It must cancel
+-- a lease and make both later claims and provider handoff impossible.
+insert into auth.users (
+  id, aud, role, email, email_confirmed_at, raw_app_meta_data,
+  raw_user_meta_data, created_at, updated_at
+) values (
+  '93000000-0000-4000-8000-000000000003',
+  'authenticated', 'authenticated', 'runtime-push-delete@spottr.invalid', now(),
+  '{}'::jsonb,
+  '{"username":"runtime_push_delete","display_name":"Runtime Push Delete","terms_accepted":true}'::jsonb,
+  now(), now()
+);
+insert into auth.sessions (id, user_id, created_at, updated_at)
+values (
+  '93100000-0000-4000-8000-000000000003',
+  '93000000-0000-4000-8000-000000000003',
+  now(), now()
+);
+insert into public.follows (user_id, business_id)
+values (
+  '93000000-0000-4000-8000-000000000003',
+  '70000000-0000-4000-8000-000000000007'
+);
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"93000000-0000-4000-8000-000000000003","role":"authenticated","aal":"aal2","session_id":"93100000-0000-4000-8000-000000000003"}',
+  true
+);
+select public.update_follow_notification_preferences(
+  array['70000000-0000-4000-8000-000000000007'::uuid],
+  'owner_bundle', true, null, null, null,
+  'spottr:notification-preference:runtime-delete-0001'
+);
+reset role;
+
+select public.register_notification_device_server(
+  '93000000-0000-4000-8000-000000000003',
+  '93100000-0000-4000-8000-000000000003',
+  '93200000-0000-4000-8000-000000000003',
+  'ios',
+  '82000000-0000-4000-8000-000000000002',
+  repeat('9', 64), repeat('L', 48), repeat('M', 16), 1,
+  'America/Los_Angeles', '0.2.0', 'granted',
+  'product-updates-v1', 'native_settings'
+);
+
+do $push_account_deletion_runtime$
+declare
+  event_id bigint;
+  outbox_claim record;
+  delivery_claim record;
+begin
+  insert into public.business_public_events (
+    business_id, event_type, payload, expires_at
+  ) values (
+    '70000000-0000-4000-8000-000000000007',
+    'owner_update',
+    jsonb_build_object('update_id', '93300000-0000-4000-8000-000000000003'),
+    now() + interval '2 hours'
+  ) returning id into event_id;
+
+  select * into outbox_claim
+  from public.claim_notification_outbox_server(
+    '93400000-0000-4000-8000-000000000003', 20, 60
+  ) where source_event_id = event_id;
+  if outbox_claim.outbox_id is null
+    or public.expand_notification_outbox_server(
+      outbox_claim.outbox_id, outbox_claim.lease_token, 20
+    ) < 1
+  then
+    raise exception 'Deletion lifecycle fixture did not create a delivery';
+  end if;
+
+  select * into delivery_claim
+  from public.claim_notification_deliveries_server(
+    '93500000-0000-4000-8000-000000000003', 20, 60
+  ) claimed where claimed.source_event_id = event_id
+      and claimed.user_id = '93000000-0000-4000-8000-000000000003';
+  if delivery_claim.delivery_id is null then
+    raise exception 'Deletion lifecycle fixture delivery was not leased';
+  end if;
+
+  begin
+    update public.profiles
+    set status = 'deleted'
+    where user_id = '93000000-0000-4000-8000-000000000003';
+    raise exception 'Profile status changed without a deletion freeze';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  perform * from public.begin_account_deletion(
+    '93000000-0000-4000-8000-000000000003',
+    'spottr:runtime-delete-push-0001'
+  );
+
+  if not exists (
+    select 1
+    from public.profiles profile
+    where profile.user_id = '93000000-0000-4000-8000-000000000003'
+      and profile.status = 'deleted'
+  ) then
+    raise exception 'Frozen account deletion did not apply the terminal profile status';
+  end if;
+
+  if coalesce(
+    current_setting('spottr.account_deletion_request_id', true), '<missing>'
+  ) <> '' then
+    raise exception 'Account deletion left its profile-transition marker active';
+  end if;
+
+  begin
+    update public.profiles
+    set status = 'active'
+    where user_id = '93000000-0000-4000-8000-000000000003';
+    raise exception 'Deletion freeze remained a reusable profile-status bypass';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_claim.delivery_id
+      and delivery.state = 'cancelled'
+      and delivery.last_provider_code = 'account_deletion'
+      and delivery.lease_token is null
+      and delivery.lease_expires_at is null
+  ) then
+    raise exception 'Account deletion freeze left a notification delivery leased';
+  end if;
+
+  begin
+    perform public.mark_notification_delivery_batch_sending_server(
+      array[delivery_claim.delivery_id],
+      array[delivery_claim.lease_token],
+      60
+    );
+    raise exception 'Deleted account delivery crossed provider handoff';
+  exception
+    when sqlstate '40001' then null;
+  end;
+
+  update private.notification_outbox queue
+  set created_at = now() - interval '2 hours',
+      expires_at = now() - interval '1 hour',
+      updated_at = now()
+  where queue.id = outbox_claim.outbox_id;
+  perform * from public.claim_notification_deliveries_server(
+    '93600000-0000-4000-8000-000000000003', 20, 60
+  );
+  if not exists (
+    select 1 from private.notification_deliveries delivery
+    where delivery.id = delivery_claim.delivery_id
+      and delivery.state = 'cancelled'
+      and delivery.last_provider_code = 'account_deletion'
+  ) then
+    raise exception 'Expiry cleanup erased terminal account-deletion cancellation';
+  end if;
+
+  if exists (
+    select 1 from public.claim_notification_deliveries_server(
+      '93700000-0000-4000-8000-000000000003', 20, 60
+    ) claimed
+    where claimed.source_event_id = event_id
+  ) then
+    raise exception 'Deleted account delivery was claimable after freeze';
+  end if;
+end;
+$push_account_deletion_runtime$;
+
+do $push_dispatch_privilege_guard$
+declare
+  client_role text;
+  function_signature text;
+begin
+  if has_table_privilege('authenticated', 'private.notification_receipt_checks', 'select')
+    or has_function_privilege(
+      'authenticated', 'public.claim_notification_outbox_server(uuid,integer,integer)', 'execute'
+    )
+    or has_function_privilege(
+      'authenticated', 'public.claim_notification_receipts_server(uuid,integer,integer)', 'execute'
+    )
+    or has_function_privilege(
+      'authenticated', 'public.record_notification_receipt_result_server(uuid,uuid,text,text,integer)', 'execute'
+    )
+  then raise exception 'Notification provider worker authority is client-accessible'; end if;
+
+  foreach client_role in array array['anon', 'authenticated'] loop
+    foreach function_signature in array array[
+      'public.finalize_notification_outbox_server(integer)',
+      'public.finalize_unknown_notification_deliveries_server(integer)',
+      'public.finalize_notification_receipt_expiry_server(integer)',
+      'public.notification_outbox_has_pending_server(uuid[])',
+      'public.claim_notification_receipts_after_finalization_server(uuid,integer,integer)'
+    ] loop
+      if has_function_privilege(client_role, function_signature, 'execute') then
+        raise exception 'Notification wrapper % is executable by %',
+          function_signature, client_role;
+      end if;
+    end loop;
+  end loop;
+end;
+$push_dispatch_privilege_guard$;
+
+select pg_catalog.set_config(
+  'request.jwt.claims', '{"role":"service_role"}', true
+);
+set local role service_role;
+
+do $push_dispatch_service_wrapper_runtime$
+declare
+  result jsonb;
+  claimed_receipts integer;
+begin
+  result := public.finalize_notification_outbox_server(1);
+  if coalesce(jsonb_typeof(result->'finalized'), '') <> 'number'
+    or coalesce(jsonb_typeof(result->'more_work'), '') <> 'boolean'
+  then raise exception 'Service-role outbox finalizer returned an invalid contract'; end if;
+
+  result := public.finalize_unknown_notification_deliveries_server(1);
+  if coalesce(jsonb_typeof(result->'finalized'), '') <> 'number'
+    or coalesce(jsonb_typeof(result->'more_work'), '') <> 'boolean'
+  then raise exception 'Service-role delivery finalizer returned an invalid contract'; end if;
+
+  result := public.finalize_notification_receipt_expiry_server(1);
+  if coalesce(jsonb_typeof(result->'finalized'), '') <> 'number'
+    or coalesce(jsonb_typeof(result->'more_work'), '') <> 'boolean'
+  then raise exception 'Service-role receipt finalizer returned an invalid contract'; end if;
+
+  if public.notification_outbox_has_pending_server(
+    array['ffffffff-ffff-4fff-8fff-ffffffffffff'::uuid]
+  ) then raise exception 'Outbox status wrapper matched an absent row'; end if;
+
+  select count(*) into claimed_receipts
+  from public.claim_notification_receipts_after_finalization_server(
+    '89b00000-0000-4000-8000-000000000009', 1, 60
+  );
+  if claimed_receipts not between 0 and 1 then
+    raise exception 'After-finalization receipt wrapper exceeded its batch';
+  end if;
+end;
+$push_dispatch_service_wrapper_runtime$;
+
+reset role;
+select pg_catalog.set_config('request.jwt.claims', '{}', true);
+
+-- Home kitchens remain invisible and their existing chat is inaccessible while
+-- the service-owned launch gate is at its migration default. The fixture is
+-- fully eligible on jurisdiction, permit, publication, location, and chat
+-- state so a negative result proves the global gate rather than a missing
+-- prerequisite. The whole runtime file rolls back at the end.
+insert into auth.users (
+  id, aud, role, email, email_confirmed_at, raw_app_meta_data,
+  raw_user_meta_data, created_at, updated_at
+) values
+  (
+    'e9000000-0000-4000-8000-000000000001',
+    'authenticated', 'authenticated',
+    'runtime-home-merchant@spottr.invalid', now(), '{}',
+    '{"username":"runtime_home_merchant","display_name":"Runtime Home Merchant","terms_accepted":true}',
+    now(), now()
+  ),
+  (
+    'ea000000-0000-4000-8000-000000000001',
+    'authenticated', 'authenticated',
+    'runtime-home-customer@spottr.invalid', now(), '{}',
+    '{"username":"runtime_home_customer","display_name":"Runtime Home Customer","terms_accepted":true}',
+    now(), now()
+  );
+
+insert into public.jurisdictions (
+  id, country_code, region_code, locality, home_kitchens_enabled,
+  legal_reviewed_at, rules_url
+) values (
+  'e0000000-0000-4000-8000-000000000001', 'US', 'CA', 'Los Angeles',
+  true, now(), 'https://example.invalid/runtime-home-kitchen-rules'
+);
+
+insert into public.businesses (
+  id, kind, name, slug, description, state, verification, timezone,
+  jurisdiction_id, provenance, created_by
+) values (
+  'e1000000-0000-4000-8000-000000000001',
+  'home_kitchen',
+  'Runtime Global Gate Kitchen',
+  'runtime-global-gate-kitchen',
+  'Eligible home-kitchen fixture for the global launch gate.',
+  'pending',
+  'verified',
+  'America/Los_Angeles',
+  'e0000000-0000-4000-8000-000000000001',
+  'owner',
+  'e9000000-0000-4000-8000-000000000001'
+);
+
+insert into public.business_private_details (
+  business_id, business_email, business_phone
+) values (
+  'e1000000-0000-4000-8000-000000000001',
+  'runtime-home-kitchen@spottr.invalid',
+  '+12135550188'
+);
+
+insert into public.home_kitchen_permits (
+  business_id, jurisdiction_id, permit_number_private, issuer,
+  expires_on, verification, reviewed_by, reviewed_at
+) values (
+  'e1000000-0000-4000-8000-000000000001',
+  'e0000000-0000-4000-8000-000000000001',
+  'runtime-home-permit',
+  'Runtime Health Authority',
+  current_date + 30,
+  'verified',
+  'e9000000-0000-4000-8000-000000000001',
+  now()
+);
+
+select public.create_media_stage_grant(
+  'e9000000-0000-4000-8000-000000000001',
+  'quarantine/e9000000-0000-4000-8000-000000000001/e2000000-0000-4000-8000-000000000001.jpg',
+  'business_logo',
+  'e1000000-0000-4000-8000-000000000001',
+  null,
+  'image/jpeg',
+  4096
+);
+
+insert into public.media_assets (
+  id, owner_id, business_id, storage_path, mime_type, width, height,
+  byte_size, sha256, source, license_note, quarantine_state,
+  processed_storage_path, scan_completed_at, moderation
+) values (
+  'e2000000-0000-4000-8000-000000000001',
+  'e9000000-0000-4000-8000-000000000001',
+  'e1000000-0000-4000-8000-000000000001',
+  'quarantine/e9000000-0000-4000-8000-000000000001/e2000000-0000-4000-8000-000000000001.jpg',
+  'image/jpeg', 512, 512, 4096, repeat('e', 64), 'owner_upload',
+  'Runtime global-gate fixture', 'clean',
+  'published/runtime/global-gate-kitchen-logo-processed.jpg', now(), 'approved'
+);
+
+update public.businesses
+set logo_asset_id = 'e2000000-0000-4000-8000-000000000001'
+where id = 'e1000000-0000-4000-8000-000000000001';
+
+insert into public.business_locations (
+  id, business_id, label, address_line, city, region, postal_code,
+  point, is_primary, is_approximate, public_address, publication_state
+) values (
+  'e3000000-0000-4000-8000-000000000001',
+  'e1000000-0000-4000-8000-000000000001',
+  'Runtime approximate kitchen area',
+  null,
+  'Los Angeles',
+  'CA',
+  '90001',
+  public.st_setsrid(public.st_makepoint(-118.24, 34.05), 4326)::public.geography,
+  true,
+  true,
+  false,
+  'published'
+);
+
+insert into public.weekly_hours (business_id, weekday, opens_at, closes_at, is_closed)
+select
+  'e1000000-0000-4000-8000-000000000001',
+  weekday::smallint,
+  '00:00'::time,
+  '23:59'::time,
+  false
+from generate_series(0, 6) weekday;
+
+insert into public.business_payments (business_id, payment)
+values ('e1000000-0000-4000-8000-000000000001', 'cash');
+
+insert into public.menu_sections (id, business_id, name, is_published)
+values (
+  'e4000000-0000-4000-8000-000000000001',
+  'e1000000-0000-4000-8000-000000000001',
+  'Runtime gate menu',
+  true
+);
+
+insert into public.menu_items (
+  id, section_id, name, price_minor, currency, availability, is_published
+) values (
+  'e5000000-0000-4000-8000-000000000001',
+  'e4000000-0000-4000-8000-000000000001',
+  'Runtime gate meal',
+  1200,
+  'USD',
+  'available',
+  true
+);
+
+update public.businesses
+set state = 'published'
+where id = 'e1000000-0000-4000-8000-000000000001';
+
+insert into public.business_members (
+  business_id, user_id, role, status, accepted_at
+) values (
+  'e1000000-0000-4000-8000-000000000001',
+  'e9000000-0000-4000-8000-000000000001',
+  'owner',
+  'active',
+  now()
+);
+
+insert into public.marketplace_conversations (
+  id, public_id, business_id, customer_id, merchant_id,
+  state, last_sequence, last_message_at
+) values (
+  'e6000000-0000-4000-8000-000000000001',
+  'e6010000-0000-4000-8000-000000000001',
+  'e1000000-0000-4000-8000-000000000001',
+  'ea000000-0000-4000-8000-000000000001',
+  'e9000000-0000-4000-8000-000000000001',
+  'open',
+  1,
+  now()
+);
+
+insert into public.marketplace_messages (
+  id, public_id, conversation_id, sender_id, sequence, body
+) values (
+  'e7000000-0000-4000-8000-000000000001',
+  'e7010000-0000-4000-8000-000000000001',
+  'e6000000-0000-4000-8000-000000000001',
+  'e9000000-0000-4000-8000-000000000001',
+  1,
+  'Runtime gate fixture message.'
+);
+
+-- Create one authorized exact disclosure before exercising the service toggle.
+-- The latest consent trigger privatizes buyer consent metadata after recording
+-- its receipt, while the disclosure-window trigger enforces a short expiry.
+do $home_kitchen_global_gate_fixture$
+declare
+  fixture_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  insert into public.marketplace_pickup_requests (
+    id, public_id, conversation_id, requested_by,
+    pickup_starts_at, pickup_ends_at, note, state, version,
+    responded_by, responded_at, choice_kind,
+    buyer_terms_version, buyer_acknowledged_at
+  ) values (
+    'e8000000-0000-4000-8000-000000000001',
+    'e8010000-0000-4000-8000-000000000001',
+    'e6000000-0000-4000-8000-000000000001',
+    'ea000000-0000-4000-8000-000000000001',
+    fixture_now + interval '1 hour',
+    fixture_now + interval '2 hours',
+    null,
+    'authorized',
+    2,
+    'e9000000-0000-4000-8000-000000000001',
+    fixture_now,
+    'seller_residence',
+    '2026-08-01',
+    fixture_now
+  );
+
+  insert into private.neighborhood_pickup_disclosures (
+    request_id, choice_kind, choice_public_id, label, address_line,
+    city, region, postal_code, latitude, longitude, authorized_by,
+    authorized_at, expires_at
+  ) values (
+    'e8000000-0000-4000-8000-000000000001',
+    'seller_residence',
+    'e8020000-0000-4000-8000-000000000001',
+    'Runtime exact residence',
+    '1 Runtime Exact Way',
+    'Los Angeles',
+    'CA',
+    '90001',
+    34.05,
+    -118.24,
+    'e9000000-0000-4000-8000-000000000001',
+    fixture_now,
+    fixture_now + interval '4 hours'
+  );
+end;
+$home_kitchen_global_gate_fixture$;
+
+select pg_catalog.set_config(
+  'request.jwt.claims', '{"role":"service_role"}', true
+);
+set local role service_role;
+
+do $home_kitchen_global_gate_default_off$
+declare
+  gate jsonb;
+  map_count integer;
+  nearby_count integer;
+  search_count integer;
+begin
+  gate := public.get_home_kitchen_launch_gate();
+  if coalesce((gate->>'enabled')::boolean, true) then
+    raise exception 'Home-kitchen launch gate did not default to false';
+  end if;
+
+  select count(*) into map_count
+  from public.map_food_places(
+    -118.5, 33.8, -118.0, 34.3, 14,
+    array['home_kitchen']::text[], 1200
+  ) place
+  where place.business_id = 'e1000000-0000-4000-8000-000000000001';
+  if map_count <> 0 then
+    raise exception 'Disabled home kitchen appeared in map discovery';
+  end if;
+
+  select count(*) into nearby_count
+  from public.nearby_businesses(34.05, -118.24, 16093, 50, 0) place
+  where place.business_id = 'e1000000-0000-4000-8000-000000000001';
+  if nearby_count <> 0 then
+    raise exception 'Disabled home kitchen appeared in nearby discovery';
+  end if;
+
+  select count(*) into search_count
+  from public.search_businesses('Runtime Global Gate Kitchen', 25, 0) place
+  where place.business_id = 'e1000000-0000-4000-8000-000000000001';
+  if search_count <> 0 then
+    raise exception 'Disabled home kitchen appeared in search discovery';
+  end if;
+end;
+$home_kitchen_global_gate_default_off$;
+
+reset role;
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"ea000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $home_kitchen_global_gate_chat_off$
+declare
+  visible_count integer;
+  conversation_count integer;
+begin
+  select count(*) into visible_count
+  from public.public_business_directory
+  where business_id = 'e1000000-0000-4000-8000-000000000001';
+  if visible_count <> 0 then
+    raise exception 'Disabled home kitchen appeared in the public directory';
+  end if;
+
+  select count(*) into conversation_count
+  from public.list_my_marketplace_conversations_v2(null, null, 30)
+  where business_id = 'e1000000-0000-4000-8000-000000000001';
+  if conversation_count <> 0 then
+    raise exception 'Disabled home-kitchen conversation appeared in inbox';
+  end if;
+
+  begin
+    perform public.get_marketplace_conversation_role(
+      'e6010000-0000-4000-8000-000000000001'
+    );
+    raise exception 'Disabled home-kitchen conversation role was readable';
+  exception
+    when sqlstate '42501' then
+      if sqlerrm <> 'CHAT_ACCESS_REQUIRED' then raise; end if;
+  end;
+
+  begin
+    perform public.get_marketplace_messages_v2(
+      'e6010000-0000-4000-8000-000000000001', null::bigint, 50
+    );
+    raise exception 'Disabled home-kitchen messages were readable';
+  exception
+    when sqlstate '42501' then
+      if sqlerrm <> 'CHAT_ACCESS_REQUIRED' then raise; end if;
+  end;
+
+  begin
+    perform public.send_marketplace_message(
+      'e6010000-0000-4000-8000-000000000001',
+      'Blocked while the home-kitchen gate is disabled.',
+      '{}'::uuid[],
+      'home-gate-runtime-send-off-0001'
+    );
+    raise exception 'Disabled home-kitchen chat accepted a message';
+  exception
+    when sqlstate '42501' then
+      if sqlerrm <> 'CHAT_WRITE_NOT_ALLOWED' then raise; end if;
+  end;
+end;
+$home_kitchen_global_gate_chat_off$;
+
+reset role;
+select pg_catalog.set_config(
+  'request.jwt.claims', '{"role":"service_role"}', true
+);
+set local role service_role;
+
+do $home_kitchen_global_gate_toggle$
+declare
+  gate jsonb;
+  result jsonb;
+  cleanup_definition text;
+  request_definition text;
+  authorization_definition text;
+  cleanup_lock_position integer;
+  cleanup_update_position integer;
+  request_lock_position integer;
+  request_row_lock_position integer;
+  request_eligibility_position integer;
+  authorization_lock_position integer;
+  authorization_row_lock_position integer;
+  authorization_eligibility_position integer;
+  client_role text;
+begin
+  if has_function_privilege(
+    'anon',
+    'public.set_home_kitchen_launch_gate(boolean,text)',
+    'execute'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.set_home_kitchen_launch_gate(boolean,text)',
+    'execute'
+  ) then
+    raise exception 'Client role can toggle the home-kitchen launch gate';
+  end if;
+  if coalesce(pg_catalog.has_table_privilege(
+    'authenticated',
+    (
+      select target_table.oid
+      from pg_catalog.pg_class target_table
+      join pg_catalog.pg_namespace target_schema
+        on target_schema.oid = target_table.relnamespace
+      where target_schema.nspname = 'private'
+        and target_table.relname = 'home_kitchen_runtime_settings'
+        and target_table.relkind in ('r', 'p')
+    ),
+    'select'
+  ), false) then
+    raise exception 'Authenticated role can read private home-kitchen gate state';
+  end if;
+
+  select pg_catalog.pg_get_functiondef(target_function.oid)
+  into cleanup_definition
+  from pg_catalog.pg_proc target_function
+  join pg_catalog.pg_namespace target_schema
+    on target_schema.oid = target_function.pronamespace
+  where target_schema.nspname = 'private'
+    and target_function.proname = 'revoke_home_kitchen_pickup_state'
+    and target_function.pronargs = 0;
+  if cleanup_definition is null then
+    raise exception 'Home-kitchen cleanup function is missing';
+  end if;
+  cleanup_lock_position := position(
+    'pg_catalog.pg_advisory_xact_lock(' in cleanup_definition
+  );
+  cleanup_update_position := position(
+    'update public.marketplace_pickup_requests' in cleanup_definition
+  );
+  if cleanup_lock_position <= 0
+    or cleanup_update_position <= cleanup_lock_position
+  then
+    raise exception 'Home-kitchen cleanup does not take the exclusive gate lock before request rows';
+  end if;
+
+  select pg_catalog.pg_get_functiondef(
+    'public.request_neighborhood_pickup_choice(uuid,uuid,text,timestamptz,timestamptz,text,text,text)'::regprocedure
+  ) into request_definition;
+  request_lock_position := position(
+    'pg_catalog.pg_advisory_xact_lock_shared(' in request_definition
+  );
+  request_row_lock_position := position(
+    'for update of conversation' in request_definition
+  );
+  request_eligibility_position := position(
+    'private.marketplace_conversation_write_allowed' in request_definition
+  );
+  if request_lock_position <= 0
+    or request_row_lock_position <= request_lock_position
+    or request_eligibility_position <= request_lock_position
+    or request_eligibility_position <= request_row_lock_position
+  then
+    raise exception 'Neighborhood pickup request does not share the gate lock before row lock and eligibility';
+  end if;
+
+  select pg_catalog.pg_get_functiondef(
+    'public.authorize_neighborhood_pickup_choice(uuid,uuid,integer,text)'::regprocedure
+  ) into authorization_definition;
+  authorization_lock_position := position(
+    'pg_catalog.pg_advisory_xact_lock_shared(' in authorization_definition
+  );
+  authorization_row_lock_position := position(
+    'for update;' in authorization_definition
+  );
+  authorization_eligibility_position := position(
+    'private.marketplace_conversation_write_allowed' in authorization_definition
+  );
+  if authorization_lock_position <= 0
+    or authorization_row_lock_position <= authorization_lock_position
+    or authorization_eligibility_position <= authorization_lock_position
+    or authorization_eligibility_position <= authorization_row_lock_position
+  then
+    raise exception 'Neighborhood pickup authorization does not share the gate lock before row lock and eligibility';
+  end if;
+
+  foreach client_role in array array['anon', 'authenticated'] loop
+    if has_function_privilege(
+      client_role,
+      'public.request_marketplace_pickup_detail(uuid,timestamptz,timestamptz,text,text)',
+      'execute'
+    ) or has_function_privilege(
+      client_role,
+      'public.authorize_marketplace_pickup_detail(uuid,uuid,uuid,integer,text)',
+      'execute'
+    ) then
+      raise exception 'Legacy exact-pickup writer is executable by %', client_role;
+    end if;
+  end loop;
+
+  result := public.set_home_kitchen_launch_gate(
+    true,
+    'Enable the eligible runtime fixture for the toggle contract.'
+  );
+  if coalesce((result->>'enabled')::boolean, false) is distinct from true then
+    raise exception 'Home-kitchen launch gate did not enable through service role';
+  end if;
+
+  gate := public.get_home_kitchen_launch_gate();
+  if coalesce((gate->>'enabled')::boolean, false) is distinct from true then
+    raise exception 'Home-kitchen launch gate status did not reflect enablement';
+  end if;
+end;
+$home_kitchen_global_gate_toggle$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"ea000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal1"}',
+  true
+);
+
+do $home_kitchen_global_gate_chat_on$
+declare
+  visible_count integer;
+  conversation_count integer;
+  message_count integer;
+  role_name text;
+  start_result jsonb;
+begin
+  select count(*) into visible_count
+  from public.public_business_directory
+  where business_id = 'e1000000-0000-4000-8000-000000000001';
+  if visible_count <> 1 then
+    raise exception 'Eligible home kitchen remained hidden after enablement';
+  end if;
+
+  select count(*) into conversation_count
+  from public.list_my_marketplace_conversations_v2(null, null, 30)
+  where business_id = 'e1000000-0000-4000-8000-000000000001';
+  if conversation_count <> 1 then
+    raise exception 'Enabled home-kitchen conversation was not listed';
+  end if;
+
+  role_name := public.get_marketplace_conversation_role(
+    'e6010000-0000-4000-8000-000000000001'
+  );
+  if role_name <> 'customer' then
+    raise exception 'Enabled home-kitchen conversation returned the wrong role';
+  end if;
+
+  select count(*) into message_count
+  from public.get_marketplace_messages_v2(
+    'e6010000-0000-4000-8000-000000000001', null::bigint, 50
+  );
+  if message_count <> 1 then
+    raise exception 'Enabled home-kitchen message was not readable';
+  end if;
+
+  start_result := public.start_marketplace_conversation(
+    'e1000000-0000-4000-8000-000000000001',
+    'home-gate-runtime-start-on-0001'
+  );
+  if coalesce(start_result->>'business_id', '')
+    <> 'e1000000-0000-4000-8000-000000000001'
+  then
+    raise exception 'Enabled home-kitchen conversation start did not succeed';
+  end if;
+end;
+$home_kitchen_global_gate_chat_on$;
+
+reset role;
+select pg_catalog.set_config(
+  'request.jwt.claims', '{"role":"service_role"}', true
+);
+set local role service_role;
+
+do $home_kitchen_global_gate_disable$
+declare
+  result jsonb;
+  request_state text;
+  conversation_count integer;
+begin
+  result := public.set_home_kitchen_launch_gate(
+    false,
+    'Disable the runtime fixture and revoke all home-kitchen pickup state.'
+  );
+  if coalesce((result->>'enabled')::boolean, true) then
+    raise exception 'Home-kitchen launch gate did not disable through service role';
+  end if;
+  if coalesce((result->'cleanup'->>'cancelled_requests')::integer, 0) < 1 then
+    raise exception 'Disabling the gate did not cancel the active pickup request';
+  end if;
+
+  select state into request_state
+  from public.marketplace_pickup_requests
+  where id = 'e8000000-0000-4000-8000-000000000001';
+  if request_state <> 'cancelled' then
+    raise exception 'Home-kitchen pickup request was not cancelled on disable';
+  end if;
+
+  select count(*) into conversation_count
+  from public.marketplace_conversations
+  where id = 'e6000000-0000-4000-8000-000000000001';
+  if conversation_count <> 1 then
+    raise exception 'Disabling the gate deleted a conversation';
+  end if;
+end;
+$home_kitchen_global_gate_disable$;
+
+reset role;
+
+do $home_kitchen_global_gate_private_cleanup$
+declare
+  disclosure_count integer;
+begin
+  select count(*) into disclosure_count
+  from private.neighborhood_pickup_disclosures
+  where request_id = 'e8000000-0000-4000-8000-000000000001';
+  if disclosure_count <> 0 then
+    raise exception 'Exact Neighborhood Kitchen disclosure survived disable';
+  end if;
+end;
+$home_kitchen_global_gate_private_cleanup$;
+
+do $business_claim_evidence_catalog_contract$
+declare
+  intake_enabled boolean;
+  purge_enabled boolean;
+  barrier_function regprocedure;
+  barrier_definition text;
+begin
+  if has_table_privilege('anon', 'private.business_claim_evidence', 'select')
+    or has_table_privilege('authenticated', 'private.business_claim_evidence', 'select')
+    or has_table_privilege('service_role', 'private.business_claim_evidence', 'select')
+    or has_table_privilege('anon', 'private.business_claim_evidence_audit', 'select')
+    or has_table_privilege('authenticated', 'private.business_claim_evidence_audit', 'select')
+    or has_table_privilege('service_role', 'private.business_claim_evidence_audit', 'select')
+    or has_table_privilege(
+      'authenticated',
+      'private.business_claim_evidence_account_deletion_exceptions',
+      'select'
+    )
+    or has_table_privilege(
+      'service_role',
+      'private.business_claim_evidence_account_deletion_exceptions',
+      'select'
+    )
+    or has_table_privilege(
+      'authenticated',
+      'private.business_claim_evidence_purge_receipts',
+      'select'
+    )
+    or has_table_privilege(
+      'service_role',
+      'private.business_claim_evidence_purge_receipts',
+      'select'
+    )
+  then
+    raise exception 'Claim evidence or its audit trail is directly readable';
+  end if;
+
+  if has_function_privilege(
+      'anon',
+      'public.business_claim_evidence_intake_enabled()',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.business_claim_evidence_intake_enabled()',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.business_claim_evidence_intake_enabled()',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.prepare_business_claim_evidence_purge_batch()',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.prepare_business_claim_evidence_purge_batch()',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.finalize_business_claim_evidence_purge_batch(uuid,text[])',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.finalize_business_claim_evidence_purge_batch(uuid,text[])',
+      'execute'
+    )
+    or not has_function_privilege(
+      'authenticated',
+      'private.is_protected_business_claim_evidence_path(text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'anon',
+      'private.is_protected_business_claim_evidence_path(text)',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.media_quarantine_cleanup_manifest()',
+      'execute'
+    )
+    or has_function_privilege(
+      'service_role',
+      'public.finalize_media_quarantine_cleanup(text[])',
+      'execute'
+    )
+    or has_function_privilege(
+      'authenticated',
+      'public.checkpoint_account_deletion_storage_batch(uuid,uuid,text[])',
+      'execute'
+    )
+    or not has_function_privilege(
+      'service_role',
+      'public.checkpoint_account_deletion_storage_batch(uuid,uuid,text[])',
+      'execute'
+    )
+  then
+    raise exception 'Claim-evidence service RPC ACL is unsafe';
+  end if;
+
+  foreach barrier_function in array array[
+    'public.prepare_business_claim_evidence_purge_batch()'::regprocedure,
+    'public.finalize_business_claim_evidence_purge_batch(uuid,text[])'::regprocedure,
+    'public.prepare_media_cleanup_batch()'::regprocedure,
+    'public.finalize_media_cleanup_batch(uuid,text[])'::regprocedure,
+    'public.prepare_account_deletion_storage_batch(uuid,uuid)'::regprocedure,
+    'public.checkpoint_account_deletion_storage_batch(uuid,uuid,text[])'::regprocedure
+  ] loop
+    select pg_catalog.pg_get_functiondef(barrier_function)
+    into barrier_definition;
+    if position(
+      'pg_catalog.pg_advisory_xact_lock_shared(7742004, 1)'
+      in barrier_definition
+    ) <= 0 then
+      raise exception 'Storage mutation RPC % does not share the maintenance barrier',
+        barrier_function;
+    end if;
+  end loop;
+
+  select config.intake_enabled, config.purge_enabled
+  into intake_enabled, purge_enabled
+  from private.business_claim_evidence_runtime_config config
+  where config.singleton;
+  if coalesce(intake_enabled, true) or coalesce(purge_enabled, true) then
+    raise exception 'Claim-evidence runtime gates did not default off';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_constraint constraint_row
+    where constraint_row.conrelid = 'public.business_claims'::regclass
+      and constraint_row.conname = 'business_claims_legacy_evidence_path_retired'
+      and pg_catalog.pg_get_constraintdef(constraint_row.oid)
+        like '%evidence_private_path IS NULL%'
+  ) then
+    raise exception 'Legacy public claim-evidence path is not retired';
+  end if;
+
+  if exists (
+    select 1
+    from information_schema.columns column_row
+    where column_row.table_schema = 'private'
+      and column_row.table_name = 'business_claim_evidence_audit'
+      and column_row.column_name in ('storage_path', 'storage_path_hash', 'file_name', 'document_text')
+  ) then
+    raise exception 'Claim-evidence audit stores prohibited evidence detail';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_policies policy_row
+    where policy_row.schemaname = 'storage'
+      and policy_row.tablename = 'objects'
+      and policy_row.policyname = 'users delete own quarantine media'
+      and policy_row.qual like '%is_protected_business_claim_evidence_path%'
+  ) then
+    raise exception 'Quarantine deletion policy does not protect claim evidence';
+  end if;
+end;
+$business_claim_evidence_catalog_contract$;
+
+do $business_claim_evidence_runtime_contract$
+declare
+  deletion_user_id constant uuid := 'fa000000-0000-4000-8000-000000000001';
+  held_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg';
+  unprotected_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg';
+  purge_path constant text := 'quarantine/cccccccc-cccc-4ccc-8ccc-cccccccccccc/dddddddd-dddd-4ddd-8ddd-dddddddddddd.png';
+  result jsonb;
+  purge_batch uuid;
+  retained_state text;
+  retained_path text;
+  retained_hash text;
+  deletion_request_id constant uuid := 'fe000000-0000-4000-8000-000000000001';
+begin
+  insert into auth.users (
+    id,
+    aud,
+    role,
+    email,
+    email_confirmed_at,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    created_at,
+    updated_at
+  ) values (
+    deletion_user_id,
+    'authenticated',
+    'authenticated',
+    'runtime-claim-evidence-delete@spottr.invalid',
+    now(),
+    '{}'::jsonb,
+    '{"username":"runtime_claim_evidence_delete","display_name":"Runtime Claim Evidence Delete","terms_accepted":true}'::jsonb,
+    now(),
+    now()
+  );
+
+  insert into private.business_claim_evidence (
+    claimant_id,
+    storage_path,
+    storage_path_hash
+  ) values (
+    deletion_user_id,
+    held_path,
+    encode(extensions.digest(held_path, 'sha256'), 'hex')
+  );
+
+  insert into storage.objects (bucket_id, name, owner_id)
+  values
+    ('spottr-media', held_path, deletion_user_id::text),
+    ('spottr-media', unprotected_path, deletion_user_id::text);
+
+  insert into private.media_cleanup_items (
+    storage_path,
+    owner_id,
+    reason
+  ) values (
+    held_path,
+    null,
+    'unregistered_upload'
+  );
+
+  result := public.prepare_media_cleanup_batch();
+  if (result->'storage_paths') ? held_path then
+    raise exception 'Generic cleanup claimed retained business-claim evidence';
+  end if;
+
+  insert into private.business_claim_evidence (
+    storage_path,
+    storage_path_hash,
+    lifecycle_state,
+    legal_hold,
+    retention_policy_version,
+    purge_after
+  ) values (
+    purge_path,
+    encode(extensions.digest(purge_path, 'sha256'), 'hex'),
+    'purge_eligible',
+    false,
+    'runtime-test-policy',
+    now() - interval '1 minute'
+  );
+
+  result := public.prepare_business_claim_evidence_purge_batch();
+  if coalesce((result->>'enabled')::boolean, true)
+    or result->>'batch_id' is not null
+    or jsonb_array_length(result->'storage_paths') <> 0
+  then
+    raise exception 'Disabled claim-evidence purge produced work';
+  end if;
+
+  update private.business_claim_evidence_runtime_config
+  set purge_enabled = true, updated_at = now()
+  where singleton;
+
+  result := public.prepare_business_claim_evidence_purge_batch();
+  purge_batch := (result->>'batch_id')::uuid;
+  if not coalesce((result->>'enabled')::boolean, false)
+    or purge_batch is null
+    or jsonb_array_length(result->'storage_paths') <> 1
+    or result->'storage_paths'->>0 <> purge_path
+  then
+    raise exception 'Enabled claim-evidence purge did not claim the exact eligible path';
+  end if;
+
+  result := public.finalize_business_claim_evidence_purge_batch(
+    purge_batch,
+    array[purge_path]
+  );
+  if coalesce((result->>'finalized_count')::integer, 0) <> 1 then
+    raise exception 'Claim-evidence purge receipt did not finalize exactly one item';
+  end if;
+
+  result := public.finalize_business_claim_evidence_purge_batch(
+    purge_batch,
+    array[purge_path]
+  );
+  if coalesce((result->>'finalized_count')::integer, 0) <> 1
+    or not coalesce((result->>'already_finalized')::boolean, false)
+    or not exists (
+      select 1
+      from private.business_claim_evidence_purge_receipts receipt
+      where receipt.batch_id = purge_batch
+        and receipt.state = 'finalized'
+        and receipt.finalized_at is not null
+        and receipt.item_count = 1
+    )
+  then
+    raise exception 'Claim-evidence purge receipt replay was not idempotent';
+  end if;
+
+  select evidence.lifecycle_state, evidence.storage_path, evidence.storage_path_hash
+  into retained_state, retained_path, retained_hash
+  from private.business_claim_evidence evidence
+  where evidence.storage_path_hash = encode(
+    extensions.digest(purge_path, 'sha256'),
+    'hex'
+  );
+  if retained_state <> 'purged'
+    or retained_path is not null
+    or retained_hash is null
+  then
+    raise exception 'Claim-evidence purge did not retain a path-free tombstone';
+  end if;
+
+  select evidence.lifecycle_state, evidence.storage_path
+  into retained_state, retained_path
+  from private.business_claim_evidence evidence
+  where evidence.storage_path_hash = encode(
+    extensions.digest(held_path, 'sha256'),
+    'hex'
+  );
+  if retained_state <> 'retained' or retained_path <> held_path then
+    raise exception 'Legal-held claim evidence changed during purge';
+  end if;
+
+  insert into private.account_deletion_requests (
+    id,
+    user_id,
+    request_fingerprint,
+    state,
+    expires_at
+  ) values (
+    deletion_request_id,
+    deletion_user_id,
+    repeat('e', 64),
+    'processing',
+    now() + interval '24 hours'
+  );
+  insert into private.account_deletion_freezes (user_id, request_id)
+  values (deletion_user_id, deletion_request_id);
+
+  result := public.prepare_account_deletion_storage_batch(
+    deletion_request_id,
+    deletion_user_id
+  );
+  if not coalesce((result->>'ready')::boolean, false)
+    or coalesce((result->>'preserved_evidence_count')::integer, 0) <> 1
+    or (result->'storage_paths') ? held_path
+    or not exists (
+      select 1
+      from private.business_claim_evidence_account_deletion_exceptions exception_row
+      join private.business_claim_evidence evidence
+        on evidence.id = exception_row.evidence_id
+      where exception_row.request_id = deletion_request_id
+        and evidence.storage_path = held_path
+        and exception_row.reason = 'retention_boundary'
+    )
+  then
+    raise exception 'Account deletion did not preserve held claim evidence exactly';
+  end if;
+
+  update private.business_claim_evidence_runtime_config
+  set purge_enabled = false, updated_at = now()
+  where singleton;
+end;
+$business_claim_evidence_runtime_contract$;
+
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"sub":"fa000000-0000-4000-8000-000000000001","role":"authenticated","aal":"aal2"}',
+  true
+);
+
+do $business_claim_evidence_storage_delete_policy_contract$
+declare
+  deleted_count integer;
+  held_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg';
+  unprotected_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jpg';
+begin
+  begin
+    delete from storage.objects object_row
+    where object_row.bucket_id = 'spottr-media'
+      and object_row.name = held_path;
+    raise exception 'Direct storage-table deletion unexpectedly bypassed the Storage API guard';
+  exception
+    when others then
+      if sqlerrm not like 'Direct deletion from storage tables is not allowed.%' then
+        raise;
+      end if;
+  end;
+
+  -- Supabase Storage sets this transaction-local flag after the HTTP API has
+  -- authorized the request. It preserves the platform's orphan-prevention
+  -- trigger while allowing this rollback-only test to exercise our DELETE RLS.
+  perform pg_catalog.set_config('storage.allow_delete_query', 'true', true);
+
+  delete from storage.objects object_row
+  where object_row.bucket_id = 'spottr-media'
+    and object_row.name = held_path;
+  get diagnostics deleted_count = row_count;
+  if deleted_count <> 0 then
+    raise exception 'Authenticated storage policy deleted retained business-claim evidence';
+  end if;
+
+  delete from storage.objects object_row
+  where object_row.bucket_id = 'spottr-media'
+    and object_row.name = unprotected_path;
+  get diagnostics deleted_count = row_count;
+  if deleted_count <> 1 then
+    raise exception 'Authenticated storage policy did not delete an ordinary owned quarantine object';
+  end if;
+end;
+$business_claim_evidence_storage_delete_policy_contract$;
+
+reset role;
+select pg_catalog.set_config('storage.allow_delete_query', 'false', true);
+select pg_catalog.set_config('request.jwt.claims', '{}'::text, true);
+
+do $business_claim_evidence_auth_delete_contract$
+declare
+  deletion_user_id constant uuid := 'fa000000-0000-4000-8000-000000000001';
+  held_path constant text := 'quarantine/fa000000-0000-4000-8000-000000000001/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jpg';
+  deletion_request_id constant uuid := 'fe000000-0000-4000-8000-000000000001';
+begin
+  delete from auth.users auth_user
+  where auth_user.id = deletion_user_id;
+  if not found then
+    raise exception 'Auth-delete fixture was not removed';
+  end if;
+
+  if not exists (
+    select 1
+    from private.business_claim_evidence evidence
+    where evidence.storage_path = held_path
+      and evidence.claimant_id is null
+      and evidence.lifecycle_state = 'retained'
+      and evidence.legal_hold
+  ) then
+    raise exception 'Auth deletion did not preserve held claim evidence with a cleared claimant reference';
+  end if;
+
+  if not exists (
+    select 1
+    from private.account_deletion_requests deletion_request
+    where deletion_request.id = deletion_request_id
+      and deletion_request.user_id is null
+  ) then
+    raise exception 'Auth deletion did not retain the path-free account-deletion receipt';
+  end if;
+
+  if not exists (
+    select 1
+    from private.business_claim_evidence_account_deletion_exceptions exception_row
+    join private.business_claim_evidence evidence
+      on evidence.id = exception_row.evidence_id
+    where exception_row.request_id = deletion_request_id
+      and exception_row.reason = 'retention_boundary'
+      and evidence.storage_path = held_path
+  ) then
+    raise exception 'Auth deletion removed the held-evidence preservation exception';
+  end if;
+
+  if not exists (
+    select 1
+    from storage.objects object_row
+    where object_row.bucket_id = 'spottr-media'
+      and object_row.name = held_path
+  ) then
+    raise exception 'Auth deletion removed the retained claim-evidence object';
+  end if;
+end;
+$business_claim_evidence_auth_delete_contract$;
+
 rollback;

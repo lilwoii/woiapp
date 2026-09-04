@@ -1,7 +1,12 @@
 import { featureFlags } from '@/lib/features';
+import { safePublicHttpsUrl } from '@/lib/links';
 import { stageMediaUpload, type LocalMedia } from '@/lib/media-upload';
 import { checkProfessionalText } from '@/lib/moderation';
-import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import {
+  createAccountBoundSupabaseClient,
+  isSupabaseConfigured,
+  supabase,
+} from '@/lib/supabase';
 import type { BusinessCategory } from '@/types/marketplace';
 
 export const BUSINESS_LOGO_MIN_DIMENSION = 512;
@@ -437,29 +442,14 @@ export function validateBusinessProfileValues(
       'Enter a business phone using 7–40 digits and standard phone punctuation.'
     );
   }
-  const websiteUrl = input.websiteUrl.trim();
-  if (websiteUrl) {
-    if (websiteUrl.length > 2048 || !websiteUrl.startsWith('https://')) {
-      throw new BusinessProfileValidationError(
-        'Website must be a complete HTTPS address.'
-      );
-    }
-    try {
-      const parsed = new URL(websiteUrl);
-      if (
-        parsed.protocol !== 'https:' ||
-        !parsed.hostname ||
-        parsed.username ||
-        parsed.password
-      ) {
-        throw new Error('unsafe');
-      }
-    } catch {
-      throw new BusinessProfileValidationError(
-        'Website must be a complete HTTPS address.'
-      );
-    }
+  const websiteInput = input.websiteUrl.trim();
+  const normalizedWebsiteUrl = websiteInput ? safePublicHttpsUrl(websiteInput) : null;
+  if (websiteInput && !normalizedWebsiteUrl) {
+    throw new BusinessProfileValidationError(
+      'Website must be a public HTTPS address without credentials or a private-network host.'
+    );
   }
+  const websiteUrl = normalizedWebsiteUrl ?? '';
   if (input.showWebsitePublic && !websiteUrl) {
     throw new BusinessProfileValidationError(
       'Add an HTTPS website before showing it publicly.'
@@ -677,30 +667,26 @@ function failure<T>(
   return { ok: false, code: 'UNKNOWN', reason: fallback };
 }
 
-async function secureClient(businessId?: string) {
+async function secureClient(expectedUserId: string, businessId?: string) {
   if (!isSupabaseConfigured || !supabase) {
     throw Object.assign(new Error('Live services are not configured.'), {
       code: 'CONFIG_REQUIRED',
     });
   }
-  const [{ data: userData, error: userError }, assurance] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
-  ]);
-  if (userError || !userData.user) {
-    throw Object.assign(userError ?? new Error('Not authenticated'), {
+  if (!expectedUserId || !uuidPattern.test(expectedUserId)) {
+    throw Object.assign(new Error('The active account could not be verified.'), {
       status: 401,
     });
   }
-  if (assurance.error) throw assurance.error;
-  if (assurance.data.currentLevel !== 'aal2') {
-    throw Object.assign(new Error('AAL2 authenticator verification required'), {
-      status: 403,
+  const client = await createAccountBoundSupabaseClient(expectedUserId);
+  if (!client) {
+    throw Object.assign(new Error('The active account changed.'), {
+      status: 401,
     });
   }
   if (businessId) {
     assertUuid(businessId, 'This business link');
-    const { data: allowed, error } = await supabase.rpc('is_business_member', {
+    const { data: allowed, error } = await client.rpc('is_business_member', {
       target_business_id: businessId,
       allowed_roles: ['owner', 'manager'],
     });
@@ -712,7 +698,7 @@ async function secureClient(businessId?: string) {
       });
     }
   }
-  return { client: supabase, userId: userData.user.id };
+  return { client, userId: expectedUserId };
 }
 
 async function approvedLogoUrl(
@@ -742,10 +728,11 @@ async function approvedLogoUrl(
 }
 
 export async function loadBusinessProfileWorkspace(
-  businessId: string
+  businessId: string,
+  expectedUserId: string
 ): Promise<BusinessProfileResult<BusinessProfileWorkspace>> {
   try {
-    const { client, userId } = await secureClient(businessId);
+    const { client, userId } = await secureClient(expectedUserId, businessId);
     const [businessResult, contactsResult, membershipResult] = await Promise.all([
       client
         .from('businesses')
@@ -812,11 +799,12 @@ export async function loadBusinessProfileWorkspace(
 export async function saveBusinessProfile(
   businessId: string,
   state: BusinessProfileState,
-  values: BusinessProfileValues
+  values: BusinessProfileValues,
+  expectedUserId: string
 ): Promise<BusinessProfileResult<{ revisionId: string | null }>> {
   try {
     const clean = validateBusinessProfileValues(values);
-    const { client } = await secureClient(businessId);
+    const { client } = await secureClient(expectedUserId, businessId);
     if (state === 'draft') {
       const { error } = await client.rpc('update_business_draft_profile', {
         target_business_id: businessId,
@@ -851,7 +839,8 @@ export async function saveBusinessProfile(
 export async function stageBusinessProfileLogo(
   businessId: string,
   state: BusinessProfileState,
-  selection: BusinessLogoSelection
+  selection: BusinessLogoSelection,
+  expectedUserId: string
 ): Promise<BusinessProfileResult<{ assetId: string }>> {
   try {
     if (!featureFlags.mediaUploads) {
@@ -860,8 +849,14 @@ export async function stageBusinessProfileLogo(
       });
     }
     const clean = validateBusinessLogoSelection(selection);
-    const { client } = await secureClient(businessId);
-    const staged = await stageMediaUpload(clean, 'business_logo', businessId);
+    const { client } = await secureClient(expectedUserId, businessId);
+    const staged = await stageMediaUpload(
+      clean,
+      'business_logo',
+      businessId,
+      undefined,
+      client
+    );
     if (!staged.ok) {
       return {
         ok: false,
@@ -897,11 +892,12 @@ export async function stageBusinessProfileLogo(
 }
 
 export async function withdrawBusinessProfileRevision(
-  revisionId: string
+  revisionId: string,
+  expectedUserId: string
 ): Promise<BusinessProfileResult> {
   try {
     assertUuid(revisionId, 'The revision reference');
-    const { client } = await secureClient();
+    const { client } = await secureClient(expectedUserId);
     const { error } = await client.rpc('withdraw_business_revision', {
       target_revision_id: revisionId,
     });

@@ -22,8 +22,6 @@ import { AccountRole } from '@/types/marketplace';
 
 type Mode = 'signup' | 'signin';
 
-const existingUsernames = ['maya.rose', 'miraeats', 'alexonfoot', 'westsidebites'];
-
 function Field({
   label,
   value,
@@ -113,7 +111,7 @@ export default function AuthScreen() {
   >('idle');
 
   const usernameError = useMemo(
-    () => (mode === 'signup' && username ? validateUsername(username, existingUsernames) : null),
+    () => (mode === 'signup' && username ? validateUsername(username, []) : null),
     [mode, username]
   );
 
@@ -175,7 +173,7 @@ export default function AuthScreen() {
     setFormMessage(null);
 
     if (mode === 'signup') {
-      const usernameValidation = validateUsername(username, existingUsernames);
+      const usernameValidation = validateUsername(username, []);
       if (
         usernameValidation ||
         !displayName.trim() ||
@@ -307,7 +305,10 @@ export default function AuthScreen() {
               <>
                 <View style={styles.roleSection}>
                   <Text style={styles.label}>I’m joining as</Text>
-                  <View style={styles.roleRow}>
+                  <View
+                    accessibilityLabel="Account type"
+                    accessibilityRole="radiogroup"
+                    style={styles.roleRow}>
                     {(
                       [
                         ['customer', 'Customer', 'heart', 'Discover and review'],

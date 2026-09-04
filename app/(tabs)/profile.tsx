@@ -1,6 +1,7 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
+import Constants from 'expo-constants';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -15,10 +16,14 @@ import { BrandMark } from '@/components/brand-mark';
 import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { PageShell } from '@/components/page-shell';
 import { SectionHeading } from '@/components/section-heading';
+import { TrustBadgeStrip } from '@/components/trust-badge-strip';
 import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
+import { fetchMyTrustBadges } from '@/lib/marketplace-api';
+import { featureFlags } from '@/lib/features';
 import { confirmAction, showMessage } from '@/lib/platform-dialog';
+import type { PublicBadge } from '@/lib/trust-badges';
 
 type SettingsRowProps = {
   icon: keyof typeof FontAwesome6.glyphMap;
@@ -53,14 +58,35 @@ export default function ProfileScreen() {
   const [accountMessage, setAccountMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
     null
   );
+  const [badgeSnapshot, setBadgeSnapshot] = useState<{
+    accountId: string;
+    badges: PublicBadge[];
+  } | null>(null);
   const signedIn = auth.status === 'authenticated';
   const unconfigured = auth.status === 'unconfigured';
+  const earnedBadges = auth.account?.id && badgeSnapshot?.accountId === auth.account.id
+    ? badgeSnapshot.badges
+    : [];
   const initials = account.displayName
     .split(/\s+/)
     .map((part) => part.charAt(0))
     .join('')
     .slice(0, 2)
     .toLocaleUpperCase('en-US');
+
+  useEffect(() => {
+    let current = true;
+    if (!signedIn || !auth.account?.id) {
+      return () => { current = false; };
+    }
+    const accountId = auth.account.id;
+    void fetchMyTrustBadges(accountId).then((result) => {
+      if (current && result.ok) {
+        setBadgeSnapshot({ accountId, badges: result.data ?? [] });
+      }
+    });
+    return () => { current = false; };
+  }, [auth.account?.id, signedIn]);
 
   const openSupport = async () => {
     const value = process.env.EXPO_PUBLIC_SUPPORT_URL;
@@ -138,14 +164,31 @@ export default function ProfileScreen() {
           <View style={styles.profileCopy}>
             <Text accessibilityRole="header" style={styles.displayName}>{account.displayName}</Text>
             <Text style={styles.username}>@{account.username}</Text>
+            <TrustBadgeStrip badges={earnedBadges} limit={4} />
           </View>
           <Pressable
             accessibilityRole="button"
-            onPress={() => router.push(signedIn ? '/security' : '/auth')}
+            onPress={() => router.push(signedIn ? '/profile-edit' : '/auth')}
             style={styles.editButton}>
-            <Text style={styles.editButtonText}>{signedIn ? 'Security' : 'Sign in'}</Text>
+            <Text style={styles.editButtonText}>{signedIn ? 'Edit' : 'Sign in'}</Text>
           </Pressable>
         </View>
+
+        <Pressable
+          accessibilityRole="link"
+          onPress={() => router.push('/badges')}
+          style={styles.badgeProgress}>
+          <View style={styles.badgeProgressIcon}>
+            <FontAwesome6 color={palette.accentDeep} name="award" size={13} />
+          </View>
+          <View style={styles.badgeProgressCopy}>
+            <Text style={styles.badgeProgressTitle}>
+              {earnedBadges.length ? `${earnedBadges.length} achievement${earnedBadges.length === 1 ? '' : 's'} earned` : 'Your first badge starts with one review'}
+            </Text>
+            <Text style={styles.badgeProgressDetail}>See goals, tiers, and exactly how each trust mark is earned.</Text>
+          </View>
+          <FontAwesome6 color={palette.mutedLight} name="chevron-right" size={11} />
+        </Pressable>
 
         <View style={styles.profileStats}>
           <View style={styles.profileStat}>
@@ -192,6 +235,20 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <SectionHeading eyebrow="Settings" title="Account & privacy" />
           <View style={styles.settingGroup}>
+            {account.role === 'business' ? (
+              <SettingsRow
+                detail="Create, review, and measure clearly labelled sponsored campaigns"
+                icon="bullhorn"
+                onPress={() => router.push('/promotion-studio')}
+                title="Promotion Studio"
+              />
+            ) : null}
+            <SettingsRow
+              detail="See every reviewer, business, and seller achievement"
+              icon="award"
+              onPress={() => router.push('/badges')}
+              title="Badges & achievements"
+            />
             <SettingsRow
               detail="Email verification, password recovery, and sessions"
               icon="user-shield"
@@ -203,6 +260,20 @@ export default function ProfileScreen() {
               icon="comments"
               onPress={() => router.push((signedIn ? '/messages' : '/auth') as never)}
               title="Messages"
+            />
+            {featureFlags.pickupOrdering ? (
+              <SettingsRow
+                detail="Track accepted, preparing, and ready-for-pickup requests"
+                icon="bag-shopping"
+                onPress={() => router.push('/orders' as never)}
+                title="Pickup orders"
+              />
+            ) : null}
+            <SettingsRow
+              detail="Optional private invitations from verified businesses"
+              icon="envelope-open-text"
+              onPress={() => router.push((signedIn ? '/creator-invitations' : '/auth') as never)}
+              title="Community invitations"
             />
             <SettingsRow
               detail="Choose alerts for businesses you follow"
@@ -295,7 +366,7 @@ export default function ProfileScreen() {
           )}
         </Pressable>
 
-        <Text style={styles.version}>Spottr · Version 0.2</Text>
+        <Text style={styles.version}>Spottr · Version {Constants.expoConfig?.version ?? 'unavailable'}</Text>
       </PageShell>
       </ScrollView>
     </FocusAwareScreen>
@@ -391,6 +462,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginTop: spacing.xl,
   },
+  badgeProgress: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.line,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    padding: spacing.md,
+  },
+  badgeProgressIcon: {
+    alignItems: 'center',
+    backgroundColor: palette.accentSoft,
+    borderRadius: radii.md,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
+  },
+  badgeProgressCopy: { flex: 1, gap: 3 },
+  badgeProgressTitle: { color: palette.ink, fontSize: 11, fontWeight: '900' },
+  badgeProgressDetail: { color: palette.muted, fontSize: 9, lineHeight: 14 },
   profileStat: {
     flex: 1,
     gap: 4,

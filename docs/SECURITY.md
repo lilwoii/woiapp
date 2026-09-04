@@ -23,6 +23,18 @@ report, or claim that production is risk-free.
 
 No client-side check is treated as authorization.
 
+Home-kitchen launch state follows the same rule. The client
+`EXPO_PUBLIC_HOME_KITCHENS_ENABLED` value is only a presentation filter. The
+private `home_kitchen_runtime_settings` singleton and
+`private.home_kitchens_globally_enabled()` helper are default-false; the
+service-role-only audited toggle/status boundary owns changes and inspection.
+`private.is_business_publicly_eligible` applies that gate only to
+`home_kitchen`, so direct `/place` links, public projections, map/nearby/search
+RPCs, RLS-backed reads, and marketplace chat cannot bypass a disabled launch.
+Existing home-kitchen conversations also require current chat eligibility.
+Disabling cancels active pickup requests and destroys exact disclosures but
+does not delete conversation history, staff evidence, or account-export data.
+
 ## Authentication and privileged actions
 
 - Supabase Auth owns password hashes; application tables never store passwords.
@@ -109,11 +121,81 @@ reviews, follows, notification preferences, reports, blocks, memberships,
 claims, owned media rows, and rate-limit/idempotency rows cascade with the Auth
 user. Business updates/responses and audit records may remain for marketplace
 integrity, with the deleted actor reference set to null. A private deletion
+exception preserves any non-purged business-claim evidence object and records
+the preservation decision without copying its path. Its claim, business, and
+claimant references use `ON DELETE SET NULL`, so Auth deletion can remove the
+account without deleting held evidence or reintroducing an identity foreign
+key. The ordinary storage manifest excludes those paths, and the storage seal
+fails closed if a retained evidence path was included or lacks its exact
+private exception. Retention duration, hold release, staff access, and purge
+authorization remain external legal/security decisions; both evidence intake
+and the dedicated purge boundary default off. The retention migration and the
+updated storage-mutation RPCs use exclusive/shared advisory-lock sides to order
+database path decisions, and migration preflight rejects pending or completed
+account-deletion receipts for legacy evidence. Initial rollout still requires
+workers to be paused and drained because an older worker may already be making
+an external Storage request after its database transaction ended. A private deletion
 receipt is idempotent and expires; failures return a retryable error rather than
 claiming completion. A per-user advisory lock and live-request unique index reuse
 one deletion receipt across devices. The client keeps its verified session open
 when a concurrent worker reports `processing`, allowing a safe retry instead of
-signing out before deletion is confirmed.
+signing out before Auth deletion is confirmed. If Auth deletion succeeds but the
+final private receipt write is interrupted, the endpoint returns `202` with the
+receipt-finalization phase, signs the now-deleted account out locally, and the
+service-only worker atomically completes that sealed orphan receipt on its next
+run. An ambiguous Auth-provider response also leaves the sealed request
+retryable instead of downgrading it to failed. Neither endpoint reports
+`deleted` until the receipt is durable.
+
+Private notification consents, encrypted device registrations, and pending
+delivery rows also reference the Auth user with `ON DELETE CASCADE`. Account
+exports include user-controlled preferences, consent history, and sanitized
+device lifecycle metadata, but deliberately omit installation/project IDs,
+device token hashes, ciphertext, nonces, provider tickets, and credentials.
+Raw push tokens may exist only transiently inside the authenticated registration
+Edge request and are encrypted before persistence. Token deduplication uses a
+separate server-only HMAC key rather than an offline-testable plain digest. Raw
+tokens and cryptographic material must never enter logs, Realtime, lock-screen
+payloads, analytics, or account exports.
+
+Each active native or web registration is also bound to the verified Supabase Auth
+`session_id` that registered it. Legacy unbound rows are revoked during the
+forward migration. Registration validates session ownership server-side;
+delivery claim and provider handoff require the same user/session row to remain
+present and before `not_after`. Ended sessions revoke the device and cancel
+queued work. The app does not allow a native verification or recovery link to
+replace an already active account; it requires the existing account's guarded
+sign-out flow first. An abnormal direct native A-to-B Auth transition is never
+accepted: the prior verified token is retained only in memory long enough to
+detach the device and attempt to revoke that server session, the replacement is
+rejected, and the user must explicitly sign in again. A non-secret SecureStore
+quarantine marker blocks restore across restarts until local replacement
+removal is proven; captured tokens are never written to storage or logs. Push
+device calls use aborting request timeouts instead of leaving late client
+requests running after the caller continues.
+
+Revocation cannot recall a request that already crossed the provider boundary.
+A `sending` delivery remains ambiguous and may produce at most the one
+already-handed-off notification; it is never converted into a blind retry.
+
+Provider dispatch is internal-authenticated, bounded, and separately gated from
+registration and database enqueueing. Tokens and canonical browser subscriptions
+are decrypted only at send time with an explicitly versioned AES-GCM key ring.
+Expo uses a fixed provider host; Web Push revalidates an HTTPS push-service
+origin against a server allowlist. Lock-screen text is generic, and tap data
+contains only a canonical place route and public-event identifier. An ambiguous
+send is recorded as `unknown` and is never blindly retried. Expo receipt checks
+begin after the provider's minimum recommended delay, do not resend content,
+and retire devices reported as `DeviceNotRegistered`. Web Push HTTP 404/410
+retires a subscription; service acceptance is not misreported as device
+delivery. All provider and worker gates default false.
+The production-maintenance scheduler path adds another default-false gate and
+separate dispatch/receipt worker secrets. It sends only fixed bounded commands,
+rejects malformed or inconsistent counters, treats a saturated batch as a
+backlog, and withholds its success heartbeat if either push phase fails. It does
+not log response bodies, tickets, tokens, or provider errors. Production
+activation and missed-heartbeat evidence remain external acceptance
+requirements.
 
 The production privacy policy must disclose this behavior and the actual
 retention periods. The deletion drill in [RELEASE.md](RELEASE.md) must prove the
@@ -157,6 +239,10 @@ Launch requires:
 - Request foreground location only and always provide city/ZIP fallback.
 - Do not persist customer search coordinates to profiles or marketplace tables.
 - Redact or round coordinates in telemetry and security logs.
+- Public map/search admission stores only server-keyed HMAC digests for network
+  and account rate buckets. Raw client addresses and Auth IDs never enter those
+  discovery tables or application logs. Supabase platform-log retention and
+  access remain a separate production privacy control.
 - Food-truck locations are owner-published stops, not continuous owner-device
   tracking.
 - Never expose a home residence address or precise marker in public APIs,

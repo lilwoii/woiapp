@@ -1,9 +1,10 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { router } from 'expo-router';
+import { router, useFocusEffect, useIsFocused, usePathname } from 'expo-router';
 import * as Location from 'expo-location';
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Platform,
   Pressable,
   ScrollView,
@@ -33,12 +34,14 @@ import {
   type DiscoverySort,
 } from '@/lib/discovery-filters';
 import { featureFlags } from '@/lib/features';
-import { normalizeLongitude, zoomFromLongitudeDelta } from '@/lib/map-clustering';
+import { placeLocationRouteParams } from '@/lib/links';
+import { mapPlaceIdentity, normalizeLongitude, viewportIsLiveInventoryEligible, zoomFromLongitudeDelta } from '@/lib/map-clustering';
 import { filterMapInventoryCategories, filterPlacesForEnabledCategories } from '@/lib/map-inventory';
 import { mapCategoryOrder, mapCategoryPresentation } from '@/lib/map-presentation';
-import { fetchMapFoodFeatures } from '@/lib/marketplace-api';
+import { createLatestRequestGate } from '@/lib/latest-request';
+import { fetchMapFoodFeatures, recordSponsoredInteraction } from '@/lib/marketplace-api';
 import { isSupabaseConfigured } from '@/lib/supabase';
-import type { DietaryTag, PaymentMethod, Place } from '@/types/marketplace';
+import type { DietaryTag, PaymentMethod, Place, SponsoredPlace } from '@/types/marketplace';
 import type { MapInventoryFeature, MapViewport } from '@/types/map';
 
 const categoryFilters: { id: DiscoveryCategory; label: string; icon: keyof typeof FontAwesome6.glyphMap }[] = [
@@ -78,6 +81,8 @@ const priceOptions = [1, 2, 3, 4] as const;
 const webSectionHeading = Platform.OS === 'web'
   ? ({ 'aria-level': 2 } as const)
   : {};
+const subscribeHydration = () => () => undefined;
+const defaultLocationLabel = 'Choose city, ZIP, or location';
 function viewportAroundPoint(
   latitude: number,
   longitude: number,
@@ -106,19 +111,29 @@ function viewportAroundPoint(
 }
 
 export default function DiscoverScreen() {
+  const { scopeKey } = useMarketplaceStore();
+  return <ScopedDiscoverScreen key={`discover:${scopeKey}`} />;
+}
+
+function ScopedDiscoverScreen() {
+  const clientHydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
+  const pathname = usePathname();
   const {
     ensurePlace,
     followedIds,
     hasMoreResults,
     loadingMoreResults,
     loadMoreResults,
-    places,
+    mobileMapRevision,
+    publicPlaces,
     refresh,
     searchArea,
+    sponsoredPlace: sponsoredProjection,
     syncMessage,
     syncStatus,
     toggleFollow,
   } = useMarketplaceStore();
+  const focused = useIsFocused();
   const { width } = useWindowDimensions();
   const wide = width >= 960;
   const [query, setQuery] = useState('');
@@ -134,18 +149,32 @@ export default function DiscoverScreen() {
   const [minimumRating, setMinimumRating] = useState(0);
   const [pickupOnly, setPickupOnly] = useState(false);
   const [hiddenSponsoredIds, setHiddenSponsoredIds] = useState<string[]>([]);
+  const [acknowledgedSponsoredId, setAcknowledgedSponsoredId] = useState<string | null>(null);
   const [openSponsorReasonId, setOpenSponsorReasonId] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState(places[0]?.id);
-  const [locationLabel, setLocationLabel] = useState('Choose city, ZIP, or location');
+  const sponsoredImpressionAttempt = useRef<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | undefined>();
+  const [selectedLocationId, setSelectedLocationId] = useState<string | undefined>();
+  const [locationLabel, setLocationLabel] = useState(defaultLocationLabel);
   const [userCoordinates, setUserCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locating, setLocating] = useState(isSupabaseConfigured);
-  const [locationPanelOpen, setLocationPanelOpen] = useState(isSupabaseConfigured);
+  const [locationPanelOpen, setLocationPanelOpen] = useState(false);
   const [manualArea, setManualArea] = useState('');
   const [activeArea, setActiveArea] = useState('');
+  const [mapFocusKey, setMapFocusKey] = useState('');
   const [pagination, setPagination] = useState({ key: '', count: 24 });
   const [locationError, setLocationError] = useState<string | null>(null);
   const [mapInventoryFeatures, setMapInventoryFeatures] = useState<MapInventoryFeature[]>([]);
-  const mapInventoryRequest = useRef(0);
+  const [mapMarkersSuppressed, setMapMarkersSuppressed] = useState(false);
+  const [mapInventoryError, setMapInventoryError] = useState<string | null>(null);
+  const [appForeground, setAppForeground] = useState(AppState.currentState === 'active');
+  const [mobileMapExpiryRevision, setMobileMapExpiryRevision] = useState(0);
+  const mounted = useRef(true);
+  const appForegroundRef = useRef(AppState.currentState === 'active');
+  const automaticNearbyAttempted = useRef(false);
+  const focusedRef = useRef(focused);
+  const locationRequestGeneration = useRef(0);
+  const mapInventoryRequest = useRef(createLatestRequestGate());
+  const latestMapViewport = useRef<MapViewport | null>(null);
   const deferredQuery = useDeferredValue(query);
   const visibleCategoryFilters = useMemo(
     () => categoryFilters.filter((item) => item.id !== 'home_kitchen' || featureFlags.homeKitchens),
@@ -162,8 +191,14 @@ export default function DiscoverScreen() {
     [enabledMapCategories],
   );
   const enabledPlaces = useMemo(
-    () => filterPlacesForEnabledCategories(places, enabledCategorySet),
-    [enabledCategorySet, places],
+    () => {
+      const filtered = filterPlacesForEnabledCategories(publicPlaces, enabledCategorySet);
+      if (userCoordinates) return filtered;
+      return filtered.map((place) => place.distanceMiles === null
+        ? place
+        : { ...place, distanceMiles: null });
+    },
+    [enabledCategorySet, publicPlaces, userCoordinates],
   );
   const requestedMapCategories = useMemo(
     () => category === 'all'
@@ -175,21 +210,104 @@ export default function DiscoverScreen() {
   );
   const cuisines = useMemo(() => cuisineFacets(enabledPlaces).slice(0, 14), [enabledPlaces]);
 
-  const loadMapInventory = useCallback(async (viewport: MapViewport) => {
-    const requestId = ++mapInventoryRequest.current;
+  const loadMapInventory = useCallback(async (
+    viewport: MapViewport,
+    options: { preserveCurrent?: boolean } = {},
+  ) => {
+    const requestToken = mapInventoryRequest.current.begin();
+    if (!mounted.current || !focusedRef.current || !appForegroundRef.current) {
+      return { ok: false, reason: 'Screen is no longer active.' } as const;
+    }
+    latestMapViewport.current = viewport;
+    setMapInventoryError(null);
+    if (!viewportIsLiveInventoryEligible(viewport.bounds)) {
+      setMapInventoryFeatures([]);
+      setMapMarkersSuppressed(true);
+      return { ok: false, reason: 'Zoom in before loading live map places.' } as const;
+    }
     if (!requestedMapCategories.length) {
       setMapInventoryFeatures([]);
+      setMapMarkersSuppressed(false);
       return { ok: true, data: [] } as const;
     }
+    if (!options.preserveCurrent) {
+      setMapInventoryFeatures([]);
+      setMapMarkersSuppressed(true);
+    }
+    if (!mounted.current || !focusedRef.current || !appForegroundRef.current) {
+      return { ok: false, reason: 'Screen is no longer active.' } as const;
+    }
     const result = await fetchMapFoodFeatures(viewport, requestedMapCategories);
-    if (requestId !== mapInventoryRequest.current) return result;
+    if (!mounted.current || !mapInventoryRequest.current.isCurrent(requestToken)) return result;
     if (!result.ok) {
       setMapInventoryFeatures([]);
+      setMapMarkersSuppressed(true);
+      setMapInventoryError('Map places could not refresh. The verified list is still available.');
       return result;
     }
     setMapInventoryFeatures(result.data ?? []);
+    setMapMarkersSuppressed(false);
     return result;
   }, [requestedMapCategories]);
+
+  const invalidateMapInventory = useCallback((viewport: MapViewport) => {
+    locationRequestGeneration.current += 1;
+    latestMapViewport.current = viewport;
+    mapInventoryRequest.current.invalidate();
+    setLocating(false);
+    setMapInventoryFeatures([]);
+    setMapMarkersSuppressed(true);
+    setMapInventoryError(null);
+  }, []);
+
+  const retryMapInventory = useCallback(() => {
+    const viewport = latestMapViewport.current;
+    if (viewport) void loadMapInventory(viewport);
+  }, [loadMapInventory]);
+
+  useEffect(() => {
+    const mapRequestGate = mapInventoryRequest.current;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      locationRequestGeneration.current += 1;
+      mapRequestGate.invalidate();
+    };
+  }, []);
+
+  const expireForegroundLocation = useCallback(() => {
+    setUserCoordinates(null);
+    setLocationLabel((current) => current === 'Near your current location'
+      ? 'Last nearby search · refresh location'
+      : current);
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    focusedRef.current = true;
+    return () => {
+      focusedRef.current = false;
+      locationRequestGeneration.current += 1;
+      mapInventoryRequest.current.invalidate();
+      expireForegroundLocation();
+      setTimeout(() => {
+        if (mounted.current && !focusedRef.current) setLocating(false);
+      }, 0);
+    };
+  }, [expireForegroundLocation]));
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      const active = state === 'active';
+      appForegroundRef.current = active;
+      setAppForeground(active);
+      if (active) return;
+      locationRequestGeneration.current += 1;
+      mapInventoryRequest.current.invalidate();
+      setLocating(false);
+      expireForegroundLocation();
+    });
+    return () => subscription.remove();
+  }, [expireForegroundLocation]);
 
   const toggleSelection = <T extends string | number>(
     value: T,
@@ -204,11 +322,19 @@ export default function DiscoverScreen() {
   };
 
   const requestNearby = useCallback(async () => {
+    const generation = ++locationRequestGeneration.current;
+    const isCurrent = () =>
+      mounted.current &&
+      focusedRef.current &&
+      appForegroundRef.current &&
+      locationRequestGeneration.current === generation;
+    if (!isCurrent()) return;
     setLocating(true);
     setLocationError(null);
 
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
+      if (!isCurrent()) return;
       if (permission.status !== 'granted') {
         setLocationLabel('Choose a city or ZIP');
         setLocationError('Location permission is off. Search by city or ZIP instead.');
@@ -218,54 +344,50 @@ export default function DiscoverScreen() {
       const current = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
+      if (!isCurrent()) return;
       setUserCoordinates({
         latitude: current.coords.latitude,
         longitude: current.coords.longitude,
       });
       const latitude = current.coords.latitude;
       const longitude = current.coords.longitude;
+      if (!isCurrent()) return;
+      setLocationLabel('Near your current location');
+      setActiveArea('');
+      setMapFocusKey(`near:${generation}:${latitude.toFixed(5)}:${longitude.toFixed(5)}`);
+      setSelectedId(undefined);
+      setSelectedLocationId(undefined);
+      setLocationPanelOpen(false);
+      setSortMode('nearby');
       const searchResult = await refresh({
         latitude,
         longitude,
         radiusMeters: 16093,
       });
+      if (!isCurrent()) return;
       if (!searchResult.ok) {
         setLocationError(searchResult.reason);
         return;
       }
-      setLocationLabel('Near your current location');
-      setActiveArea('');
-      setLocationPanelOpen(false);
-      setSortMode('nearby');
+      if (!isCurrent()) return;
       void loadMapInventory(viewportAroundPoint(latitude, longitude, 16_093));
     } catch {
+      if (!isCurrent()) return;
       setLocationError('Your location could not be read. Search by city or ZIP instead.');
     } finally {
-      setLocating(false);
+      if (isCurrent()) setLocating(false);
     }
   }, [loadMapInventory, refresh]);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
-    let active = true;
-    void Location.getForegroundPermissionsAsync()
-      .then((permission) => {
-        if (!active) return;
-        if (permission.status === 'granted') {
-          void requestNearby();
-          return;
-        }
-        setLocating(false);
-      })
-      .catch(() => {
-        if (!active) return;
-        setLocating(false);
-        setLocationError('Choose a city or ZIP, or use location when you are ready.');
-      });
-    return () => {
-      active = false;
-    };
-  }, [requestNearby]);
+    if (!focused || !appForeground) {
+      const timer = setTimeout(() => setLocating(false), 0);
+      return () => clearTimeout(timer);
+    }
+    if (automaticNearbyAttempted.current) return;
+    automaticNearbyAttempted.current = true;
+    void requestNearby();
+  }, [appForeground, focused, requestNearby]);
 
   const applyManualArea = async () => {
     const clean = manualArea.replace(/\s+/g, ' ').trim();
@@ -273,15 +395,35 @@ export default function DiscoverScreen() {
       setLocationError('Enter a city or ZIP code.');
       return;
     }
+    automaticNearbyAttempted.current = true;
+    const generation = ++locationRequestGeneration.current;
+    const isCurrent = () => mounted.current && locationRequestGeneration.current === generation;
+    if (!isCurrent()) return;
     setLocating(true);
     setLocationError(null);
-    const result = await searchArea(clean);
+    let result: Awaited<ReturnType<typeof searchArea>>;
+    try {
+      result = await searchArea(clean);
+    } catch {
+      if (!isCurrent()) return;
+      setLocating(false);
+      setLocationError('This search area could not be loaded. Try again.');
+      return;
+    }
+    if (!isCurrent()) return;
     setLocating(false);
     if (!result.ok) {
       setLocationError(result.reason);
       return;
     }
+    if ((result.data?.areaMatchCount ?? 0) === 0) {
+      setLocationError('No currently listed places matched that city or ZIP. The map stayed on your previous area.');
+      return;
+    }
     setActiveArea(clean.toLocaleLowerCase('en-US'));
+    setMapFocusKey(`area:${generation}:${clean.toLocaleLowerCase('en-US')}`);
+    setSelectedId(undefined);
+    setSelectedLocationId(undefined);
     setLocationLabel(clean);
     setUserCoordinates(null);
     setLocationPanelOpen(false);
@@ -289,6 +431,14 @@ export default function DiscoverScreen() {
   };
 
   const searchVisibleMap = useCallback(async (viewport: MapViewport) => {
+    if (!viewportIsLiveInventoryEligible(viewport.bounds)) {
+      setLocationError('Zoom in before searching this map area.');
+      return;
+    }
+    automaticNearbyAttempted.current = true;
+    const generation = ++locationRequestGeneration.current;
+    const isCurrent = () => mounted.current && locationRequestGeneration.current === generation;
+    if (!isCurrent()) return;
     setLocating(true);
     setLocationError(null);
     const [result] = await Promise.all([
@@ -299,21 +449,34 @@ export default function DiscoverScreen() {
       }),
       loadMapInventory(viewport),
     ]);
+    if (!isCurrent()) return;
     setLocating(false);
     if (!result.ok) {
       setLocationError(result.reason);
       return;
     }
     setActiveArea('');
+    setSelectedId(undefined);
+    setSelectedLocationId(undefined);
     setLocationLabel('Visible map area');
     setSortMode('nearby');
   }, [loadMapInventory, refresh]);
 
   useEffect(() => {
-    if (!activeArea || !places.length) return;
-    const latitudes = places.map((place) => place.latitude);
+    if (!activeArea) return;
+    if (!enabledPlaces.length) {
+      const timer = setTimeout(() => {
+        mapInventoryRequest.current.invalidate();
+        latestMapViewport.current = null;
+        setMapInventoryFeatures([]);
+        setMapMarkersSuppressed(false);
+        setMapInventoryError(null);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+    const latitudes = enabledPlaces.map((place) => place.latitude);
     const centerLatitude = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
-    const longitudes = places.map((place) => normalizeLongitude(place.longitude));
+    const longitudes = enabledPlaces.map((place) => normalizeLongitude(place.longitude));
     const radians = longitudes.map((longitude) => (longitude * Math.PI) / 180);
     const centerLongitude = normalizeLongitude(
       (Math.atan2(
@@ -340,7 +503,7 @@ export default function DiscoverScreen() {
       void loadMapInventory(viewport);
     }, 0);
     return () => clearTimeout(timer);
-  }, [activeArea, loadMapInventory, places]);
+  }, [activeArea, enabledPlaces, loadMapInventory]);
 
   const discoveryFilters: DiscoveryFilters = useMemo(
     () => ({
@@ -377,15 +540,37 @@ export default function DiscoverScreen() {
     () => rankDiscoveryPlaces(enabledPlaces, discoveryFilters, userCoordinates),
     [discoveryFilters, enabledPlaces, userCoordinates]
   );
-  const sponsoredPlace = ranked.find(
-    (place) =>
-      place.sponsoredPlacement &&
-      !hiddenSponsoredIds.includes(place.sponsoredPlacement.id)
-  );
+  const sponsoredPlace = useMemo(() => {
+    if (!featureFlags.sponsoredPlacements || !sponsoredProjection) return undefined;
+    if (hiddenSponsoredIds.includes(sponsoredProjection.sponsoredPlacement.id)) return undefined;
+    return rankDiscoveryPlaces([sponsoredProjection], discoveryFilters, userCoordinates).length
+      ? sponsoredProjection
+      : undefined;
+  }, [discoveryFilters, hiddenSponsoredIds, sponsoredProjection, userCoordinates]);
+  const recordVisibleSponsoredImpression = useCallback((place: SponsoredPlace) => {
+    const placement = place.sponsoredPlacement;
+    const attemptKey = `${placement.id}:${placement.token}`;
+    if (sponsoredImpressionAttempt.current === attemptKey) return;
+    sponsoredImpressionAttempt.current = attemptKey;
+    void recordSponsoredInteraction(placement.token, 'impression').then((result) => {
+      if (
+        !mounted.current ||
+        sponsoredImpressionAttempt.current !== attemptKey
+      ) return;
+      if (result.ok && result.data?.accepted) {
+        setAcknowledgedSponsoredId(placement.id);
+        return;
+      }
+      setHiddenSponsoredIds((hidden) => [...new Set([...hidden, placement.id])]);
+    });
+  }, []);
 
   const resultsKey = JSON.stringify(discoveryFilters);
   const visibleCount = pagination.key === resultsKey ? pagination.count : 24;
-  const selected = ranked.find((place) => place.id === selectedId) ?? ranked[0];
+  const explicitSelection = ranked.find(
+    (place) => place.id === selectedId && (!selectedLocationId || place.locationId === selectedLocationId),
+  );
+  const selected = explicitSelection;
   const visibleRanked = ranked.slice(0, visibleCount);
   const mappedPlaces = ranked;
   const permittedMapInventory = useMemo(
@@ -397,15 +582,75 @@ export default function DiscoverScreen() {
     ),
     [enabledMapCategories, mapInventoryFeatures],
   );
+  const detailedMapFiltersActive = Boolean(
+    deferredQuery.trim()
+      || openOnly
+      || cuisine
+      || dietary.length
+      || payments.length
+      || priceLevels.length
+      || maxDistanceMiles !== null
+      || minimumRating > 0
+      || pickupOnly
+  );
   const visibleMapInventory = useMemo(() => {
+    // The high-volume viewport feed contains only map-safe location metadata.
+    // When a filter needs full listing details, render the already filtered
+    // discovery results so the map never contradicts the result list.
+    if (detailedMapFiltersActive) return [];
     if (category === 'all') return permittedMapInventory;
     return filterMapInventoryCategories(permittedMapInventory, new Set([category]));
-  }, [category, permittedMapInventory]);
+  }, [category, detailedMapFiltersActive, permittedMapInventory]);
+  const authoritativeMapInventory = isSupabaseConfigured && !detailedMapFiltersActive;
+  useEffect(() => {
+    if (!focused || !appForeground || !authoritativeMapInventory) return;
+    // Mobile stops become stale when their service window ends even if no
+    // owner mutation emits another realtime event. Bound that stale window to
+    // one minute while the Discover map is actually visible and foregrounded.
+    const timer = setInterval(
+      () => setMobileMapExpiryRevision((current) => current + 1),
+      60_000,
+    );
+    return () => clearInterval(timer);
+  }, [appForeground, authoritativeMapInventory, focused]);
 
-  const selectPlace = useCallback((place: Place) => setSelectedId(place.id), []);
-  const selectBusinessId = useCallback(async (businessId: string) => {
-    const result = await ensurePlace(businessId);
-    if (result.ok) setSelectedId(businessId);
+  useEffect(() => {
+    if (!focused || !appForeground || !authoritativeMapInventory || !latestMapViewport.current) {
+      return;
+    }
+    // Realtime can burst while an owner edits a stop. Debounce those events,
+    // keep the current markers visible, and let the latest-request gate reject
+    // any response for an older viewport.
+    const timer = setTimeout(() => {
+      const latestViewport = latestMapViewport.current;
+      if (latestViewport && viewportIsLiveInventoryEligible(latestViewport.bounds)) {
+        void loadMapInventory(latestViewport, { preserveCurrent: true });
+      }
+    }, 750);
+    return () => clearTimeout(timer);
+  }, [
+    appForeground,
+    authoritativeMapInventory,
+    focused,
+    loadMapInventory,
+    mobileMapExpiryRevision,
+    mobileMapRevision,
+  ]);
+  const mapInventoryMayBeCapped = useMemo(
+    () => visibleMapInventory.reduce((total, feature) => total + feature.count, 0) >= 1_200,
+    [visibleMapInventory],
+  );
+
+  const selectPlace = useCallback((place: Place) => {
+    setSelectedId(place.id);
+    setSelectedLocationId(place.locationId);
+  }, []);
+  const selectBusinessId = useCallback(async (businessId: string, locationId?: string) => {
+    const result = await ensurePlace(businessId, locationId, 'discovery');
+    if (mounted.current && result.ok) {
+      setSelectedId(businessId);
+      setSelectedLocationId(locationId);
+    }
   }, [ensurePlace]);
 
   return (
@@ -437,7 +682,7 @@ export default function DiscoverScreen() {
             <View style={styles.locationPanelCopy}>
               <Text accessibilityRole="header" {...webSectionHeading} style={styles.locationPanelTitle}>Choose your search area</Text>
               <Text style={styles.locationPanelDetail}>
-                Use your location once, or search without sharing it.
+                Use foreground location while this map is open, or search without sharing it.
               </Text>
             </View>
             <Pressable
@@ -481,19 +726,19 @@ export default function DiscoverScreen() {
         ) : null}
 
         <View style={styles.intro}>
-          <Text style={styles.eyebrow}>Live local food, mapped.</Text>
-          <Text accessibilityRole="header" style={[styles.title, wide && styles.titleWide]}>Know what’s serving before you go.</Text>
+          <Text style={styles.eyebrow}>Live local food</Text>
+          <Text accessibilityRole="header" style={[styles.title, wide && styles.titleWide]}>Find what’s serving.</Text>
           <Text style={styles.subtitle}>
-            Live locations, current menus, clear payment details, and owner updates from the independent spots around you.
+            Food trucks first, plus restaurants, pop-ups, current menus, payments, and owner updates.
           </Text>
         </View>
 
         <View style={styles.searchBar}>
           <FontAwesome6 color={palette.muted} name="magnifying-glass" size={16} />
           <TextInput
-            accessibilityLabel="Search by business, cuisine, city, or ZIP code"
+            accessibilityLabel="Filter loaded places by business, cuisine, dish, or payment method"
             onChangeText={(text) => startTransition(() => setQuery(text))}
-            placeholder="Search food, business, city, or ZIP"
+            placeholder="Search food or business"
             placeholderTextColor={palette.mutedLight}
             returnKeyType="search"
             style={styles.searchInput}
@@ -605,7 +850,10 @@ export default function DiscoverScreen() {
             <View style={styles.filterSection}>
               <Text style={styles.filterSectionLabel}>Cuisine</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={styles.filterChoices}>
+                <View
+                  accessibilityLabel="Cuisine filter"
+                  accessibilityRole="radiogroup"
+                  style={styles.filterChoices}>
                   {cuisines.map((facet) => {
                     const selectedCuisine = cuisine === facet.label;
                     return (
@@ -670,7 +918,10 @@ export default function DiscoverScreen() {
             <View style={styles.filterColumns}>
               <View style={styles.filterSectionColumn}>
                 <Text style={styles.filterSectionLabel}>Distance</Text>
-                <View style={styles.filterChoices}>
+                <View
+                  accessibilityLabel="Distance filter"
+                  accessibilityRole="radiogroup"
+                  style={styles.filterChoices}>
                   {distanceOptions.map((miles) => (
                     <Pressable
                       accessibilityRole="radio"
@@ -686,7 +937,10 @@ export default function DiscoverScreen() {
               </View>
               <View style={styles.filterSectionColumn}>
                 <Text style={styles.filterSectionLabel}>Rating</Text>
-                <View style={styles.filterChoices}>
+                <View
+                  accessibilityLabel="Rating filter"
+                  accessibilityRole="radiogroup"
+                  style={styles.filterChoices}>
                   {ratingOptions.map((rating) => (
                     <Pressable
                       accessibilityRole="radio"
@@ -740,77 +994,23 @@ export default function DiscoverScreen() {
           </View>
         ) : null}
 
-        {sponsoredPlace ? (
-          <SponsoredLane
-            onHide={() => {
-              const placementId = sponsoredPlace.sponsoredPlacement?.id;
-              if (placementId) {
-                setHiddenSponsoredIds((current) => [...new Set([...current, placementId])]);
-              }
-            }}
-            onOpen={() => router.push(`/place/${sponsoredPlace.id}`)}
-            onToggleReason={() =>
-              setOpenSponsorReasonId((current) =>
-                current === sponsoredPlace.sponsoredPlacement?.id
-                  ? null
-                  : sponsoredPlace.sponsoredPlacement?.id ?? null
-              )
-            }
-            place={sponsoredPlace}
-            reasonOpen={openSponsorReasonId === sponsoredPlace.sponsoredPlacement?.id}
-          />
-        ) : null}
-
-        {syncStatus === 'error' ? (
-          <View accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.syncBannerError}>
-            <View style={styles.syncBannerCopy}>
-              <Text style={styles.syncBannerTitle}>Live listings could not refresh</Text>
-              <Text style={styles.syncBannerDetail}>{syncMessage}</Text>
-            </View>
-            <Pressable accessibilityRole="button" onPress={() => void refresh()} style={styles.syncRetry}>
-              <Text style={styles.syncRetryText}>Retry</Text>
-            </Pressable>
-          </View>
-        ) : null}
-
-        {syncStatus === 'idle' && !places.length ? (
-          <View accessibilityLiveRegion="polite" style={styles.empty}>
-            <View style={styles.emptyIcon}>
-              <FontAwesome6 color={palette.accent} name="location-crosshairs" size={22} />
-            </View>
-            <Text accessibilityRole="header" {...webSectionHeading} style={styles.emptyTitle}>
-              Start with your real search area
-            </Text>
-            <Text style={styles.emptyBody}>
-              {locating
-                ? 'Checking whether location access is already enabled…'
-                : 'Use foreground location or enter a city or ZIP. Spottr will not pretend global results are nearby.'}
-            </Text>
-            {!locating ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setLocationPanelOpen(true)}
-                style={styles.emptyButton}>
-                <Text style={styles.emptyButtonText}>Choose an area</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : syncStatus === 'syncing' && !places.length ? (
-          <View accessibilityLiveRegion="polite" style={styles.loadingState}>
-            <ActivityIndicator color={palette.accentDeep} />
-            <Text style={styles.loadingText}>Loading nearby food…</Text>
-          </View>
-        ) : ranked.length || visibleMapInventory.length ? (
+        {clientHydrated && focused && pathname === '/' ? (
           <View style={[styles.workspace, wide && styles.workspaceWide]}>
             <View style={[styles.mapColumn, wide && styles.mapColumnWide]}>
               <LiveMap
-                inventoryFeatures={visibleMapInventory}
+                inventoryError={authoritativeMapInventory ? mapInventoryError : null}
+                inventoryFeatures={authoritativeMapInventory ? visibleMapInventory : undefined}
+                markersSuppressed={authoritativeMapInventory ? mapMarkersSuppressed : false}
                 onSelect={selectPlace}
-                onSelectBusinessId={(businessId) => void selectBusinessId(businessId)}
+                onSelectBusinessId={(businessId, locationId) => void selectBusinessId(businessId, locationId)}
                 onSearchArea={searchVisibleMap}
-                onViewportChange={(viewport) => void loadMapInventory(viewport)}
+                onRetryInventory={authoritativeMapInventory ? retryMapInventory : undefined}
+                onViewportChange={authoritativeMapInventory ? (viewport) => void loadMapInventory(viewport) : undefined}
+                onViewportInvalidated={invalidateMapInventory}
                 places={mappedPlaces}
-                selectedId={selected?.id}
+                searchAreaKey={mapFocusKey || undefined}
+                selectedId={explicitSelection?.id}
+                selectedLocationId={explicitSelection?.locationId}
                 userCoordinates={userCoordinates}
               />
               <View
@@ -841,6 +1041,12 @@ export default function DiscoverScreen() {
                   <Text style={styles.legendText}>Area</Text>
                 </View>
               </View>
+              {mapInventoryMayBeCapped ? (
+                <View accessibilityLiveRegion="polite" style={styles.mapLimitNotice}>
+                  <FontAwesome6 color={palette.accentDeep} name="layer-group" size={10} />
+                  <Text style={styles.mapLimitText}>Dense area · zoom in or search this area to load local detail.</Text>
+                </View>
+              ) : null}
               {selected ? (
                 <View style={styles.mapPreview}>
                   <View style={styles.mapPreviewCopy}>
@@ -860,7 +1066,10 @@ export default function DiscoverScreen() {
                   </View>
                   <Pressable
                     accessibilityLabel={`View ${selected.name}`}
-                    onPress={() => router.push(`/place/${selected.id}`)}
+                    onPress={() => router.push({
+                      pathname: '/place/[id]',
+                      params: placeLocationRouteParams(selected.id, selected.locationId),
+                    })}
                     style={styles.arrowButton}>
                     <FontAwesome6 color="#FFFFFF" name="arrow-right" size={14} />
                   </Pressable>
@@ -869,6 +1078,17 @@ export default function DiscoverScreen() {
             </View>
 
             <View style={[styles.resultsColumn, wide && styles.resultsColumnWide]}>
+              {syncStatus === 'error' ? (
+                <View accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.syncBannerError}>
+                  <View style={styles.syncBannerCopy}>
+                    <Text style={styles.syncBannerTitle}>Live listings could not refresh</Text>
+                    <Text style={styles.syncBannerDetail}>{syncMessage}</Text>
+                  </View>
+                  <Pressable accessibilityRole="button" onPress={() => void refresh()} style={styles.syncRetry}>
+                    <Text style={styles.syncRetryText}>Retry</Text>
+                  </Pressable>
+                </View>
+              ) : null}
               <View style={styles.resultsHeader}>
                 <View>
                   <Text accessibilityRole="header" {...webSectionHeading} style={styles.resultsTitle}>
@@ -880,20 +1100,93 @@ export default function DiscoverScreen() {
                   </Text>
                 </View>
               </View>
+              {sponsoredPlace ? (
+                <SponsoredLane
+                  interactionReady={acknowledgedSponsoredId === sponsoredPlace.sponsoredPlacement.id}
+                  onImpression={() => recordVisibleSponsoredImpression(sponsoredPlace)}
+                  onHide={() => {
+                    const placementId = sponsoredPlace.sponsoredPlacement?.id;
+                    const placementToken = sponsoredPlace.sponsoredPlacement?.token;
+                    if (placementId) {
+                      setHiddenSponsoredIds((current) => [...new Set([...current, placementId])]);
+                    }
+                    if (placementToken) void recordSponsoredInteraction(placementToken, 'hide');
+                  }}
+                  onOpen={() => {
+                    if (acknowledgedSponsoredId !== sponsoredPlace.sponsoredPlacement.id) return;
+                    const placementToken = sponsoredPlace.sponsoredPlacement?.token;
+                    if (placementToken) void recordSponsoredInteraction(placementToken, 'open');
+                    router.push({
+                      pathname: '/place/[id]',
+                      params: placeLocationRouteParams(
+                        sponsoredPlace.id,
+                        sponsoredPlace.locationId,
+                      ),
+                    });
+                  }}
+                  onToggleReason={() =>
+                    setOpenSponsorReasonId((current) =>
+                      current === sponsoredPlace.sponsoredPlacement?.id
+                        ? null
+                        : sponsoredPlace.sponsoredPlacement?.id ?? null
+                    )
+                  }
+                  place={sponsoredPlace}
+                  reasonOpen={openSponsorReasonId === sponsoredPlace.sponsoredPlacement?.id}
+                />
+              ) : null}
 
               <View style={styles.resultsList}>
                 {!visibleRanked.length ? (
                   <View style={styles.mapOnlyResult}>
-                    <FontAwesome6 color={palette.accentDeep} name="map-location-dot" size={17} />
-                    <Text style={styles.mapOnlyTitle}>More places are visible on the map</Text>
-                    <Text style={styles.mapOnlyBody}>Zoom into a cluster or search this area to load its detailed list.</Text>
+                    <FontAwesome6
+                      color={palette.accentDeep}
+                      name={syncStatus === 'syncing' ? 'spinner' : 'map-location-dot'}
+                      size={17}
+                    />
+                    <Text style={styles.mapOnlyTitle}>
+                      {syncStatus === 'syncing'
+                        ? 'Loading verified places'
+                        : visibleMapInventory.length
+                          ? 'More places are visible on the map'
+                          : syncStatus === 'error'
+                            ? 'Verified listings are not connected'
+                            : enabledPlaces.length
+                              ? 'No places match these filters'
+                              : locationLabel !== defaultLocationLabel
+                                ? 'No verified listings here yet'
+                                : 'Choose an area to find what is serving'}
+                    </Text>
+                    <Text style={styles.mapOnlyBody}>
+                      {syncStatus === 'syncing'
+                        ? 'You can keep exploring the map while Spottr refreshes this area.'
+                        : visibleMapInventory.length
+                          ? 'Zoom into a cluster or search this area to load its detailed list.'
+                          : syncStatus === 'error'
+                            ? 'Explore detailed streets, buildings, and public map labels now. Spottr markers require the verified listing database.'
+                            : enabledPlaces.length
+                              ? 'Clear a filter or search another visible area.'
+                              : locationLabel !== defaultLocationLabel
+                                ? 'Try another city, ZIP code, or visible map area.'
+                                : locating
+                                ? 'Checking foreground location access…'
+                                : 'Use foreground location or enter a city or ZIP. Spottr never invents nearby results.'}
+                    </Text>
+                    {!locating && !enabledPlaces.length && syncStatus !== 'error' ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => setLocationPanelOpen(true)}
+                        style={styles.mapOnlyAction}>
+                        <Text style={styles.mapOnlyActionText}>Choose an area</Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 ) : null}
                 {visibleRanked.map((place) => (
                   <PlaceCard
                     compact={wide}
                     followed={followedIds.includes(place.id)}
-                    key={place.id}
+                    key={mapPlaceIdentity(place.id, place.locationId)}
                     onToggleFollow={toggleFollow}
                     place={place}
                   />
@@ -924,28 +1217,9 @@ export default function DiscoverScreen() {
             </View>
           </View>
         ) : (
-          <View style={styles.empty}>
-            <View style={styles.emptyIcon}>
-              <FontAwesome6 color={palette.accent} name="location-dot" size={22} />
-            </View>
-            <Text accessibilityRole="header" {...webSectionHeading} style={styles.emptyTitle}>
-              {places.length ? 'No matches in this area' : 'No verified listings here yet'}
-            </Text>
-            <Text style={styles.emptyBody}>
-              {places.length
-                ? 'Try Everything, clear Open now, or choose another city or ZIP code.'
-                : 'Try another area or check back as local businesses join Spottr.'}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setQuery('');
-                setCategory('all');
-                setOpenOnly(false);
-              }}
-              style={styles.emptyButton}>
-              <Text style={styles.emptyButtonText}>Reset search</Text>
-            </Pressable>
+          <View accessibilityLiveRegion="polite" style={styles.mapBootstrap}>
+            <FontAwesome6 color={palette.accentDeep} name="map-location-dot" size={20} />
+            <Text style={styles.mapBootstrapTitle}>Preparing the live map…</Text>
           </View>
         )}
 
@@ -1071,8 +1345,8 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   intro: {
-    gap: spacing.sm,
-    marginTop: spacing.lg,
+    gap: 3,
+    marginTop: spacing.md,
     maxWidth: 760,
   },
   eyebrow: {
@@ -1084,20 +1358,20 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.ink,
-    fontSize: 36,
+    fontSize: 24,
     fontWeight: '900',
-    letterSpacing: -2,
-    lineHeight: 40,
+    letterSpacing: -1.1,
+    lineHeight: 29,
   },
   titleWide: {
-    fontSize: 44,
-    letterSpacing: -2.2,
-    lineHeight: 47,
+    fontSize: 27,
+    letterSpacing: -1.2,
+    lineHeight: 32,
   },
   subtitle: {
     color: palette.muted,
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 12,
+    lineHeight: 17,
     maxWidth: 620,
   },
   searchBar: {
@@ -1108,7 +1382,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: spacing.sm,
-    marginTop: spacing.xl,
+    marginTop: spacing.md,
     paddingHorizontal: spacing.md,
   },
   searchInput: {
@@ -1119,7 +1393,7 @@ const styles = StyleSheet.create({
   },
   categoryRow: {
     gap: spacing.sm,
-    paddingVertical: spacing.lg,
+    paddingVertical: spacing.sm,
   },
   categoryChip: {
     alignItems: 'center',
@@ -1154,7 +1428,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.md,
     justifyContent: 'space-between',
-    marginBottom: spacing.xl,
+    marginBottom: spacing.md,
   },
   filterActions: {
     alignItems: 'center',
@@ -1379,7 +1653,22 @@ const styles = StyleSheet.create({
     color: '#F2DDD6',
   },
   workspace: {
-    gap: spacing.xl,
+    gap: spacing.lg,
+  },
+  mapBootstrap: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.line,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    gap: spacing.sm,
+    height: 470,
+    justifyContent: 'center',
+  },
+  mapBootstrapTitle: {
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
   },
   workspaceWide: {
     alignItems: 'flex-start',
@@ -1467,6 +1756,25 @@ const styles = StyleSheet.create({
   legendText: {
     color: palette.muted,
     fontSize: 9,
+    fontWeight: '800',
+  },
+  mapLimitNotice: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 253, 248, 0.94)',
+    borderColor: palette.line,
+    borderRadius: 999,
+    borderWidth: 1,
+    bottom: 104,
+    flexDirection: 'row',
+    gap: 6,
+    left: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    position: 'absolute',
+  },
+  mapLimitText: {
+    color: palette.muted,
+    fontSize: 8,
     fontWeight: '800',
   },
   mapPreview: {
@@ -1582,6 +1890,20 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 11,
     lineHeight: 17,
+  },
+  mapOnlyAction: {
+    alignItems: 'center',
+    backgroundColor: palette.accentDeep,
+    borderRadius: radii.pill,
+    justifyContent: 'center',
+    marginTop: spacing.xs,
+    minHeight: 44,
+    paddingHorizontal: spacing.lg,
+  },
+  mapOnlyActionText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
   },
   loadMoreButton: {
     alignItems: 'center',

@@ -1,6 +1,8 @@
 import { seedPlaces } from '../../data/places';
+import type { SponsoredPlace } from '../../types/marketplace';
 import {
   cuisineFacets,
+  discoverySearchScore,
   discoveryFilterCount,
   placeSupportsPickup,
   rankDiscoveryPlaces,
@@ -56,6 +58,27 @@ describe('discovery filters', () => {
     expect(
       rankDiscoveryPlaces([restaurant, truck], base, null).map((place) => place.id)
     ).toEqual([truck.id, restaurant.id]);
+  });
+
+  it('never feeds sponsored metadata into organic ranking', () => {
+    const organicFirst = { ...seedPlaces[0], distanceMiles: 1 };
+    const sponsoredSecond: SponsoredPlace = {
+      ...seedPlaces[1],
+      distanceMiles: 2,
+      sponsoredPlacement: {
+        id: '31000000-0000-4000-8000-000000000003',
+        locationId: '32000000-0000-4000-8000-000000000003',
+        disclosure: 'Sponsored ad' as const,
+        reason: 'Near your selected area',
+        token: `${'32000000-0000-4000-8000-000000000003'}.${'1790000000'}.${'a'.repeat(64)}`,
+        expiresAt: '2026-09-22T00:00:00.000Z',
+      },
+    };
+    expect(
+      rankDiscoveryPlaces([sponsoredSecond, organicFirst], base, null).map(
+        (place) => place.id
+      )
+    ).toEqual([organicFirst.id, sponsoredSecond.id]);
   });
 
   it('builds deterministic cuisine facets and an accurate active-filter count', () => {
@@ -142,5 +165,82 @@ describe('discovery filters', () => {
         null
       ).map((place) => place.id)
     ).toEqual([published.id]);
+  });
+
+  it('finds public menu items and dietary terms with tokens in any order', () => {
+    expect(
+      rankDiscoveryPlaces(
+        seedPlaces,
+        { ...base, query: 'vegan cauliflower' },
+        null
+      ).map((place) => place.id)
+    ).toEqual(['ember-and-grain']);
+
+    expect(
+      rankDiscoveryPlaces(
+        seedPlaces,
+        { ...base, query: 'yuzu mushroom' },
+        null
+      ).map((place) => place.id)
+    ).toEqual(['miso-mile']);
+  });
+
+  it('ranks an exact public name above incidental text without overriding filters', () => {
+    const exact = {
+      ...seedPlaces[3],
+      id: 'exact-cafe',
+      name: 'Café Sol',
+      status: 'closed' as const,
+      popularityScore: 1,
+    };
+    const incidental = {
+      ...seedPlaces[0],
+      id: 'incidental-cafe',
+      name: 'Morning Table',
+      description: 'A cafe sol inspired seasonal plate.',
+      popularityScore: 999,
+    };
+
+    expect(discoverySearchScore(exact, 'cafe sol')).toBeGreaterThan(
+      discoverySearchScore(incidental, 'cafe sol') ?? 0
+    );
+    expect(
+      rankDiscoveryPlaces(
+        [incidental, exact],
+        { ...base, query: 'cafe sol', sort: 'popular' },
+        null
+      ).map((place) => place.id)
+    ).toEqual([exact.id, incidental.id]);
+    expect(
+      rankDiscoveryPlaces(
+        [incidental, exact],
+        { ...base, query: 'cafe sol', openOnly: true },
+        null
+      ).map((place) => place.id)
+    ).toEqual([incidental.id]);
+  });
+
+  it('matches useful prefixes but rejects vague short substrings', () => {
+    expect(
+      rankDiscoveryPlaces(seedPlaces, { ...base, query: 'sonor taco' }, null)
+        .map((place) => place.id)
+    ).toContain('copper-coyote');
+    expect(
+      rankDiscoveryPlaces(seedPlaces, { ...base, query: 'pp' }, null)
+    ).toEqual([]);
+  });
+
+  it('matches city and area filters without requiring diacritics', () => {
+    const saoPaulo = {
+      ...seedPlaces[0],
+      id: 'sao-paulo-truck',
+      city: 'São Paulo',
+      region: 'SP',
+      address: 'Praça da Sé',
+    };
+    expect(
+      rankDiscoveryPlaces([saoPaulo], { ...base, area: 'sao paulo' }, null)
+        .map((place) => place.id)
+    ).toEqual([saoPaulo.id]);
   });
 });

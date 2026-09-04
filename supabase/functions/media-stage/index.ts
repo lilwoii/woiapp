@@ -11,8 +11,10 @@ import {
 
 type MediaPurpose =
   | "profile_avatar"
+  | "profile_banner"
   | "business_logo"
   | "business_gallery"
+  | "business_post"
   | "review_photo"
   | "chat_photo"
   | "claim_evidence";
@@ -40,8 +42,10 @@ function uploadsEnabled(): boolean {
 function purpose(value: unknown): MediaPurpose {
   if (
     value !== "profile_avatar" &&
+    value !== "profile_banner" &&
     value !== "business_logo" &&
     value !== "business_gallery" &&
+    value !== "business_post" &&
     value !== "review_photo" &&
     value !== "chat_photo" &&
     value !== "claim_evidence"
@@ -89,7 +93,7 @@ Deno.serve(async (request) => {
     const { user, client } = await authenticatedUser(request, ownerMedia);
     const targetBusinessId = businessId(
       body.businessId,
-      selectedPurpose !== "profile_avatar",
+      selectedPurpose !== "profile_avatar" && selectedPurpose !== "profile_banner",
     );
     const targetConversationId = conversationId(
       body.conversationId,
@@ -123,6 +127,14 @@ Deno.serve(async (request) => {
       }
 
       const admin = adminClient();
+      if (selectedPurpose === "claim_evidence") {
+        const { data: intakeEnabled, error: intakeGateError } = await admin.rpc(
+          "business_claim_evidence_intake_enabled",
+        );
+        if (intakeGateError || intakeEnabled !== true) {
+          throw new HttpError(503, "CLAIM_EVIDENCE_INTAKE_DISABLED");
+        }
+      }
       const { error: rateLimitError } = await admin.rpc("consume_media_stage_slot", {
         target_user_id: user.id,
         media_purpose: selectedPurpose,
@@ -134,7 +146,11 @@ Deno.serve(async (request) => {
         throw rateLimitError;
       }
 
-      if (selectedPurpose === "business_logo" || selectedPurpose === "business_gallery") {
+      if (
+        selectedPurpose === "business_logo" ||
+        selectedPurpose === "business_gallery" ||
+        selectedPurpose === "business_post"
+      ) {
         const { data: isMember, error } = await client.rpc("is_business_member", {
           target_business_id: targetBusinessId,
           allowed_roles: ["owner", "manager"],

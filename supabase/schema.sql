@@ -218,6 +218,32 @@ create table if not exists public.business_claims (
   unique (business_id, claimant_id, state)
 );
 
+create or replace function private.require_business_claim_verification_receipt()
+returns trigger
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+begin
+  if new.state = 'approved' then
+    raise exception using
+      errcode = '55000',
+      message = 'CLAIM_VERIFICATION_RECEIPT_REQUIRED';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function private.require_business_claim_verification_receipt()
+  from public, anon, authenticated;
+
+drop trigger if exists require_business_claim_verification_receipt
+  on public.business_claims;
+create trigger require_business_claim_verification_receipt
+before insert or update of state on public.business_claims
+for each row execute function private.require_business_claim_verification_receipt();
+
 create table if not exists public.business_locations (
   id uuid primary key default gen_random_uuid(),
   business_id uuid not null references public.businesses(id) on delete cascade,
@@ -509,7 +535,8 @@ create table if not exists public.content_reports (
     )
   ),
   constraint content_reports_detail_length check (detail is null or char_length(detail) <= 2000),
-  unique (reporter_id, target_type, target_id)
+  constraint content_reports_reporter_id_target_type_target_id_key
+    unique (reporter_id, target_type, target_id)
 );
 
 create table if not exists public.user_blocks (
@@ -1177,6 +1204,214 @@ create table if not exists private.provider_ingest_audit_events (
 create index if not exists provider_ingest_audit_time_idx
   on private.provider_ingest_audit_events (provider_slug, created_at desc);
 
+create or replace function public.reconcile_licensed_provider_lifecycle(
+  result_limit integer default 500
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  bounded_limit integer := greatest(1, least(coalesce(result_limit, 500), 2000));
+  now_value timestamptz := pg_catalog.clock_timestamp();
+  stale_marked integer := 0;
+  archived_count integer := 0;
+  backlog boolean := false;
+begin
+  if not pg_catalog.pg_try_advisory_xact_lock(
+    pg_catalog.hashtextextended('spottr:provider-lifecycle', 0)
+  ) then
+    return pg_catalog.jsonb_build_object(
+      'sources_marked_stale', 0,
+      'businesses_archived', 0,
+      'more_work', true,
+      'skipped', true
+    );
+  end if;
+
+  with targets as materialized (
+    select source.provider_slug, source.provider_external_id
+    from private.provider_business_sources source
+    join private.provider_accounts account
+      on account.provider_slug = source.provider_slug
+    where (
+      source.source_status = 'missing'
+      and source.missing_since <= now_value - account.stale_after
+    ) or (
+      source.source_status = 'active'
+      and (
+        not account.enabled
+        or current_date not between account.license_effective_on
+          and account.license_expires_on
+      )
+    )
+    order by
+      coalesce(source.missing_since, source.last_seen_at),
+      source.provider_slug,
+      source.provider_external_id
+    limit bounded_limit
+    for update of source skip locked
+  ), updated as (
+    update private.provider_business_sources source
+    set source_status = 'stale',
+        missing_since = coalesce(source.missing_since, now_value),
+        inactive_at = null,
+        inactive_reason = null
+    from targets
+    where source.provider_slug = targets.provider_slug
+      and source.provider_external_id = targets.provider_external_id
+    returning source.provider_slug
+  ), audited as (
+    insert into private.provider_ingest_audit_events (
+      provider_slug,
+      event_type,
+      metadata
+    )
+    select
+      updated.provider_slug,
+      'sources_marked_stale',
+      pg_catalog.jsonb_build_object('count', count(*)::integer)
+    from updated
+    group by updated.provider_slug
+    returning 1
+  )
+  select count(*)::integer into stale_marked from updated;
+
+  with targets as materialized (
+    select business.id
+    from public.businesses business
+    where business.state = 'published'
+      and business.provenance = 'licensed_provider'
+      and exists (
+        select 1
+        from private.provider_business_sources source
+        where source.business_id = business.id
+      )
+      and not exists (
+        select 1
+        from public.business_members member
+        where member.business_id = business.id
+          and member.status = 'active'
+      )
+      and not exists (
+        select 1
+        from public.business_claims claim
+        where claim.business_id = business.id
+          and claim.state = 'approved'
+      )
+      and not exists (
+        select 1
+        from private.provider_business_sources source
+        join private.provider_accounts account
+          on account.provider_slug = source.provider_slug
+        where source.business_id = business.id
+          and (
+            source.source_status = 'active'
+            or (
+              source.source_status in ('missing', 'stale')
+              and source.missing_since > now_value - account.archive_after
+            )
+            or (
+              source.source_status = 'inactive'
+              and source.inactive_at > now_value - account.archive_after
+            )
+          )
+      )
+    order by business.updated_at, business.id
+    limit bounded_limit
+    for update of business skip locked
+  ), archived as (
+    update public.businesses business
+    set state = 'archived'
+    from targets
+    where business.id = targets.id
+    returning business.id
+  ), audited as (
+    insert into private.provider_ingest_audit_events (
+      provider_slug,
+      event_type,
+      metadata
+    )
+    select
+      null,
+      'businesses_archived',
+      pg_catalog.jsonb_build_object('count', count(*)::integer)
+    from archived
+    having count(*) > 0
+    returning 1
+  )
+  select count(*)::integer into archived_count from archived;
+
+  select exists (
+    select 1
+    from private.provider_business_sources source
+    join private.provider_accounts account
+      on account.provider_slug = source.provider_slug
+    where (
+      source.source_status = 'missing'
+      and source.missing_since <= now_value - account.stale_after
+    ) or (
+      source.source_status = 'active'
+      and (
+        not account.enabled
+        or current_date not between account.license_effective_on
+          and account.license_expires_on
+      )
+    )
+  ) or exists (
+    select 1
+    from public.businesses business
+    where business.state = 'published'
+      and business.provenance = 'licensed_provider'
+      and exists (
+        select 1
+        from private.provider_business_sources source
+        where source.business_id = business.id
+      )
+      and not exists (
+        select 1 from public.business_members member
+        where member.business_id = business.id and member.status = 'active'
+      )
+      and not exists (
+        select 1 from public.business_claims claim
+        where claim.business_id = business.id and claim.state = 'approved'
+      )
+      and not exists (
+        select 1
+        from private.provider_business_sources source
+        join private.provider_accounts account
+          on account.provider_slug = source.provider_slug
+        where source.business_id = business.id
+          and (
+            source.source_status = 'active'
+            or (
+              source.source_status in ('missing', 'stale')
+              and source.missing_since > now_value - account.archive_after
+            )
+            or (
+              source.source_status = 'inactive'
+              and source.inactive_at > now_value - account.archive_after
+            )
+          )
+      )
+  ) into backlog;
+
+  return pg_catalog.jsonb_build_object(
+    'sources_marked_stale', stale_marked,
+    'businesses_archived', archived_count,
+    'more_work', backlog,
+    'skipped', false
+  );
+end;
+$$;
+
+revoke all on function public.reconcile_licensed_provider_lifecycle(integer)
+  from public, anon, authenticated;
+grant execute on function public.reconcile_licensed_provider_lifecycle(integer)
+  to service_role;
+
 create table if not exists public.audit_events (
   id bigint generated always as identity primary key,
   actor_id uuid references auth.users(id) on delete set null,
@@ -1386,6 +1621,53 @@ as $$
     );
 $$;
 
+-- Database-authoritative home-kitchen launch state. The forward migration adds
+-- the service-role-only toggle/status RPCs and chat/disclosure cleanup after
+-- the marketplace chat tables exist; the bootstrap schema keeps the default
+-- and read helper aligned so public projections fail closed from first boot.
+create table if not exists private.home_kitchen_runtime_settings (
+  singleton boolean primary key default true check (singleton),
+  enabled boolean not null default false,
+  updated_by uuid references auth.users(id) on delete set null,
+  updated_at timestamptz not null default now(),
+  change_reason text,
+  constraint home_kitchen_runtime_settings_reason_length check (
+    change_reason is null or char_length(btrim(change_reason)) between 3 and 1000
+  )
+);
+
+insert into private.home_kitchen_runtime_settings (
+  singleton,
+  enabled,
+  change_reason
+)
+values (
+  true,
+  false,
+  'Bootstrap default: home kitchens remain disabled until launch approval.'
+)
+on conflict (singleton) do nothing;
+
+revoke all privileges on table private.home_kitchen_runtime_settings
+  from public, anon, authenticated, service_role;
+
+create or replace function private.home_kitchens_globally_enabled()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((
+    select settings.enabled
+    from private.home_kitchen_runtime_settings settings
+    where settings.singleton
+  ), false);
+$$;
+
+revoke all on function private.home_kitchens_globally_enabled()
+  from public, anon, authenticated, service_role;
+
 create or replace function private.is_business_publicly_eligible(target_business_id uuid)
 returns boolean
 language sql
@@ -1399,8 +1681,24 @@ as $$
     where b.id = target_business_id
       and b.state = 'published'
       and (
+        b.provenance <> 'licensed_provider'
+        or exists (
+          select 1
+          from private.provider_business_sources source
+          join private.provider_accounts account
+            on account.provider_slug = source.provider_slug
+          where source.business_id = b.id
+            and source.source_status = 'active'
+            and account.enabled
+            and current_date between account.license_effective_on
+              and account.license_expires_on
+        )
+      )
+      and (
         b.kind <> 'home_kitchen'
         or (
+          private.home_kitchens_globally_enabled()
+          and
           b.verification = 'verified'
           and exists (
             select 1
@@ -1418,6 +1716,11 @@ as $$
       )
   );
 $$;
+
+revoke all on function private.is_business_publicly_eligible(uuid)
+  from public, anon, authenticated;
+grant execute on function private.is_business_publicly_eligible(uuid)
+  to anon, authenticated;
 
 create or replace function private.time_window_is_open(
   opens_at time,
@@ -2151,7 +2454,35 @@ begin
     raise exception using errcode = '23514', message = 'Invalid business timezone';
   end if;
 
-  if new.state = 'published' then
+  if new.state = 'published'
+    and (tg_op = 'INSERT' or old.state <> 'published')
+  then
+    if new.provenance in ('owner', 'community')
+      and (
+        tg_op = 'INSERT'
+        or old.state not in ('pending', 'suspended')
+        or new.verification <> 'verified'
+      )
+    then
+      raise exception using errcode = '55000', message = 'BUSINESS_REVIEW_REQUIRED';
+    end if;
+
+    if new.provenance = 'licensed_provider'
+      and not exists (
+        select 1
+        from private.provider_business_sources source
+        join private.provider_accounts account
+          on account.provider_slug = source.provider_slug
+        where source.business_id = new.id
+          and source.source_status = 'active'
+          and account.enabled
+          and current_date between account.license_effective_on
+            and account.license_expires_on
+      )
+    then
+      raise exception using errcode = '55000', message = 'LICENSED_SOURCE_NOT_ACTIVE';
+    end if;
+
     perform private.assert_business_publication_ready(new.id);
   end if;
 
@@ -2178,6 +2509,9 @@ begin
   return new;
 end;
 $$;
+
+revoke all on function private.enforce_business_publication()
+  from public, anon, authenticated;
 
 create or replace function private.prevent_published_setup_mutation()
 returns trigger
@@ -2501,8 +2835,15 @@ language sql
 immutable
 set search_path = ''
 as $$
-  select candidate is null
-    or lower(candidate) !~ '\m(f+u+c+k+|s+h+i+t+|b+i+t+c+h+|c+u+n+t+|f+a+g+g+o+t+|n+i+g+g+e+r+|a+s+s+h+o+l+e+)\M';
+  select candidate is null or not exists (
+    select 1
+    from unnest(array[
+      lower(candidate),
+      translate(lower(candidate), '013457@$!', 'oieastasi')
+    ]) as variant(value)
+    where variant.value ~
+      '\m(a+[^[:alnum:]]*s+[^[:alnum:]]*s+[^[:alnum:]]*h+[^[:alnum:]]*o+[^[:alnum:]]*l+[^[:alnum:]]*e+|b+[^[:alnum:]]*a+[^[:alnum:]]*s+[^[:alnum:]]*t+[^[:alnum:]]*a+[^[:alnum:]]*r+[^[:alnum:]]*d+|b+[^[:alnum:]]*i+[^[:alnum:]]*t+[^[:alnum:]]*c+[^[:alnum:]]*h+|b+[^[:alnum:]]*u+[^[:alnum:]]*l+[^[:alnum:]]*l+[^[:alnum:]]*s+[^[:alnum:]]*h+[^[:alnum:]]*i+[^[:alnum:]]*t+|c+[^[:alnum:]]*u+[^[:alnum:]]*n+[^[:alnum:]]*t+|d+[^[:alnum:]]*i+[^[:alnum:]]*c+[^[:alnum:]]*k+|f+[^[:alnum:]]*a+[^[:alnum:]]*g+[^[:alnum:]]*g+[^[:alnum:]]*o+[^[:alnum:]]*t+|f+[^[:alnum:]]*u+[^[:alnum:]]*c+[^[:alnum:]]*k+|m+[^[:alnum:]]*o+[^[:alnum:]]*t+[^[:alnum:]]*h+[^[:alnum:]]*e+[^[:alnum:]]*r+[^[:alnum:]]*f+[^[:alnum:]]*u+[^[:alnum:]]*c+[^[:alnum:]]*k+[^[:alnum:]]*e+[^[:alnum:]]*r+|n+[^[:alnum:]]*i+[^[:alnum:]]*g+[^[:alnum:]]*g+[^[:alnum:]]*e+[^[:alnum:]]*r+|s+[^[:alnum:]]*h+[^[:alnum:]]*i+[^[:alnum:]]*t+|s+[^[:alnum:]]*l+[^[:alnum:]]*u+[^[:alnum:]]*t+)\M'
+  );
 $$;
 
 create or replace function private.enforce_professional_content()
@@ -2843,6 +3184,14 @@ declare
   ends_at timestamptz;
 begin
   perform private.require_aal2();
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(
     target_business_id,
     actor,
@@ -3015,7 +3364,24 @@ begin
     and r.moderation = 'approved'
     and r.deleted_at is null;
 
-  if target_business_id is null
+  if target_business_id is null then
+    raise exception using errcode = '42501', message = 'Eligible owner or manager role required';
+  end if;
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+
+  perform 1
+  from public.reviews r
+  where r.id = target_review_id
+    and r.business_id = target_business_id
+    and r.moderation = 'approved'
+    and r.deleted_at is null
+  for update;
+
+  if not found
     or not private.is_business_publicly_eligible(target_business_id)
     or not private.is_business_member(
       target_business_id,
@@ -3159,6 +3525,15 @@ declare
   actor uuid := auth.uid();
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.can_manage_business_draft(target_business_id, actor) then
     raise exception using errcode = '42501', message = 'Draft owner or manager role required';
   end if;
@@ -3509,6 +3884,14 @@ begin
     raise exception using errcode = '42501', message = 'Active verified account required';
   end if;
 
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   select bm.role
   into actor_role
   from public.business_members bm
@@ -3767,6 +4150,7 @@ declare
   actor uuid := auth.uid();
   actor_email text;
   actor_username text;
+  invitation_business_id uuid;
   invitation private.business_invitations%rowtype;
   assigned_role public.member_role;
 begin
@@ -3776,6 +4160,23 @@ begin
   end if;
   if decision not in ('accept', 'decline') then
     raise exception using errcode = '22023', message = 'Invalid invitation decision';
+  end if;
+
+  select bi.business_id
+  into invitation_business_id
+  from private.business_invitations bi
+  where bi.id = target_invitation_id;
+
+  if invitation_business_id is null then
+    raise exception using errcode = '22023', message = 'Invitation not found';
+  end if;
+
+  perform 1
+  from public.businesses b
+  where b.id = invitation_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Invitation not found';
   end if;
 
   select lower(u.email), lower(p.username::text)
@@ -3932,6 +4333,15 @@ declare
   previous_role public.member_role;
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(
     target_business_id,
     actor,
@@ -4007,6 +4417,14 @@ declare
 begin
   perform private.require_aal2();
 
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   select bm.role
   into actor_role
   from public.business_members bm
@@ -4078,6 +4496,14 @@ declare
   invitation_state text;
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
 
   select bm.role
   into actor_role
@@ -4460,6 +4886,14 @@ declare
   status_expiry timestamptz;
 begin
   perform private.require_aal2();
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(target_business_id, actor) then
     raise exception using errcode = '42501', message = 'Business membership required';
   end if;
@@ -4532,10 +4966,29 @@ begin
   where mi.id = target_menu_item_id
     and mi.is_published
     and ms.is_published
+    and b.state = 'published';
+
+  if target_business_id is null then
+    raise exception using errcode = '42501', message = 'Published menu owner or manager role required';
+  end if;
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+
+  perform 1
+  from public.menu_items mi
+  join public.menu_sections ms on ms.id = mi.section_id
+  join public.businesses b on b.id = ms.business_id
+  where mi.id = target_menu_item_id
+    and ms.business_id = target_business_id
+    and mi.is_published
+    and ms.is_published
     and b.state = 'published'
   for update of mi;
 
-  if target_business_id is null
+  if not found
     or not private.is_business_member(
       target_business_id,
       actor,
@@ -4586,6 +5039,15 @@ declare
   existing_state text;
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(
     target_business_id,
     actor,
@@ -4729,10 +5191,27 @@ begin
   join public.businesses b on b.id = ms.business_id
   where ms.id = target_stop_id
     and ms.state in ('draft', 'scheduled', 'live')
+    and b.state = 'published';
+
+  if target_business_id is null then
+    raise exception using errcode = '42501', message = 'Editable mobile stop owner or manager role required';
+  end if;
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+
+  perform 1
+  from public.mobile_stops ms
+  join public.businesses b on b.id = ms.business_id
+  where ms.id = target_stop_id
+    and ms.business_id = target_business_id
+    and ms.state in ('draft', 'scheduled', 'live')
     and b.state = 'published'
   for update of ms;
 
-  if target_business_id is null
+  if not found
     or not private.is_business_member(
       target_business_id,
       actor,
@@ -5455,6 +5934,15 @@ declare
   merged_patch jsonb;
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(
     target_business_id,
     actor,
@@ -6316,6 +6804,15 @@ declare
   current_kind public.business_kind;
 begin
   perform private.require_aal2();
+
+  perform 1
+  from public.businesses b
+  where b.id = target_business_id
+  for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'Business not found';
+  end if;
+
   if not private.is_business_member(
     target_business_id,
     actor,
@@ -6524,86 +7021,14 @@ volatile
 security definer
 set search_path = ''
 as $$
-declare
-  actor uuid := auth.uid();
-  claim_id uuid;
-  normalized_evidence text := nullif(btrim(evidence_private_path), '');
 begin
   perform private.require_aal2();
-  if not private.is_active_user(actor) then
+  if not private.is_active_user(auth.uid()) then
     raise exception using errcode = '42501', message = 'Active verified account required';
   end if;
-  if claim_method not in ('listed_phone', 'domain_email', 'document', 'permit') then
-    raise exception using errcode = '22023', message = 'Invalid claim method';
-  end if;
-  if not exists (
-    select 1
-    from public.businesses b
-    where b.id = target_business_id
-      and b.state in ('pending', 'published')
-  ) then
-    raise exception using errcode = '22023', message = 'Business is not claimable';
-  end if;
-  if private.is_business_member(
-    target_business_id,
-    actor,
-    array['owner']::public.member_role[]
-  ) then
-    raise exception using errcode = '22023', message = 'Current owners cannot claim their own business';
-  end if;
-  if claim_method in ('document', 'permit') and normalized_evidence is null then
-    raise exception using errcode = '22023', message = 'Private evidence is required';
-  end if;
-  if normalized_evidence is not null then
-    if normalized_evidence !~ ('^quarantine/' || actor::text || '/[^/].+')
-      or not exists (
-        select 1
-        from storage.objects so
-        where so.bucket_id = 'spottr-media'
-          and so.name = normalized_evidence
-      )
-    then
-      raise exception using errcode = '22023', message = 'Invalid private evidence path';
-    end if;
-  end if;
-
-  select bc.id
-  into claim_id
-  from public.business_claims bc
-  where bc.business_id = target_business_id
-    and bc.claimant_id = actor
-    and bc.state = 'pending';
-
-  if claim_id is not null then
-    return claim_id;
-  end if;
-
-  insert into public.business_claims (
-    business_id,
-    claimant_id,
-    method,
-    evidence_private_path,
-    state
-  )
-  values (
-    target_business_id,
-    actor,
-    claim_method,
-    normalized_evidence,
-    'pending'
-  )
-  returning id into claim_id;
-
-  perform private.write_audit_event(
-    actor,
-    target_business_id,
-    'business.claim_submitted',
-    'business_claim',
-    claim_id::text,
-    jsonb_build_object('method', claim_method)
-  );
-
-  return claim_id;
+  raise exception using
+    errcode = '55000',
+    message = 'CLAIM_VERIFICATION_SERVICE_REQUIRED';
 end;
 $$;
 
@@ -6876,7 +7301,7 @@ begin
     nullif(btrim(report_detail), ''),
     'open'
   )
-  on conflict (reporter_id, target_type, target_id)
+  on conflict on constraint content_reports_reporter_id_target_type_target_id_key
   do update set
     reason = excluded.reason,
     detail = excluded.detail,
@@ -9276,7 +9701,8 @@ create policy "legally reviewed jurisdictions are readable" on public.jurisdicti
 create policy "owners and managers read permit status" on public.home_kitchen_permits
   for select to authenticated
   using (
-    private.is_business_member(
+    private.has_aal2()
+    and private.is_business_member(
       business_id,
       auth.uid(),
       array['owner', 'manager']::public.member_role[]
