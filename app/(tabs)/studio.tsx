@@ -24,6 +24,7 @@ import { BrandMark } from '@/components/brand-mark';
 import { FocusAwareScreen } from '@/components/focus-aware-screen';
 import { OwnerUpdate } from '@/components/owner-update';
 import { PageShell } from '@/components/page-shell';
+import { PayInPersonOrderQueue } from '@/components/pay-in-person-order-queue';
 import { SectionHeading } from '@/components/section-heading';
 import { ShadowOrderQueue } from '@/components/shadow-order-queue';
 import { StatusPill } from '@/components/status-pill';
@@ -1038,8 +1039,12 @@ export default function StudioScreen() {
           </View>
         ) : null}
 
-        {featureFlags.pickupOrdering && canOperate ? (
+        {featureFlags.shadowOrdering && canOperate ? (
           <ShadowOrderQueue businessId={place.id} key={place.id} />
+        ) : null}
+
+        {featureFlags.pickupOrdering && canOperate ? (
+          <PayInPersonOrderQueue businessId={place.id} key={`pickup:${place.id}`} />
         ) : null}
 
         <View style={[styles.columns, wide && styles.columnsWide]}>

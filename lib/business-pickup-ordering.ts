@@ -19,7 +19,7 @@ export type BusinessPickupOrderingPreferences = Readonly<{
   eligibleKind: boolean;
   merchantOptedIn: boolean;
   acceptedPaymentOptions: readonly ('pay_in_person')[];
-  customerOrderingEnabled: false;
+  customerOrderingEnabled: boolean;
   onlinePaymentProcessingEnabled: false;
   listingState: 'draft' | 'pending' | 'published' | 'suspended' | 'archived';
   verificationState: 'unverified' | 'pending' | 'verified' | 'rejected' | 'expired';
@@ -145,12 +145,10 @@ export function mapBusinessPickupOrderingPreferences(
   if (!eligibleKind && merchantOptedIn) {
     throw new PickupOrderingResponseError('An ineligible category cannot opt in.');
   }
-  if (
-    booleanValue(row, 'customer_ordering_enabled') ||
-    booleanValue(row, 'online_payment_processing_enabled')
-  ) {
+  const customerOrderingEnabled = booleanValue(row, 'customer_ordering_enabled');
+  if (booleanValue(row, 'online_payment_processing_enabled')) {
     throw new PickupOrderingResponseError(
-      'Pickup ordering response attempted to enable an unavailable launch capability.'
+      'Pickup ordering response attempted to enable an unavailable payment capability.'
     );
   }
 
@@ -178,6 +176,12 @@ export function mapBusinessPickupOrderingPreferences(
   ) {
     throw new PickupOrderingResponseError('Pickup-ordering business state was invalid.');
   }
+  if (
+    customerOrderingEnabled &&
+    (!eligibleKind || !merchantOptedIn || listingState !== 'published' || verificationState !== 'verified')
+  ) {
+    throw new PickupOrderingResponseError('Pickup ordering activation was inconsistent.');
+  }
 
   if (!Array.isArray(row.payment_options) || row.payment_options.length !== 3) {
     throw new PickupOrderingResponseError('Pickup payment capability list was invalid.');
@@ -197,7 +201,7 @@ export function mapBusinessPickupOrderingPreferences(
     acceptedPaymentOptions: Object.freeze(
       acceptedPaymentOptions.slice() as ('pay_in_person')[]
     ),
-    customerOrderingEnabled: false,
+    customerOrderingEnabled,
     onlinePaymentProcessingEnabled: false,
     listingState: listingState as BusinessPickupOrderingPreferences['listingState'],
     verificationState:
@@ -367,8 +371,10 @@ export async function saveBusinessPickupOrderingPreferences(
       ok: true,
       data: preferences,
       message: optedIn
-        ? 'Pickup opt-in saved. Customer checkout remains off until Spottr separately enables the launch.'
-        : 'Pickup opt-in removed. Customer checkout remains off.',
+        ? preferences.customerOrderingEnabled
+          ? 'Pickup ordering is active for this listing. Customers pay you in person.'
+          : 'Pickup opt-in saved. Spottr will show ordering after the protected runtime is enabled.'
+        : 'Pickup ordering is off for this listing.',
     };
   } catch (error) {
     return failure(error, 'Pickup-ordering preferences could not be saved.');

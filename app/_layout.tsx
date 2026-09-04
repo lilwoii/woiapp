@@ -75,6 +75,8 @@ export default function RootLayout() {
                 <Stack.Screen name="promotion-studio" options={{ headerShown: false }} />
                 <Stack.Screen name="navigation/[id]" options={{ headerShown: false }} />
                 <Stack.Screen name="order/[id]" options={{ headerShown: false }} />
+                <Stack.Screen name="pickup/[id]" options={{ headerShown: false }} />
+                <Stack.Screen name="orders" options={{ headerShown: false }} />
                 <Stack.Screen name="messages/index" options={{ headerShown: false }} />
                 <Stack.Screen name="messages/[id]" options={{ headerShown: false }} />
                 <Stack.Screen name="auth" options={{ headerShown: false, presentation: 'modal' }} />

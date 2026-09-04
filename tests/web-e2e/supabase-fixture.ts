@@ -531,6 +531,30 @@ export async function installSpottrFixture(page: Page) {
       return;
     }
 
+    if (url.pathname === '/functions/v1/notification-device' && method === 'POST') {
+      const role = roleFromRequest(route);
+      const body = postBody(route);
+      const revokeOne =
+        exactBodyKeys(body, 'action', 'consentPolicyVersion', 'installationId') &&
+        body.action === 'revoke' &&
+        typeof body.installationId === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.installationId);
+      const revokeAll =
+        exactBodyKeys(body, 'action', 'consentPolicyVersion') &&
+        body.action === 'revoke_all';
+      if (
+        role === 'anonymous' ||
+        body.consentPolicyVersion !== 'product-updates-v1' ||
+        (!revokeOne && !revokeAll)
+      ) {
+        unexpected.push(`${label} carried an invalid notification revocation request`);
+        await json(route, { message: 'Invalid fixture notification revocation' }, 400);
+        return;
+      }
+      await json(route, { ok: true });
+      return;
+    }
+
     if (url.pathname === '/functions/v1/route-plan' && method === 'POST') {
       const role = roleFromRequest(route);
       const body = postBody(route);

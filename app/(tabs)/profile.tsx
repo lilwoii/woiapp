@@ -21,6 +21,7 @@ import { palette, radii, spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useMarketplaceStore } from '@/context/marketplace-store';
 import { fetchMyTrustBadges } from '@/lib/marketplace-api';
+import { featureFlags } from '@/lib/features';
 import { confirmAction, showMessage } from '@/lib/platform-dialog';
 import type { PublicBadge } from '@/lib/trust-badges';
 
@@ -260,6 +261,14 @@ export default function ProfileScreen() {
               onPress={() => router.push((signedIn ? '/messages' : '/auth') as never)}
               title="Messages"
             />
+            {featureFlags.pickupOrdering ? (
+              <SettingsRow
+                detail="Track accepted, preparing, and ready-for-pickup requests"
+                icon="bag-shopping"
+                onPress={() => router.push('/orders' as never)}
+                title="Pickup orders"
+              />
+            ) : null}
             <SettingsRow
               detail="Optional private invitations from verified businesses"
               icon="envelope-open-text"

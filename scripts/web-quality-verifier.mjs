@@ -44,6 +44,8 @@ const REQUIRED_ROUTES = [
   'promotion-studio.html',
   'place/[id].html',
   'order/[id].html',
+  'pickup/[id].html',
+  'orders.html',
   'navigation/[id].html',
   'messages/index.html',
   'messages/[id].html',

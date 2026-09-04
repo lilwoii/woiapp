@@ -575,21 +575,23 @@ function ScopedPlaceDetailScreen({
         </ImageBackground>
 
         <View style={styles.actionBar}>
-          {featureFlags.pickupOrdering && place.pickup?.enabled && place.pickup.orderingMode === 'spottr' ? (
+          {featureFlags.pickupOrdering &&
+          place.verified &&
+          (place.category === 'restaurant' || place.category === 'food_truck') ? (
             <Pressable
-              accessibilityLabel="Pickup pilot"
+              accessibilityLabel={`Order pickup from ${place.name}`}
               accessibilityRole="button"
               onPress={() =>
                 router.push(
                   {
-                    pathname: '/order/[id]',
+                    pathname: '/pickup/[id]',
                     params: placeLocationRouteParams(place.id, place.locationId),
                   } as unknown as Href
                 )
               }
               style={styles.primaryAction}>
               <FontAwesome6 color="#FFFFFF" name="bag-shopping" size={14} />
-              <Text style={styles.primaryActionText}>Pickup pilot</Text>
+              <Text style={styles.primaryActionText}>Order pickup</Text>
             </Pressable>
           ) : null}
           {canOpenPublicDirections && featureFlags.inAppNavigation ? (

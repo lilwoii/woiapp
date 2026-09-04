@@ -161,6 +161,15 @@ Deno.test("rejects unknown fields, home kitchens, invalid coordinates, and ambig
     ContractError,
     "INVALID_WEEKLY_HOURS",
   );
+
+  const missingPrice = structuredClone(validBatch());
+  const missingPriceRecords = missingPrice.records as Array<Record<string, unknown>>;
+  delete missingPriceRecords[0].priceLevel;
+  assertThrows(
+    () => validateProviderBatch(missingPrice, "licensed_vendor", NOW),
+    ContractError,
+    "INVALID_ACTIVE_RECORD",
+  );
 });
 
 Deno.test("enforces record, menu, identity, and timestamp boundaries", () => {

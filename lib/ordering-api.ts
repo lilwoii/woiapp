@@ -849,7 +849,7 @@ export function orderingFailure(error: unknown, fallback: string): OrderingFailu
 }
 
 async function authorizedPilotClient() {
-  if (!featureFlags.pickupOrdering || !isSupabaseConfigured || !supabase) {
+  if (!featureFlags.shadowOrdering || !isSupabaseConfigured || !supabase) {
     throw Object.assign(new Error('Secure pickup ordering is not configured.'), {
       code: 'CONFIG_REQUIRED',
     });

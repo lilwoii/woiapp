@@ -99,7 +99,8 @@ function BusinessPickupOrderingSettingsScope({
     if (loading) return 'CHECKING';
     if (!preferences) return 'UNAVAILABLE';
     if (!preferences?.eligibleKind) return 'INELIGIBLE';
-    if (preferences.merchantOptedIn) return 'OPTED IN';
+    if (preferences.customerOrderingEnabled) return 'ACTIVE';
+    if (preferences.merchantOptedIn) return 'READY';
     return 'OPTIONAL';
   }, [loading, preferences]);
 
@@ -145,7 +146,7 @@ function BusinessPickupOrderingSettingsScope({
             Pickup ordering
           </Text>
           <Text style={styles.detail}>
-            Restaurants and food trucks can record a pay-in-person launch preference.
+            Accept secure pickup requests while collecting payment in person.
           </Text>
         </View>
         <Text
@@ -170,8 +171,9 @@ function BusinessPickupOrderingSettingsScope({
             <View style={styles.launchNotice}>
               <FontAwesome6 color={palette.warning} name="shield-halved" size={12} />
               <Text style={styles.launchNoticeText}>
-                Saving an opt-in does not activate customer checkout. Spottr must separately
-                enable the ordering release; this screen cannot enable payment processing.
+                {preferences?.customerOrderingEnabled
+                  ? 'Pickup requests are active. Spottr never handles the customer payment in this mode.'
+                  : 'Your opt-in is separate from Spottr’s protected runtime switch. This screen cannot enable card processing.'}
               </Text>
             </View>
 
@@ -219,7 +221,9 @@ function BusinessPickupOrderingSettingsScope({
                     accessibilityLabel={`${option.label}. ${
                       option.configurationAllowed
                         ? selected
-                          ? 'Accepted when pickup ordering launches.'
+                          ? preferences?.customerOrderingEnabled
+                            ? 'Accepted for active pickup requests.'
+                            : 'Ready when the protected pickup runtime is enabled.'
                           : 'Available to configure.'
                         : option.unavailableReason
                     }`}

@@ -324,7 +324,7 @@ function PickupOrderSession({
     const accountId = auth.account?.id;
     if (
       !accountId || !placeId || !place || placeBlocked || !secureSession ||
-      !featureFlags.pickupOrdering
+      !featureFlags.shadowOrdering
     ) return;
     const generation = requestGeneration.current;
     setBusy('menu');
@@ -804,7 +804,7 @@ function PickupOrderSession({
     void (quote ? submitOrder() : requestQuote());
   };
 
-  if (!featureFlags.pickupOrdering) {
+  if (!featureFlags.shadowOrdering) {
     return (
       <GateScreen
         body="Spottr pickup ordering is securely disabled in this release."

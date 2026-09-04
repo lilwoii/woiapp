@@ -39,7 +39,7 @@ function response() {
 }
 
 describe('business pickup-ordering launch contract', () => {
-  it('maps the merchant opt-in while keeping customer ordering and charging off', () => {
+  it('maps the merchant opt-in while keeping charging off', () => {
     const preferences = mapBusinessPickupOrderingPreferences(response());
 
     expect(preferences).toMatchObject({
@@ -60,13 +60,11 @@ describe('business pickup-ordering launch contract', () => {
     expect(Object.isFrozen(preferences.paymentOptions)).toBe(true);
   });
 
-  it('rejects any server response that turns on ordering or a charge rail', () => {
-    expect(() =>
-      mapBusinessPickupOrderingPreferences({
-        ...response(),
-        customer_ordering_enabled: true,
-      })
-    ).toThrow('unavailable launch capability');
+  it('accepts a consistent pay-in-person activation and rejects a charge rail', () => {
+    expect(mapBusinessPickupOrderingPreferences({
+      ...response(),
+      customer_ordering_enabled: true,
+    }).customerOrderingEnabled).toBe(true);
 
     expect(() =>
       mapBusinessPickupOrderingPreferences({
@@ -76,6 +74,15 @@ describe('business pickup-ordering launch contract', () => {
         ),
       })
     ).toThrow('not launch-enabled');
+  });
+
+  it('rejects activation without an eligible verified opt-in', () => {
+    expect(() => mapBusinessPickupOrderingPreferences({
+      ...response(),
+      merchant_opted_in: false,
+      accepted_payment_options: [],
+      customer_ordering_enabled: true,
+    })).toThrow('activation was inconsistent');
   });
 
   it('rejects online methods in the accepted launch selection', () => {
