@@ -35,3 +35,15 @@ verify_jwt = false
 
 [functions.notification-receipt]
 verify_jwt = false
+
+[functions.payment-connect]
+verify_jwt = true
+
+[functions.payment-checkout]
+verify_jwt = true
+
+[functions.payment-webhook]
+verify_jwt = false
+
+[functions.payment-refund-worker]
+verify_jwt = false

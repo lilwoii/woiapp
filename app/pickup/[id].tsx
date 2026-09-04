@@ -3,6 +3,8 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -23,6 +25,7 @@ import {
   type PayInPersonPickupMenu,
   type PickupOrderReceipt,
 } from '@/lib/pay-in-person-ordering';
+import { createPrepaidCheckoutIdempotencyKey, createPrepaidPickupCheckout } from '@/lib/prepaid-pickup';
 
 type Notice = { tone: 'error' | 'success'; text: string };
 
@@ -42,9 +45,10 @@ function pickupLabel(value: string) {
   }).format(new Date(value));
 }
 
-function timeChoices(menu: PayInPersonPickupMenu) {
+function timeChoices(menu: PayInPersonPickupMenu, online = false) {
   const now = Date.now();
-  const first = Math.ceil((now + menu.minimumLeadMinutes * 60_000) / 900_000) * 900_000;
+  const leadMinutes = online ? Math.max(menu.minimumLeadMinutes, 45) : menu.minimumLeadMinutes;
+  const first = Math.ceil((now + leadMinutes * 60_000) / 900_000) * 900_000;
   return Array.from({ length: 6 }, (_, index) => new Date(first + index * 30 * 60_000).toISOString())
     .filter((value) => Date.parse(value) <= now + menu.maximumAdvanceMinutes * 60_000);
 }
@@ -59,12 +63,14 @@ export default function PayInPersonPickupScreen() {
   const [locationId, setLocationId] = useState<string>();
   const [pickupAt, setPickupAt] = useState<string>();
   const [note, setNote] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'pay_in_person' | 'online'>('pay_in_person');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [receipt, setReceipt] = useState<PickupOrderReceipt | null>(null);
   const [reloadVersion, setReloadVersion] = useState(0);
   const requestGeneration = useRef(0);
+  const checkoutAttempt = useRef<{ fingerprint: string; key: string } | null>(null);
   const accountId = auth.account?.id;
 
   useEffect(() => {
@@ -80,7 +86,7 @@ export default function PayInPersonPickupScreen() {
       }
       const nextMenu = result.data;
       const preferredLocation = nextMenu.locations.find((location) => location.id === requestedLocationId);
-      const times = timeChoices(nextMenu);
+      const times = timeChoices(nextMenu, false);
       setMenu(nextMenu);
       setLocationId(preferredLocation?.id ?? nextMenu.locations[0]?.id);
       setPickupAt(times[0]);
@@ -105,6 +111,7 @@ export default function PayInPersonPickupScreen() {
   }, [menu, quantities]);
   const subtotal = selectedLines.reduce((sum, line) => sum + line.item.priceMinor * line.quantity, 0);
   const currency = selectedLines[0]?.item.currency ?? menu?.sections[0]?.items[0]?.currency ?? 'USD';
+  const onlinePayment = featureFlags.prepaidPickup && paymentMethod === 'online';
 
   const changeQuantity = (itemId: string, delta: number) => {
     setQuantities((current) => {
@@ -124,6 +131,40 @@ export default function PayInPersonPickupScreen() {
     }
     setSubmitting(true);
     setNotice(null);
+    if (onlinePayment) {
+      const fingerprint = JSON.stringify({
+        accountId: auth.account.id,
+        businessId: menu.businessId,
+        locationId,
+        note: note.trim(),
+        pickupAt,
+        lines: selectedLines.map(({ item, quantity }) => [item.id, quantity]),
+      });
+      const retryKey = checkoutAttempt.current?.fingerprint === fingerprint
+        ? checkoutAttempt.current.key
+        : createPrepaidCheckoutIdempotencyKey();
+      checkoutAttempt.current = { fingerprint, key: retryKey };
+      const result = await createPrepaidPickupCheckout({
+        businessId: menu.businessId,
+        locationId,
+        requestedPickupAt: pickupAt,
+        lines: selectedLines.map(({ item, quantity }) => ({ menuItemId: item.id, quantity })),
+        customerNote: note,
+      }, auth.account.id, retryKey);
+      setSubmitting(false);
+      if (!result.ok) {
+        setNotice({ tone: 'error', text: result.reason });
+        return;
+      }
+      setNotice({ tone: 'success', text: 'Secure checkout is ready. Your order appears only after payment is confirmed.' });
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.assign(result.data.checkoutUrl);
+        return;
+      }
+      await Linking.openURL(result.data.checkoutUrl);
+      router.replace(`/orders?spottr_checkout=${result.data.checkoutPublicId}` as never);
+      return;
+    }
     const result = await createPayInPersonPickupOrder({
       businessId: menu.businessId,
       locationId,
@@ -152,7 +193,7 @@ export default function PayInPersonPickupScreen() {
   if (loading) return <Gate title="Loading pickup" body="Checking the live menu and pickup availability." loading />;
   if (!menu) return <Gate title="Pickup is unavailable" body={notice?.text ?? 'This business is not accepting Spottr pickup requests right now.'} actionLabel="Try again" onAction={retry} />;
 
-  const times = timeChoices(menu);
+  const times = timeChoices(menu, onlinePayment);
   return (
     <FocusAwareScreen>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -161,7 +202,7 @@ export default function PayInPersonPickupScreen() {
             <Pressable accessibilityLabel="Back to listing" accessibilityRole="button" onPress={() => router.back()} style={styles.iconButton}>
               <FontAwesome6 color={palette.ink} name="arrow-left" size={15} />
             </Pressable>
-            <View style={styles.eyebrowPill}><Text style={styles.eyebrow}>PAY IN PERSON</Text></View>
+            <View style={styles.eyebrowPill}><Text style={styles.eyebrow}>{onlinePayment ? 'SECURE CHECKOUT' : 'PAY IN PERSON'}</Text></View>
           </View>
           <Text accessibilityRole="header" style={styles.title}>Pickup from {menu.businessName}</Text>
           <Text style={styles.subtitle}>Build your order, choose a public pickup location, and wait for acceptance before heading out.</Text>
@@ -205,30 +246,42 @@ export default function PayInPersonPickupScreen() {
               ))}
 
               <SectionTitle number="2" title="Pickup location" />
-              <View style={styles.choiceWrap}>
+                <View accessibilityLabel="Pickup location" accessibilityRole="radiogroup" style={styles.choiceWrap}>
                 {menu.locations.map((location) => {
                   const selected = location.id === locationId;
-                  return <Pressable key={location.id} accessibilityRole="radio" accessibilityState={{ checked: selected }} onPress={() => setLocationId(location.id)} style={[styles.choiceCard, selected && styles.choiceCardSelected]}><Text style={styles.choiceTitle}>{location.label}</Text><Text style={styles.body}>{location.address} · {location.city}, {location.region} {location.postalCode}</Text></Pressable>;
+                    return <Pressable key={location.id} accessibilityRole="radio" aria-checked={selected} accessibilityState={{ checked: selected }} onPress={() => setLocationId(location.id)} style={[styles.choiceCard, selected && styles.choiceCardSelected]}><Text style={styles.choiceTitle}>{location.label}</Text><Text style={styles.body}>{location.address} · {location.city}, {location.region} {location.postalCode}</Text></Pressable>;
                 })}
               </View>
 
               <SectionTitle number="3" title="Pickup time" />
-              <View style={styles.timeGrid}>
+                <View accessibilityLabel="Pickup time" accessibilityRole="radiogroup" style={styles.timeGrid}>
                 {times.map((time) => {
                   const selected = pickupAt === time;
-                  return <Pressable key={time} accessibilityRole="radio" accessibilityState={{ checked: selected }} onPress={() => setPickupAt(time)} style={[styles.timeChoice, selected && styles.timeChoiceSelected]}><Text style={[styles.timeText, selected && styles.timeTextSelected]}>{pickupLabel(time)}</Text></Pressable>;
+                    return <Pressable key={time} accessibilityRole="radio" aria-checked={selected} accessibilityState={{ checked: selected }} onPress={() => setPickupAt(time)} style={[styles.timeChoice, selected && styles.timeChoiceSelected]}><Text style={[styles.timeText, selected && styles.timeTextSelected]}>{pickupLabel(time)}</Text></Pressable>;
                 })}
               </View>
 
-              <SectionTitle number="4" title="Pickup note" optional />
+              <SectionTitle number="4" title="Payment" />
+                <View accessibilityLabel="Payment method" accessibilityRole="radiogroup" style={styles.choiceWrap}>
+                  <Pressable accessibilityRole="radio" aria-checked={paymentMethod === 'pay_in_person'} accessibilityState={{ checked: paymentMethod === 'pay_in_person' }} onPress={() => { setPaymentMethod('pay_in_person'); setPickupAt(timeChoices(menu, false)[0]); }} style={[styles.choiceCard, paymentMethod === 'pay_in_person' && styles.choiceCardSelected]}>
+                  <Text style={styles.choiceTitle}>Pay in person</Text>
+                  <Text style={styles.body}>Pay the business at pickup using its accepted methods. Spottr does not charge you.</Text>
+                </Pressable>
+                  {featureFlags.prepaidPickup ? <Pressable accessibilityRole="radio" aria-checked={paymentMethod === 'online'} accessibilityState={{ checked: paymentMethod === 'online' }} onPress={() => { setPaymentMethod('online'); setPickupAt(timeChoices(menu, true)[0]); }} style={[styles.choiceCard, paymentMethod === 'online' && styles.choiceCardSelected]}>
+                  <Text style={styles.choiceTitle}>Card or digital wallet</Text>
+                  <Text style={styles.body}>Secure provider checkout supports eligible cards, Apple Pay, and Google Pay. Tax is calculated before you confirm.</Text>
+                </Pressable> : null}
+              </View>
+
+              <SectionTitle number="5" title="Pickup note" optional />
               <TextInput accessibilityLabel="Pickup note" maxLength={240} multiline onChangeText={setNote} placeholder="Keep it brief—no payment or sensitive details." placeholderTextColor={palette.mutedLight} style={styles.noteInput} value={note} />
               <Text style={styles.counter}>{note.length}/240</Text>
 
               <View style={styles.summary}>
                 <View style={styles.summaryRow}><Text style={[styles.cardTitle, styles.summaryTitle]}>Item subtotal</Text><Text style={styles.total}>{money(currency, subtotal)}</Text></View>
-                <Text style={[styles.finePrint, styles.summaryFinePrint]}>Taxes or merchant adjustments, if required, are handled and disclosed by the business at pickup. Spottr does not process this payment.</Text>
+                <Text style={[styles.finePrint, styles.summaryFinePrint]}>{onlinePayment ? 'Taxes and the final total are calculated by secure checkout before you authorize payment. Card details never pass through Spottr.' : 'Taxes or merchant adjustments, if required, are handled and disclosed by the business at pickup. Spottr does not process this payment.'}</Text>
                 <Pressable accessibilityRole="button" accessibilityState={{ disabled: submitting || !selectedLines.length }} disabled={submitting || !selectedLines.length} onPress={() => void submit()} style={[styles.submitButton, (submitting || !selectedLines.length) && styles.disabled]}>
-                  {submitting ? <ActivityIndicator color="#FFFFFF" /> : <><Text style={styles.submitText}>Send pickup request</Text><FontAwesome6 color="#FFFFFF" name="arrow-right" size={14} /></>}
+                  {submitting ? <ActivityIndicator color="#FFFFFF" /> : <><Text style={styles.submitText}>{onlinePayment ? 'Continue to secure checkout' : 'Send pickup request'}</Text><FontAwesome6 color="#FFFFFF" name="arrow-right" size={14} /></>}
                 </Pressable>
               </View>
             </>

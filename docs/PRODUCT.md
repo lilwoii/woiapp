@@ -105,9 +105,11 @@ organic results.
 - Report/block controls and staffed safety escalation
 - In-app account export and deletion
 
-This phase does **not** include automated restaurant ingestion, ordering,
+This phase does **not** enable automated restaurant ingestion, ordering,
 payments, delivery, customer background tracking, home kitchens, photo uploads,
-or push delivery unless their separate gates are complete.
+or push delivery unless their separate gates are complete. Production
+pay-in-person pickup and Stripe-hosted prepaid pickup are implemented as gated
+expansions; neither is active merely because the client screens exist.
 
 ### Gated expansion
 
@@ -133,8 +135,10 @@ or push delivery unless their separate gates are complete.
   incident review
 
 Ordering, payments, delivery, tax, insurance, and marketplace-liability
-features require a separate product and legal program; they are not implied by
-the listing application.
+features require a separate product and legal program. The repository now
+contains production-shaped pay-in-person and hosted prepaid-pickup code, but
+activation still requires the live provider, tax, legal, operations, and
+acceptance program defined in the ordering architecture.
 
 [ORDERING_ARCHITECTURE.md](ORDERING_ARCHITECTURE.md) defines the versioned
 catalog, quote, order, payment, refund, capacity, fraud, and future-delivery

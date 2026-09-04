@@ -59,6 +59,7 @@ const syntheticProductionValues = {
   EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED: 'false',
   EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED: 'false',
   EXPO_PUBLIC_PICKUP_ORDERING_ENABLED: 'false',
+  EXPO_PUBLIC_PREPAID_PICKUP_ENABLED: 'false',
   EXPO_PUBLIC_INTERNAL_SHADOW_ORDERING_ENABLED: 'false',
   EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED: 'false',
   EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED: 'false',
@@ -91,7 +92,7 @@ if (
   !Array.isArray(deepLinkData) ||
   deepLinkData.some((entry) => entry.host !== 'release-check.spottr.app') ||
   JSON.stringify(deepLinkPaths) !==
-    JSON.stringify(['/auth', '/navigation', '/place', '/profile', '/reset-password'])
+    JSON.stringify(['/auth', '/navigation', '/orders', '/place', '/profile', '/reset-password'])
 ) {
   throw new Error('Synthetic production configuration did not preserve legal URLs or verified deep links.');
 }
@@ -120,6 +121,7 @@ const rejectedConfigurations = [
   ['unverified media uploads', { EXPO_PUBLIC_MEDIA_UPLOADS_ENABLED: 'TRUE' }],
   ['unaccepted push delivery', { EXPO_PUBLIC_PUSH_NOTIFICATIONS_ENABLED: 'true' }],
   ['unverified pickup ordering', { EXPO_PUBLIC_PICKUP_ORDERING_ENABLED: 'true' }],
+  ['unverified prepaid pickup', { EXPO_PUBLIC_PREPAID_PICKUP_ENABLED: 'true' }],
   ['internal shadow ordering', { EXPO_PUBLIC_INTERNAL_SHADOW_ORDERING_ENABLED: 'true' }],
   ['unverified in-app navigation', { EXPO_PUBLIC_IN_APP_NAVIGATION_ENABLED: 'true' }],
   ['unverified business claims', { EXPO_PUBLIC_BUSINESS_CLAIMS_ENABLED: 'true' }],

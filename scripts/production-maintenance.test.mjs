@@ -23,6 +23,12 @@ const PUSH_ENABLED_ENV = {
   SPOTTR_PUSH_RECEIPT_SECRET: 'receipt-worker-secret-that-is-long-enough',
 };
 
+const PAYMENTS_ENABLED_ENV = {
+  ...VALID_ENV,
+  SPOTTR_MAINTENANCE_PAYMENTS_ENABLED: 'true',
+  SPOTTR_PAYMENT_REFUND_WORKER_SECRET: 'payment-refund-worker-secret-that-is-long-enough',
+};
+
 function response(body, status = 200) {
   return {
     ok: status >= 200 && status < 300,
@@ -54,6 +60,10 @@ function completeOrderExpiry() {
 
 function completePickupOrderExpiry() {
   return response({ expired: 0, more_work: false });
+}
+
+function completePaymentRefunds(overrides = {}) {
+  return response({ claimed: 2, succeeded: 1, providerPending: 0, retried: 1, failed: 0, ...overrides });
 }
 
 function completePushDispatch(overrides = {}) {
@@ -202,6 +212,40 @@ test('maintenance runs bounded push dispatch and receipt polling before its hear
     calls[11].init.headers.Authorization,
     `Bearer ${PUSH_ENABLED_ENV.SPOTTR_PUSH_RECEIPT_SECRET}`,
   );
+  assert.equal(calls[12].url, VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL);
+});
+
+test('maintenance expires prepaid checkouts and drains bounded refund work before heartbeat', async () => {
+  const calls = [];
+  const queue = [
+    response({ status: 'idle' }),
+    response({ status: 'complete' }),
+    response({ requests_expired: 0 }),
+    response({ requests_cancelled: 0 }),
+    completeQuoteExpiry(),
+    completeOrderExpiry(),
+    completePickupOrderExpiry(),
+    response({ leases_deleted: 0, buckets_deleted: 0, more_work: false, skipped_operations: [] }),
+    completeProviderLifecycle(),
+    completeSponsoredReservations(),
+    response({ expired: 0, more_work: false }),
+    completePaymentRefunds(),
+    response(null),
+  ];
+  const summary = await runProductionMaintenance({
+    config: readMaintenanceConfiguration(PAYMENTS_ENABLED_ENV),
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return queue.shift();
+    },
+    log: () => {},
+  });
+  assert.equal(summary.prepaidCheckoutExpiry, 'complete');
+  assert.equal(summary.paymentRefunds, 'complete');
+  assert.match(calls[10].url, /\/rpc\/expire_prepaid_pickup_checkouts$/);
+  assert.deepEqual(JSON.parse(calls[10].init.body), { batch_size: 200 });
+  assert.match(calls[11].url, /\/functions\/v1\/payment-refund-worker$/);
+  assert.equal(calls[11].init.headers.Authorization, `Bearer ${PAYMENTS_ENABLED_ENV.SPOTTR_PAYMENT_REFUND_WORKER_SECRET}`);
   assert.equal(calls[12].url, VALID_ENV.SPOTTR_MAINTENANCE_HEARTBEAT_URL);
 });
 
@@ -668,6 +712,18 @@ test('maintenance requires an exact push scheduler gate and independent worker s
     dispatchSecret: PUSH_ENABLED_ENV.SPOTTR_PUSH_DISPATCH_SECRET,
     receiptSecret: PUSH_ENABLED_ENV.SPOTTR_PUSH_RECEIPT_SECRET,
   });
+  assert.throws(
+    () => readMaintenanceConfiguration({ ...VALID_ENV, SPOTTR_MAINTENANCE_PAYMENTS_ENABLED: 'yes' }),
+    /exactly true or false/,
+  );
+  assert.throws(
+    () => readMaintenanceConfiguration({ ...VALID_ENV, SPOTTR_MAINTENANCE_PAYMENTS_ENABLED: 'true' }),
+    /SPOTTR_PAYMENT_REFUND_WORKER_SECRET/,
+  );
+  assert.equal(readMaintenanceConfiguration(VALID_ENV).payments, null);
+  assert.deepEqual(readMaintenanceConfiguration(PAYMENTS_ENABLED_ENV).payments, {
+    refundSecret: PAYMENTS_ENABLED_ENV.SPOTTR_PAYMENT_REFUND_WORKER_SECRET,
+  });
 });
 
 test('maintenance withholds heartbeat while sponsored reservations remain', async () => {
@@ -728,7 +784,7 @@ test('privileged maintenance workflow pins actions and scopes production secrets
   assert.ok(stepsOffset > 0);
   assert.doesNotMatch(
     maintenanceWorkflow.slice(0, stepsOffset),
-    /SPOTTR_(?:MAINTENANCE|ACCOUNT_DELETE|MEDIA_CLEANUP|PUSH_)/u,
+    /SPOTTR_(?:MAINTENANCE|ACCOUNT_DELETE|MEDIA_CLEANUP|PUSH_|PAYMENT_)/u,
   );
   assert.match(maintenanceWorkflow, /uses: actions\/checkout@[0-9a-f]{40} # v6/u);
   assert.match(maintenanceWorkflow, /uses: actions\/setup-node@[0-9a-f]{40} # v6/u);
@@ -744,6 +800,7 @@ test('privileged maintenance workflow pins actions and scopes production secrets
     'SPOTTR_MAINTENANCE_HEARTBEAT_URL',
     'SPOTTR_PUSH_DISPATCH_SECRET',
     'SPOTTR_PUSH_RECEIPT_SECRET',
+    'SPOTTR_PAYMENT_REFUND_WORKER_SECRET',
   ]) {
     assert.match(
       maintenanceStep,
@@ -753,5 +810,9 @@ test('privileged maintenance workflow pins actions and scopes production secrets
   assert.match(
     maintenanceStep,
     /\n          SPOTTR_MAINTENANCE_PUSH_ENABLED: \$\{\{ vars\.SPOTTR_MAINTENANCE_PUSH_ENABLED \|\| 'false' \}\}/u,
+  );
+  assert.match(
+    maintenanceStep,
+    /\n          SPOTTR_MAINTENANCE_PAYMENTS_ENABLED: \$\{\{ vars\.SPOTTR_MAINTENANCE_PAYMENTS_ENABLED \|\| 'false' \}\}/u,
   );
 });

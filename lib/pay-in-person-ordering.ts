@@ -55,10 +55,12 @@ export type PickupOrderReceipt = Readonly<{
     | 'rejected'
     | 'cancelled'
     | 'expired';
-  paymentMethod: 'pay_in_person';
-  paymentState: 'due_at_pickup';
+  paymentMethod: 'pay_in_person' | 'card_or_wallet';
+  paymentState: 'due_at_pickup' | 'captured' | 'refund_pending' | 'refunded' | 'partially_refunded' | 'disputed';
   currency: string;
   itemSubtotalMinor: number;
+  taxMinor: number;
+  totalMinor: number;
   requestedPickupAt: string;
   acceptanceExpiresAt: string;
   customerNote: string | null;
@@ -213,7 +215,15 @@ export function mapPayInPersonPickupMenu(value: unknown): PayInPersonPickupMenu 
 export function mapPickupOrderReceipt(value: unknown): PickupOrderReceipt {
   const row = objectValue(value);
   const state = stringValue(row, 'state', 24) as PickupOrderReceipt['state'];
-  if (!states.has(state) || row.payment_method !== 'pay_in_person' || row.payment_state !== 'due_at_pickup') {
+  const paymentMethod = row.payment_method;
+  const paymentState = row.payment_state;
+  const onlinePaymentStates = new Set(['captured', 'refund_pending', 'refunded', 'partially_refunded', 'disputed']);
+  if (
+    !states.has(state) ||
+    (paymentMethod !== 'pay_in_person' && paymentMethod !== 'card_or_wallet') ||
+    (paymentMethod === 'pay_in_person' && paymentState !== 'due_at_pickup') ||
+    (paymentMethod === 'card_or_wallet' && !onlinePaymentStates.has(paymentState as string))
+  ) {
     throw new PickupResponseError('The pickup order state was invalid.');
   }
   const currency = stringValue(row, 'currency', 3);
@@ -235,16 +245,25 @@ export function mapPickupOrderReceipt(value: unknown): PickupOrderReceipt {
   if (Date.parse(acceptanceExpiresAt) >= Date.parse(requestedPickupAt)) {
     throw new PickupResponseError('The pickup acceptance window was invalid.');
   }
+  const itemSubtotalMinor = integerValue(row, 'item_subtotal_minor', 0, 100_000_000);
+  const taxMinor = integerValue(row, 'tax_minor', 0, 100_000_000);
+  const totalMinor = integerValue(row, 'total_minor', 0, 100_000_000);
+  if (
+    totalMinor !== itemSubtotalMinor + taxMinor ||
+    (paymentMethod === 'pay_in_person' && taxMinor !== 0)
+  ) throw new PickupResponseError('The pickup payment totals were invalid.');
   return Object.freeze({
     orderPublicId: uuidValue(row, 'order_public_id'),
     businessId: uuidValue(row, 'business_id'),
     businessName: stringValue(row, 'business_name', 100),
     locationId: uuidValue(row, 'location_id'),
     state,
-    paymentMethod: 'pay_in_person',
-    paymentState: 'due_at_pickup',
+    paymentMethod,
+    paymentState: paymentState as PickupOrderReceipt['paymentState'],
     currency,
-    itemSubtotalMinor: integerValue(row, 'item_subtotal_minor', 0, 100_000_000),
+    itemSubtotalMinor,
+    taxMinor,
+    totalMinor,
     requestedPickupAt,
     acceptanceExpiresAt,
     customerNote: nullableString(row, 'customer_note', 240),

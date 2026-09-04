@@ -1,5 +1,5 @@
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -14,6 +14,7 @@ import {
   type PickupOrderReceipt,
 } from '@/lib/pay-in-person-ordering';
 import { confirmAction } from '@/lib/platform-dialog';
+import { loadPrepaidCheckoutStatus } from '@/lib/prepaid-pickup';
 
 const statusCopy: Record<PickupOrderReceipt['state'], { icon: keyof typeof FontAwesome6.glyphMap; label: string }> = {
   pending_acceptance: { icon: 'clock', label: 'Awaiting acceptance' },
@@ -39,6 +40,8 @@ function dateTime(value: string) {
 }
 
 export default function MyPickupOrdersScreen() {
+  const params = useLocalSearchParams<{ spottr_checkout?: string | string[] }>();
+  const checkoutPublicId = Array.isArray(params.spottr_checkout) ? params.spottr_checkout[0] : params.spottr_checkout;
   const auth = useAuth();
   const accountId = auth.account?.id;
   const requestVersion = useRef(0);
@@ -67,11 +70,45 @@ export default function MyPickupOrdersScreen() {
     return () => { clearTimeout(timer); requestVersion.current += 1; };
   }, [refresh]);
 
+  useEffect(() => {
+    if (!accountId || !checkoutPublicId || !featureFlags.prepaidPickup) return undefined;
+    let active = true;
+    let attempts = 0;
+    const check = async () => {
+      attempts += 1;
+      const result = await loadPrepaidCheckoutStatus(checkoutPublicId, accountId);
+      if (!active) return;
+      if (!result.ok) {
+        setNotice(result.reason);
+        return;
+      }
+      if (result.data.state === 'completed') {
+        setNotice('Payment confirmed. Your pickup request is awaiting the business.');
+        await refresh();
+        return;
+      }
+      if (result.data.state === 'refund_pending' || result.data.state === 'refunded') {
+        setNotice(result.data.state === 'refunded' ? 'This checkout was refunded.' : 'This checkout could not create an order and a refund is being processed.');
+        return;
+      }
+      if (result.data.state === 'expired' || result.data.state === 'failed') {
+        setNotice('Checkout did not complete. No pickup order was created.');
+        return;
+      }
+      if (attempts < 15) setTimeout(() => void check(), 2_000);
+      else setNotice('Payment confirmation is still processing. Refresh this page in a moment.');
+    };
+    void check();
+    return () => { active = false; };
+  }, [accountId, checkoutPublicId, refresh]);
+
   const cancel = async (order: PickupOrderReceipt) => {
     if (!accountId || pendingId) return;
     const approved = await confirmAction({
       title: 'Cancel this pickup request?',
-      message: 'The business will see the cancellation immediately. This cannot be undone.',
+      message: order.paymentMethod === 'card_or_wallet'
+        ? 'The business will see the cancellation immediately. Your card or wallet payment will enter the refund process.'
+        : 'The business will see the cancellation immediately. This cannot be undone.',
       confirmLabel: 'Cancel request',
       destructive: true,
     });
@@ -101,7 +138,7 @@ export default function MyPickupOrdersScreen() {
             <Pressable accessibilityRole="button" onPress={() => { setLoading(true); void refresh(); }} style={styles.refresh}><FontAwesome6 color={palette.ink} name="rotate" size={11} /><Text style={styles.refreshText}>Refresh</Text></Pressable>
           </View>
           <Text accessibilityRole="header" style={styles.title}>Your pickup orders</Text>
-          <Text style={styles.subtitle}>Live status, pickup details, and pay-in-person receipts in one private place.</Text>
+          <Text style={styles.subtitle}>Live pickup status and protected payment details in one private place.</Text>
           {notice ? <View accessibilityLiveRegion="polite" style={styles.notice}><Text style={styles.noticeText}>{notice}</Text></View> : null}
           {loading ? <View style={styles.loading}><ActivityIndicator color={palette.accent} /><Text style={styles.muted}>Loading your protected order history…</Text></View> : null}
           {!loading && !orders.length ? <View style={styles.empty}><View style={styles.emptyIcon}><FontAwesome6 color={palette.accentDeep} name="bag-shopping" size={18} /></View><Text style={styles.emptyTitle}>No pickup orders yet</Text><Text style={styles.muted}>When a verified place accepts Spottr pickup requests, your order will appear here.</Text><Pressable accessibilityRole="button" onPress={() => router.replace('/')} style={styles.primary}><Text style={styles.primaryText}>Explore nearby food</Text></Pressable></View> : null}
@@ -110,10 +147,10 @@ export default function MyPickupOrdersScreen() {
               const status = statusCopy[order.state];
               const canCancel = order.state === 'pending_acceptance' || order.state === 'accepted';
               return <View key={order.orderPublicId} style={styles.card}>
-                <View style={styles.cardHeader}><View style={styles.flex}><Text style={styles.businessName}>{order.businessName}</Text><Text style={styles.pickupTime}>{dateTime(order.requestedPickupAt)}</Text></View><Text style={styles.total}>{money(order.currency, order.itemSubtotalMinor)}</Text></View>
+                <View style={styles.cardHeader}><View style={styles.flex}><Text style={styles.businessName}>{order.businessName}</Text><Text style={styles.pickupTime}>{dateTime(order.requestedPickupAt)}</Text></View><Text style={styles.total}>{money(order.currency, order.totalMinor)}</Text></View>
                 <View style={styles.status}><FontAwesome6 color={palette.accentDeep} name={status.icon} size={12} /><Text style={styles.statusText}>{status.label}</Text></View>
                 {order.lines.map((line) => <View key={`${order.orderPublicId}:${line.menuItemId ?? line.name}`} style={styles.line}><Text style={styles.lineQuantity}>{line.quantity}×</Text><Text style={styles.lineName}>{line.name}</Text><Text style={styles.linePrice}>{money(order.currency, line.lineSubtotalMinor)}</Text></View>)}
-                <View style={styles.paymentRow}><FontAwesome6 color={palette.success} name="money-bill-wave" size={12} /><Text style={styles.paymentText}>Pay the business in person · Spottr did not charge you</Text></View>
+                <View style={styles.paymentRow}><FontAwesome6 color={palette.success} name={order.paymentMethod === 'card_or_wallet' ? 'shield-halved' : 'money-bill-wave'} size={12} /><Text style={styles.paymentText}>{order.paymentMethod === 'card_or_wallet' ? order.paymentState === 'refund_pending' ? 'Refund processing' : order.paymentState === 'refunded' ? 'Refunded to the original payment method' : order.paymentState === 'disputed' ? 'Payment dispute under review' : `Paid securely · includes ${money(order.currency, order.taxMinor)} tax` : 'Pay the business in person · Spottr did not charge you'}</Text></View>
                 {canCancel ? <Pressable accessibilityRole="button" disabled={Boolean(pendingId)} onPress={() => void cancel(order)} style={styles.cancelButton}>{pendingId === order.orderPublicId ? <ActivityIndicator color={palette.accentDeep} size="small" /> : <Text style={styles.cancelText}>Cancel request</Text>}</Pressable> : null}
               </View>;
             })}

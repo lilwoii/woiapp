@@ -65,7 +65,7 @@ Deno.test("every custom radio exposes its checked state on web", async () => {
       );
     }
   }
-  assertEquals(radioCount, 28);
+  assertEquals(radioCount, 32);
 });
 
 Deno.test("radio choices added outside native inputs keep labeled group context", async () => {
@@ -92,6 +92,11 @@ Deno.test("radio choices added outside native inputs keep labeled group context"
     ]],
     ["app/messages/[id].tsx", ['accessibilityLabel="Pickup location options"']],
     ["app/order/[id].tsx", ['accessibilityLabel="Pickup window"']],
+    ["app/pickup/[id].tsx", [
+      'accessibilityLabel="Pickup location"',
+      'accessibilityLabel="Pickup time"',
+      'accessibilityLabel="Payment method"',
+    ]],
   ]);
 
   for (const [relativePath, labels] of expectations) {

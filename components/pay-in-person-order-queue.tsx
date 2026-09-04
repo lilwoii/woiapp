@@ -108,7 +108,9 @@ export function PayInPersonOrderQueue({ businessId }: { businessId: string }) {
     const approved = await confirmAction({
       title: `${action.label} this pickup order?`,
       message: action.nextState === 'accepted'
-        ? `Confirm pickup for ${dateTime(order.requestedPickupAt)}. The customer pays you in person.`
+        ? order.paymentMethod === 'card_or_wallet'
+          ? `Confirm pickup for ${dateTime(order.requestedPickupAt)}. Secure checkout is already captured.`
+          : `Confirm pickup for ${dateTime(order.requestedPickupAt)}. The customer pays you in person.`
         : action.nextState === 'completed'
           ? 'Only mark this complete after the customer has received the order.'
           : 'This status change is recorded immediately for the customer.',
@@ -144,13 +146,13 @@ export function PayInPersonOrderQueue({ businessId }: { businessId: string }) {
   return (
     <View style={styles.panel}>
       <SectionHeading
-        detail="Live customer requests. Payment is collected by your business at pickup."
+        detail="Live customer requests with clear pay-in-person or secure-checkout status."
         eyebrow="Pickup queue"
         title="Orders to prepare"
       />
       <View style={styles.safetyRow}>
         <FontAwesome6 color={palette.success} name="shield-halved" size={12} />
-        <Text style={styles.safetyText}>Spottr never stores a card for these orders. Verify the order before collecting payment in person.</Text>
+        <Text style={styles.safetyText}>Spottr never stores card details. Verify each order’s payment label before preparing it.</Text>
       </View>
       {notice ? <View accessibilityLiveRegion="polite" style={[styles.notice, notice.tone === 'success' && styles.noticeSuccess]}><Text style={styles.noticeText}>{notice.text}</Text></View> : null}
       {loading ? <View style={styles.loading}><ActivityIndicator color={palette.accent} /><Text style={styles.muted}>Loading protected queue…</Text></View> : null}
@@ -161,11 +163,12 @@ export function PayInPersonOrderQueue({ businessId }: { businessId: string }) {
           <View key={order.orderPublicId} style={styles.orderCard}>
             <View style={styles.orderHeader}>
               <View style={styles.status}><FontAwesome6 color={palette.accentDeep} name={presentation.icon} size={12} /><Text style={styles.statusText}>{presentation.label}</Text></View>
-              <Text style={styles.total}>{money(order.currency, order.itemSubtotalMinor)}</Text>
+              <Text style={styles.total}>{money(order.currency, order.totalMinor)}</Text>
             </View>
             <Text style={styles.pickupTime}>{dateTime(order.requestedPickupAt)}</Text>
             {order.lines.map((line) => <View key={`${order.orderPublicId}:${line.menuItemId ?? line.name}`} style={styles.line}><Text style={styles.lineQuantity}>{line.quantity}×</Text><Text style={styles.lineName}>{line.name}</Text><Text style={styles.linePrice}>{money(order.currency, line.lineSubtotalMinor)}</Text></View>)}
             {order.customerNote ? <View style={styles.note}><Text style={styles.noteLabel}>CUSTOMER NOTE</Text><Text style={styles.noteText}>{order.customerNote}</Text></View> : null}
+            <View style={styles.paymentBadge}><FontAwesome6 color={palette.success} name={order.paymentMethod === 'card_or_wallet' ? 'shield-halved' : 'money-bill-wave'} size={11} /><Text style={styles.paymentBadgeText}>{order.paymentMethod === 'card_or_wallet' ? order.paymentState === 'captured' ? 'Paid by secure checkout' : order.paymentState.replaceAll('_', ' ') : 'Collect payment in person'}</Text></View>
             <View style={styles.actionRow}>
               {actions[order.state].map((action) => {
                 const key = `${order.orderPublicId}:${order.version}:${action.nextState}`;
@@ -203,6 +206,8 @@ const styles = StyleSheet.create({
   noticeText: { color: palette.ink, fontSize: 12, fontWeight: '700', lineHeight: 18 },
   orderCard: { backgroundColor: palette.surface, borderColor: palette.line, borderRadius: radii.lg, borderWidth: 1, marginTop: spacing.sm, padding: spacing.md },
   orderHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  paymentBadge: { alignItems: 'center', alignSelf: 'flex-start', backgroundColor: palette.successSoft, borderRadius: radii.pill, flexDirection: 'row', gap: 7, marginTop: spacing.sm, paddingHorizontal: 10, paddingVertical: 7 },
+  paymentBadgeText: { color: palette.success, fontSize: 11, fontWeight: '900', textTransform: 'capitalize' },
   panel: { backgroundColor: palette.card, borderColor: palette.line, borderRadius: radii.lg, borderWidth: 1, marginBottom: spacing.xl, padding: spacing.lg },
   pickupTime: { color: palette.ink, fontSize: 17, fontWeight: '900', marginBottom: spacing.md, marginTop: spacing.sm },
   refresh: { alignItems: 'center', alignSelf: 'flex-start', flexDirection: 'row', gap: 7, marginTop: spacing.md, paddingHorizontal: 4, paddingVertical: 8 },

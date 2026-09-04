@@ -530,10 +530,23 @@ No migration in this chain authorizes or implements prepaid checkout.
 
 Migration `20261019000000_business_pickup_ordering_preferences.sql` lets an
 AAL2 owner/manager of a verified, published restaurant or food truck record a
-future pickup preference. Its only accepted launch option is `pay_in_person`;
-customer ordering, card charging, and Apple Pay are hard false. This preference
-is planning data, not a checkout entitlement, and does not change the customer
-feature gate.
+pickup preference. `20261024000000_pay_in_person_pickup_orders.sql` implements
+the production customer menu, server pricing, exact public pickup binding,
+idempotent order creation, customer receipts, and merchant state machine for
+pay-in-person orders. It is protected by a database runtime gate and
+`EXPO_PUBLIC_PICKUP_ORDERING_ENABLED`, both default false.
+
+Migration `20261025000000_stripe_connect_prepaid_pickup.sql` adds private
+merchant payment accounts, immutable checkout drafts, line snapshots, signed
+webhook deduplication, captured-payment orders, automatic refund enqueueing,
+bounded refund leases, and sanitized export metadata. `payment-connect` uses
+hosted Stripe Connect onboarding; `payment-checkout` creates a server-priced
+hosted Checkout Session; `payment-webhook` is the only payment-completion
+authority; and `payment-refund-worker` performs idempotent bounded refunds.
+No client amount, card number, provider secret, or return URL is authoritative.
+Keep `EXPO_PUBLIC_PREPAID_PICKUP_ENABLED=false`, the matching database/Edge
+gate false, and the refund worker disabled until live Stripe, tax, webhook,
+refund, dispute, payout, and signed-device acceptance evidence is complete.
 
 The zero-money placement and pending-cancellation client persists only the
 opaque operation IDs, versions, fixed reason, and original idempotency key before
@@ -543,9 +556,10 @@ service-role-only `expire_shadow_order_quotes` and `expire_shadow_orders`
 production-maintenance passes before any internal pilot; a checked-in schedule
 is not evidence that their production secret, heartbeat, or alert is configured.
 
-Keep `EXPO_PUBLIC_PICKUP_ORDERING_ENABLED=false` in every customer build until
-the full ordering program is approved. The flag exposes only the staff pilot
-surface; it is not authorization to accept customer orders or money.
+Keep `EXPO_PUBLIC_PICKUP_ORDERING_ENABLED=false` and
+`EXPO_PUBLIC_PREPAID_PICKUP_ENABLED=false` in every public build until each
+ordering rail's server gate and acceptance program are approved. Client flags
+are presentation controls, never authorization to create an order or charge.
 
 ## 7. Account export and deletion drill
 

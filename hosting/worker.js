@@ -177,6 +177,7 @@ export function appAssociationResponse(pathname, env) {
               { '/': '/navigation/*', comment: 'Spottr in-app navigation links' },
               { '/': '/auth*', comment: 'Spottr authentication callbacks' },
               { '/': '/reset-password*', comment: 'Spottr password recovery links' },
+              { '/': '/orders*', comment: 'Spottr protected pickup checkout return links' },
             ],
           },
         ],

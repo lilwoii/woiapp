@@ -1,4 +1,4 @@
-const CACHE_NAME = 'spottr-shell-v0.2.0-r4';
+const CACHE_NAME = 'spottr-shell-v0.2.0-r5';
 const SHELL = ['/', '/manifest.webmanifest', '/spottr-icon.png', '/spottr-icon-maskable.png'];
 const REVALIDATE = new Set(['/manifest.webmanifest', '/register-sw.js', '/sw.js']);
 const PRIVATE_NAVIGATION_PATHS = new Set([
@@ -8,6 +8,7 @@ const PRIVATE_NAVIGATION_PATHS = new Set([
   '/business-setup',
   '/business-team',
   '/profile',
+  '/orders',
   '/reset-password',
   '/security',
   '/studio',

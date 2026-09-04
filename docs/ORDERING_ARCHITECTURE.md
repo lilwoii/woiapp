@@ -1,9 +1,13 @@
 # Spottr pickup-ordering architecture
 
-Status: phase O1 foundation implemented; prepaid ordering remains gated. The repository does not prove that payments,
-merchant onboarding, tax calculation, refunds, payouts, or delivery are
-production-enabled. Policy notes were last checked on 2026-08-01 and require
-review for the exact release, legal entity, processor contract, and storefront.
+Status: the production pay-in-person slice and the Stripe Connect hosted-checkout
+slice are implemented behind independent fail-closed gates. The prepaid path
+includes hosted merchant onboarding, server-priced carts, automatic-tax
+checkout, destination charges, signed webhook completion, durable refunds, and
+customer/merchant receipts. The repository does not prove that live processor
+credentials, merchant underwriting, tax registrations, payouts, or delivery are
+production-enabled. Policy notes require review for the exact release, legal
+entity, processor contract, and storefront.
 
 See [MONETIZATION.md](MONETIZATION.md) for the pricing ledger, sponsored-order
 attribution, and mobile-store boundary.
@@ -580,9 +584,14 @@ merchant transition path can resolve that commitment.
 
 ### Phase O2 — capped prepaid pickup pilot
 
-- One processor, country, currency, city cohort, and verified merchant group.
+- The checked-in Stripe Connect implementation supports one currency per cart,
+  one verified restaurant or food truck, Stripe-hosted card/wallet checkout,
+  provider-calculated tax, destination charges, and durable refund processing.
+  It remains disabled until production credentials and the acceptance program
+  below are complete.
+- Start with one country, currency, city cohort, and verified merchant group.
 - No promotions, guest checkout, partial modifications, delivery, or home
-  kitchens. Use authorization/capture only for approved payment methods.
+  kitchens.
 - Daily payment/payout/refund/ledger reconciliation and published support hours.
 
 ### Phase O3 — reliability and scale

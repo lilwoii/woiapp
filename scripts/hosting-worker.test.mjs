@@ -20,7 +20,7 @@ test('Apple association allows only Spottr public link surfaces with explicit id
   assert.equal(body.applinks.details[0].appID, 'A1B2C3D4E5.com.spottr.food');
   assert.deepEqual(
     body.applinks.details[0].components.map((component) => component['/']),
-    ['/place/*', '/profile/*', '/navigation/*', '/auth*', '/reset-password*'],
+    ['/place/*', '/profile/*', '/navigation/*', '/auth*', '/reset-password*', '/orders*'],
   );
 });
 

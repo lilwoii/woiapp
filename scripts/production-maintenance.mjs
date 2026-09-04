@@ -171,6 +171,20 @@ function validatePushReceiptResult(result) {
   }
 }
 
+function validatePaymentRefundResult(result) {
+  if (!result || typeof result !== 'object') {
+    throw new Error('payment-refund-worker returned invalid JSON.');
+  }
+  const claimed = nonNegativeInteger(result.claimed, 'payment-refund-worker claimed', 20);
+  const succeeded = nonNegativeInteger(result.succeeded, 'payment-refund-worker succeeded', claimed);
+  const pending = nonNegativeInteger(result.providerPending, 'payment-refund-worker providerPending', claimed);
+  const retried = nonNegativeInteger(result.retried, 'payment-refund-worker retried', claimed);
+  const failed = nonNegativeInteger(result.failed, 'payment-refund-worker failed', claimed);
+  if (succeeded + pending + retried + failed !== claimed) {
+    throw new Error('payment-refund-worker returned inconsistent result counts.');
+  }
+}
+
 async function requestJson(fetchImpl, label, url, init) {
   const response = await fetchImpl(url, {
     ...init,
@@ -208,6 +222,7 @@ export function readMaintenanceConfiguration(env = process.env) {
     throw new Error('SPOTTR_MAINTENANCE_SUPABASE_URL must be a Supabase project origin.');
   }
   const pushEnabled = optionalBoolean(env, 'SPOTTR_MAINTENANCE_PUSH_ENABLED');
+  const paymentsEnabled = optionalBoolean(env, 'SPOTTR_MAINTENANCE_PAYMENTS_ENABLED');
   return {
     supabaseOrigin: supabaseUrl.href.replace(/\/$/, ''),
     serviceRoleKey: requiredSecret(env, 'SPOTTR_MAINTENANCE_SERVICE_ROLE_KEY', 40),
@@ -218,6 +233,9 @@ export function readMaintenanceConfiguration(env = process.env) {
         dispatchSecret: requiredSecret(env, 'SPOTTR_PUSH_DISPATCH_SECRET'),
         receiptSecret: requiredSecret(env, 'SPOTTR_PUSH_RECEIPT_SECRET'),
       }
+      : null,
+    payments: paymentsEnabled
+      ? { refundSecret: requiredSecret(env, 'SPOTTR_PAYMENT_REFUND_WORKER_SECRET') }
       : null,
     heartbeatUrl: requiredHttpsUrl(env, 'SPOTTR_MAINTENANCE_HEARTBEAT_URL').href,
   };
@@ -395,6 +413,32 @@ export async function runProductionMaintenance({
     pushReceipts = 'complete';
   }
 
+  let paymentRefunds = 'disabled';
+  let prepaidCheckoutExpiry = 'disabled';
+  if (config.payments) {
+    const checkoutExpiryResult = await requestJson(
+      fetchImpl,
+      'expire_prepaid_pickup_checkouts',
+      `${restRoot}/expire_prepaid_pickup_checkouts`,
+      { method: 'POST', headers: databaseHeaders, body: JSON.stringify({ batch_size: 200 }) },
+    );
+    if (
+      !Number.isInteger(checkoutExpiryResult?.expired) ||
+      checkoutExpiryResult.expired < 0 ||
+      checkoutExpiryResult.expired > 200 ||
+      checkoutExpiryResult.more_work !== false
+    ) throw new Error('expire_prepaid_pickup_checkouts did not report bounded completion.');
+    prepaidCheckoutExpiry = 'complete';
+    const refundResult = await requestJson(
+      fetchImpl,
+      'payment-refund-worker',
+      `${functionRoot}/payment-refund-worker`,
+      { method: 'POST', headers: edgeHeaders(config.payments.refundSecret), body: '{}' },
+    );
+    validatePaymentRefundResult(refundResult);
+    paymentRefunds = 'complete';
+  }
+
   // A success heartbeat must mean the bounded deletion pass reached a known
   // resting state. Ten consecutive work responses leave the queue state
   // uncertain, so fail closed after completing the other privacy cleanups.
@@ -417,10 +461,12 @@ export async function runProductionMaintenance({
     quoteExpiry: 'complete',
     orderExpiry: 'complete',
     pickupOrderExpiry: 'complete',
+    prepaidCheckoutExpiry,
     providerLifecycle: 'complete',
     sponsoredReservations: 'complete',
     pushDispatch,
     pushReceipts,
+    paymentRefunds,
     heartbeat: 'complete',
   };
   log(JSON.stringify(summary));

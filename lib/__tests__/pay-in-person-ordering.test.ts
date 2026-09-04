@@ -52,6 +52,8 @@ function receipt() {
     payment_state: 'due_at_pickup',
     currency: 'USD',
     item_subtotal_minor: 2900,
+    tax_minor: 0,
+    total_minor: 2900,
     requested_pickup_at: '2026-10-24T20:30:00.000Z',
     acceptance_expires_at: '2026-10-24T20:10:00.000Z',
     customer_note: null,

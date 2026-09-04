@@ -220,3 +220,25 @@ independent and all default false. Keep them false until Expo and VAPID
 credentials/agreements, receipt/key-rotation drills, scheduler and alerts,
 signed-device/browser tests, legal review, and store declarations are approved.
 Source code and fake-provider tests are not production acceptance.
+
+## Pickup payments
+
+`payment-connect` is the authenticated AAL2 owner/manager boundary for Stripe
+Connect account creation, hosted onboarding, capability refresh, and explicit
+prepaid acceptance. `payment-checkout` accepts only business, location, pickup
+time, item quantities, and a professional note; the database rebuilds the cart
+from current published menu prices before the Edge function creates a hosted
+Checkout Session. Card and wallet details remain on Stripe-hosted pages.
+
+`payment-webhook` verifies the raw request body with the pinned Stripe signature
+contract before any parsing or mutation. Only signed completion can create a
+captured order. Expired/failed checkout, refund, and dispute events are
+idempotent. `payment-refund-worker` is internal-bearer protected, claims bounded
+leased work, uses stable provider idempotency keys, and never converts an
+ambiguous provider result into success.
+
+The customer flag, database runtime gate, checkout/connect Edge gate, refund
+worker gate, and maintenance scheduler gate all default false. Keep them false
+until Stripe Connect, secret/webhook, tax, payout, refund/dispute, alerting,
+signed-device, and legal acceptance is recorded. Provider secrets and connected
+account identifiers are server-only and must never enter `EXPO_PUBLIC_*`.

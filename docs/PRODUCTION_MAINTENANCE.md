@@ -1,7 +1,8 @@
 # Production maintenance control plane
 
 Spottr has nine always-on privacy-, ordering-, finance-, and lifecycle-critical
-maintenance operations plus two independently gated push operations. They must
+maintenance operations plus two independently gated push operations and two
+independently gated prepaid-payment operations. They must
 run without relying on a customer to retry a request or an operator to remember
 a dashboard action:
 
@@ -30,6 +31,10 @@ a dashboard action:
 - `notification-receipt`, under the same maintenance gate but its own worker
   secret and Edge gate, performs bounded delayed receipt finalization without
   resending content.
+- `expire_prepaid_checkout_drafts`, only when the separate payment-maintenance
+  gate is enabled, closes stale checkout attempts without creating orders;
+- `payment-refund-worker`, under the same maintenance gate but its own internal
+  secret and Edge gate, claims and submits at most 20 durable refunds.
 
 The checked-in
 [`production-maintenance.yml`](../.github/workflows/production-maintenance.yml)
@@ -63,6 +68,7 @@ exactly `true`:
 
 ```text
 SPOTTR_MAINTENANCE_PUSH_ENABLED=false
+SPOTTR_MAINTENANCE_PAYMENTS_ENABLED=false
 ```
 
 Only after isolated staging acceptance, configure two additional protected
@@ -71,6 +77,7 @@ secrets and set that variable to `true`:
 ```text
 SPOTTR_PUSH_DISPATCH_SECRET=<dedicated dispatch worker secret>
 SPOTTR_PUSH_RECEIPT_SECRET=<different receipt worker secret>
+SPOTTR_PAYMENT_REFUND_WORKER_SECRET=<different refund worker secret>
 ```
 
 Every worker secret must exactly match its corresponding Supabase Edge Function
@@ -95,8 +102,9 @@ unnecessary duplicate work.
    Functions before enabling the schedule.
 2. Configure and rotate the five base secrets above. Confirm malformed or
    missing values fail before any request is sent. Leave
-   `SPOTTR_MAINTENANCE_PUSH_ENABLED=false` until the push acceptance program is
-   complete.
+   `SPOTTR_MAINTENANCE_PUSH_ENABLED=false` and
+   `SPOTTR_MAINTENANCE_PAYMENTS_ENABLED=false` until their acceptance programs
+   are complete.
 3. Manually dispatch the workflow. Its only success output is a small status
    summary with call counts; inspect GitHub secret masking and confirm no response
    bodies are present.
@@ -131,7 +139,12 @@ unnecessary duplicate work.
    work; verify accepted, unknown, retry, dead, delivered, failed, and invalid-
    token outcomes, provider timeouts, inconsistent response rejection, missed-
    heartbeat alerting, and that receipt polling never resends a notification.
-7. Record commit SHA, workflow run URL, Supabase project, UTC timestamps,
+7. In isolated payment staging, configure the dedicated refund worker secret,
+   enable the payment database/Edge/refund-worker gates, and only then set
+   `SPOTTR_MAINTENANCE_PAYMENTS_ENABLED=true`. Prove checkout expiry, captured
+   order cancellation, refund retry, asynchronous refund completion, dispute,
+   malformed provider response, backlog, and missed-heartbeat behavior.
+8. Record commit SHA, workflow run URL, Supabase project, UTC timestamps,
    redacted before/after queries, storage checks, alert receipt, operators, and
    sign-off. Do not put secrets or personal data in the evidence bundle.
 

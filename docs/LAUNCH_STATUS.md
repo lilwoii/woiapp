@@ -141,9 +141,12 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   state. Native and standards-based browser registration/dispatch paths are
   implemented with generic lock-screen content and independent fail-closed
   gates; push remains visibly and technically off pending credentials and live
-  acceptance. Verified restaurants and
-  food trucks may record a future pay-in-person pickup preference, but public
-  ordering, card charging, and Apple Pay remain hard disabled. The licensed 3D
+  acceptance. Verified restaurants and food trucks have a complete gated
+  pay-in-person pickup flow. A separate gated Stripe Connect path provides
+  hosted merchant onboarding, server-priced card/wallet checkout, automatic
+  tax, signed-webhook order creation, durable refunds, and dispute-safe state;
+  every payment and ordering gate remains off pending credentials and live
+  acceptance. The licensed 3D
   basemap/routing decision and legal data boundary are documented in
   [MAP_PLATFORM.md](MAP_PLATFORM.md).
 - The Quality workflow replayed the full Supabase schema and migration chain,
@@ -274,6 +277,10 @@ legal decisions, staffing, signed mobile binaries, and live-environment tests.
   reordering tests, tax/refund/dispute/cancellation rules, reconciliation,
   finance separation of duties, and Apple/Google approval for the exact native
   advertising and SaaS boundary.
+- Pickup payment code is provider-hosted and fail-closed, but production still
+  needs Stripe secret/webhook credentials, Connect approval, enabled countries,
+  tax registrations, bank settlement, refund-worker scheduling/alerts, live
+  webhook replay tests, and real card/wallet/device acceptance.
 
 ## Required owner inputs
 
