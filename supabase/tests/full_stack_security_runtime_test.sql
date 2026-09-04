@@ -684,6 +684,213 @@ update public.businesses
 set state = 'published', verification = 'verified'
 where id = '70000000-0000-4000-8000-000000000007';
 
+do $prepaid_pickup_acl_contract$
+begin
+  if has_function_privilege(
+    'anon',
+    'public.prepare_prepaid_pickup_checkout_server(uuid,uuid,uuid,timestamptz,jsonb,text,text)',
+    'execute'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.prepare_prepaid_pickup_checkout_server(uuid,uuid,uuid,timestamptz,jsonb,text,text)',
+    'execute'
+  ) or not has_function_privilege(
+    'service_role',
+    'public.prepare_prepaid_pickup_checkout_server(uuid,uuid,uuid,timestamptz,jsonb,text,text)',
+    'execute'
+  ) then
+    raise exception 'Prepaid pickup checkout RPC privileges are unsafe';
+  end if;
+
+  if has_table_privilege('authenticated', 'private.merchant_payment_accounts', 'select')
+    or has_table_privilege('service_role', 'private.merchant_payment_accounts', 'select')
+  then
+    raise exception 'Merchant payment account storage is directly readable';
+  end if;
+end;
+$prepaid_pickup_acl_contract$;
+
+insert into public.business_pickup_ordering_preferences (
+  business_id, opted_in, accepted_payment_options, updated_by
+) values (
+  '70000000-0000-4000-8000-000000000007', true,
+  array['pay_in_person']::text[], '10000000-0000-4000-8000-000000000001'
+) on conflict (business_id) do update set
+  opted_in = excluded.opted_in,
+  accepted_payment_options = excluded.accepted_payment_options,
+  updated_by = excluded.updated_by,
+  updated_at = now();
+
+set local role service_role;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"role":"service_role"}',
+  true
+);
+
+do $prepaid_pickup_disabled_contract$
+begin
+  begin
+    perform public.prepare_prepaid_pickup_checkout_server(
+      '20000000-0000-4000-8000-000000000002',
+      '70000000-0000-4000-8000-000000000007',
+      '73000000-0000-4000-8000-000000000007',
+      now() + interval '2 hours',
+      '[{"menu_item_id":"75000000-0000-4000-8000-000000000007","quantity":1}]'::jsonb,
+      null,
+      'runtime-disabled-prepaid-0007'
+    );
+    raise exception 'Prepaid checkout bypassed its disabled runtime gate';
+  exception
+    when object_not_in_prerequisite_state then
+      if sqlerrm <> 'PREPAID_PICKUP_DISABLED' then raise; end if;
+  end;
+end;
+$prepaid_pickup_disabled_contract$;
+
+reset role;
+update private.pickup_ordering_runtime_config set enabled = true, updated_at = now() where singleton;
+update private.prepaid_pickup_runtime_config set enabled = true, updated_at = now() where singleton;
+
+set local role service_role;
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"role":"service_role"}',
+  true
+);
+select public.upsert_payment_account_server(
+  '70000000-0000-4000-8000-000000000007',
+  'acct_RuntimePay000007', 'US', 'USD', true, true, true, 0
+);
+
+reset role;
+update private.merchant_payment_accounts
+set accept_prepaid = true, updated_at = now()
+where business_id = '70000000-0000-4000-8000-000000000007';
+
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  '{"role":"service_role"}',
+  true
+);
+
+do $prepaid_pickup_runtime_contract$
+declare
+  prepared jsonb;
+  replayed jsonb;
+  attached jsonb;
+  completed jsonb;
+  duplicate_result jsonb;
+  checkout_public_id uuid;
+  order_id uuid;
+  refund_claim jsonb;
+  refund_public_id uuid;
+  refund_lease_token uuid;
+  pickup_at timestamptz := now() + interval '2 hours';
+begin
+  prepared := public.prepare_prepaid_pickup_checkout_server(
+    '20000000-0000-4000-8000-000000000002',
+    '70000000-0000-4000-8000-000000000007',
+    '73000000-0000-4000-8000-000000000007',
+    pickup_at,
+    '[{"menu_item_id":"75000000-0000-4000-8000-000000000007","quantity":1}]'::jsonb,
+    'No utensils, please.',
+    'runtime-prepaid-checkout-0007'
+  );
+  checkout_public_id := (prepared ->> 'checkout_public_id')::uuid;
+  if checkout_public_id is null
+    or (prepared ->> 'item_subtotal_minor')::integer <> 1200
+    or (prepared ->> 'application_fee_minor')::integer <> 120
+    or prepared ->> 'provider_account_id' <> 'acct_RuntimePay000007'
+  then
+    raise exception 'Prepaid checkout did not use authoritative menu pricing and merchant binding: %', prepared;
+  end if;
+
+  replayed := public.prepare_prepaid_pickup_checkout_server(
+    '20000000-0000-4000-8000-000000000002',
+    '70000000-0000-4000-8000-000000000007',
+    '73000000-0000-4000-8000-000000000007',
+    pickup_at,
+    '[{"menu_item_id":"75000000-0000-4000-8000-000000000007","quantity":1}]'::jsonb,
+    'No utensils, please.',
+    'runtime-prepaid-checkout-0007'
+  );
+  if replayed ->> 'checkout_public_id' <> checkout_public_id::text then
+    raise exception 'Prepaid checkout idempotency did not replay the same checkout';
+  end if;
+
+  attached := public.attach_prepaid_checkout_provider_server(
+    checkout_public_id, 'cs_test_runtime_checkout_0007'
+  );
+  if attached ->> 'state' <> 'open' then
+    raise exception 'Prepaid checkout did not enter the provider-open state';
+  end if;
+
+  completed := public.complete_prepaid_checkout_server(
+    'evt_runtimeprepaid0007', 'checkout.session.completed', checkout_public_id,
+    'cs_test_runtime_checkout_0007', 'pi_runtimeprepaid0007', 'USD', 1320, 120
+  );
+  if completed ->> 'status' <> 'completed' then
+    raise exception 'Valid prepaid completion did not create an order: %', completed;
+  end if;
+
+  duplicate_result := public.complete_prepaid_checkout_server(
+    'evt_runtimeprepaid0007', 'checkout.session.completed', checkout_public_id,
+    'cs_test_runtime_checkout_0007', 'pi_runtimeprepaid0007', 'USD', 1320, 120
+  );
+  if duplicate_result ->> 'status' <> 'duplicate' then
+    raise exception 'Duplicate Stripe event was not idempotent';
+  end if;
+
+  select checkout.order_id into order_id
+  from private.pickup_checkout_drafts checkout
+  where checkout.public_id = checkout_public_id;
+  if order_id is null or not exists (
+    select 1 from private.pickup_orders pickup_order
+    where pickup_order.id = order_id
+      and pickup_order.payment_method = 'card_or_wallet'
+      and pickup_order.payment_state = 'captured'
+      and pickup_order.item_subtotal_minor = 1200
+      and pickup_order.tax_minor = 120
+      and pickup_order.platform_fee_minor = 120
+      and pickup_order.total_minor = 1320
+  ) then
+    raise exception 'Captured prepaid order totals or payment state are invalid';
+  end if;
+
+  update private.pickup_orders set state = 'rejected', updated_at = now() where id = order_id;
+  if not exists (
+    select 1 from private.pickup_payment_refunds refund
+    where refund.order_id = order_id and refund.state = 'pending'
+      and refund.amount_minor = 1320 and refund.currency = 'USD'
+  ) then
+    raise exception 'Terminal prepaid order did not enqueue its refund';
+  end if;
+
+  refund_claim := public.claim_pickup_payment_refunds(1) -> 0;
+  refund_public_id := (refund_claim ->> 'public_id')::uuid;
+  refund_lease_token := (refund_claim ->> 'lease_token')::uuid;
+  if refund_public_id is null or refund_lease_token is null
+    or refund_claim ->> 'provider_payment_intent_id' <> 'pi_runtimeprepaid0007'
+    or (refund_claim ->> 'refund_application_fee')::boolean is not true
+  then
+    raise exception 'Refund worker claim omitted required provider data: %', refund_claim;
+  end if;
+
+  perform public.finish_pickup_payment_refund(
+    refund_public_id, refund_lease_token, 'succeeded', 're_runtimeprepaid0007', null
+  );
+  if not exists (
+    select 1 from private.pickup_orders pickup_order
+    where pickup_order.id = order_id and pickup_order.payment_state = 'refunded'
+  ) then
+    raise exception 'Successful provider refund did not finalize the pickup order';
+  end if;
+end;
+$prepaid_pickup_runtime_contract$;
+
+reset role;
+
 set local role authenticated;
 select pg_catalog.set_config(
   'request.jwt.claims',

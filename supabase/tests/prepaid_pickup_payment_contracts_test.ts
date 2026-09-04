@@ -71,6 +71,21 @@ Deno.test('prepaid database foundation is private, provider-bound, refund-safe, 
   assert(!/grant\s+(?:select|insert|update|delete|all)[\s\S]{0,120}private\.(?:merchant_payment_accounts|pickup_checkout_drafts|pickup_payment_refunds)[\s\S]{0,80}authenticated/i.test(sql));
 });
 
+Deno.test('hosted database gate executes the complete prepaid lifecycle and refund contract', async () => {
+  const runtime = await Deno.readTextFile(
+    new URL('./full_stack_security_runtime_test.sql', import.meta.url),
+  );
+  for (const required of [
+    '$prepaid_pickup_acl_contract$',
+    '$prepaid_pickup_disabled_contract$',
+    '$prepaid_pickup_runtime_contract$',
+    'Prepaid checkout idempotency did not replay the same checkout',
+    'Duplicate Stripe event was not idempotent',
+    'Terminal prepaid order did not enqueue its refund',
+    'Successful provider refund did not finalize the pickup order',
+  ]) assert(runtime.includes(required), `missing prepaid runtime assertion: ${required}`);
+});
+
 Deno.test('payment Edge code pins Stripe, verifies raw webhooks, and never accepts client amounts', async () => {
   const shared = await Deno.readTextFile(new URL('../functions/_shared/stripe.ts', import.meta.url));
   const checkout = await Deno.readTextFile(new URL('../functions/payment-checkout/index.ts', import.meta.url));
