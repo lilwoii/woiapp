@@ -19,14 +19,17 @@ const MAX_AVERAGE_ROUTE_GZIP_BYTES = 15_000;
 // The uncompressed entry is a development/build diagnostic; transfer cost is
 // enforced separately by the tighter gzip cap. Leave modest headroom for
 // required account workflows without weakening the production wire budget.
-// The sponsored/public-cache boundary brings the verified raw baseline to
-// 3,250,351 bytes; keep a narrow diagnostic allowance while the gzip and
-// aggregate transfer ceilings remain unchanged.
-const MAX_ENTRY_BYTES = 3_260_000;
+// The provider-hosted prepaid pickup workflow brings the verified raw entry
+// baseline to 3,282,728 bytes. Keep narrow diagnostic headroom while the gzip
+// transfer ceiling remains unchanged.
+const MAX_ENTRY_BYTES = 3_300_000;
 const MAX_ENTRY_GZIP_BYTES = 800_000;
 const MAX_MAP_BYTES = 1_100_000;
 const MAX_MAP_GZIP_BYTES = 320_000;
-const MAX_ALL_JS_BYTES = 4_300_000;
+// The same required workflow brings the verified raw aggregate baseline to
+// 4,340,663 bytes. Compressed transfer remains governed by the unchanged gzip
+// ceiling below.
+const MAX_ALL_JS_BYTES = 4_350_000;
 const MAX_ALL_JS_GZIP_BYTES = 1_100_000;
 const MAX_ALL_CSS_BYTES = 100_000;
 
