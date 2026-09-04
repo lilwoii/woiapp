@@ -40,10 +40,10 @@ type Props = {
 };
 
 const fallbackRegion = {
-  latitude: 20,
-  longitude: 0,
-  latitudeDelta: 100,
-  longitudeDelta: 160,
+  latitude: 34.0522,
+  longitude: -118.2437,
+  latitudeDelta: 0.08,
+  longitudeDelta: 0.08,
 };
 
 function VenueMarker({
@@ -337,6 +337,11 @@ export function LiveMap({
       onMapReady={() => {
         mapReady.current = true;
         setMapStartupTimedOut(false);
+        setPerspective(true);
+        mapRef.current?.animateCamera(
+          { pitch: 42 },
+          { duration: motionDuration(reduceMotion, 260) },
+        );
       }}
       onPanDrag={() => {
         if (inventoryTimer.current) clearTimeout(inventoryTimer.current);

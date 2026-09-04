@@ -31,20 +31,29 @@ describe('global map camera integration', () => {
   });
 
   it('uses the short-arc camera region for web bounds and clears stale selection', () => {
-    expect(webMap).toMatch(/boundsForMapCoordinates\(places/);
+    expect(webMap).toMatch(/boundsForMapCoordinates\(fitPlaces/);
     expect(webMap).toMatch(/boundsForMapCoordinates\(routeCoordinates/);
     expect(webMap).not.toMatch(/routeCoordinates\.forEach\(.+bounds\.extend/s);
     expect(discover.match(/setSelectedId\(undefined\)/g)?.length).toBeGreaterThanOrEqual(3);
     expect(discover).toMatch(/selectedId=\{explicitSelection\?\.id\}/);
   });
 
-  it('keeps the map available in empty and disconnected areas without inventing a nearby city', () => {
+  it('keeps empty and disconnected maps at a useful neighborhood scale', () => {
     expect(discover).toMatch(/clientHydrated && focused && pathname === '\/' \? \([\s\S]*<View style=\{\[styles\.workspace, wide && styles\.workspaceWide\]\}>/);
     expect(discover).not.toMatch(/ranked\.length \|\| visibleMapInventory\.length \|\| mapMarkersSuppressed \? \(/);
-    expect(discover).toMatch(/The map is ready when listings reconnect/);
-    expect(webMap).toMatch(/const fallbackCenter: \[number, number\] = \[0, 20\]/);
-    expect(webMap).toMatch(/zoom: restoredCamera\?\.zoom \?\? \(first \? 11\.5 : 2\.35\)/);
-    expect(nativeMap).toMatch(/latitude: 20,[\s\S]*longitude: 0,[\s\S]*latitudeDelta: 100,[\s\S]*longitudeDelta: 160/);
+    expect(discover).toMatch(/Verified listings are not connected/);
+    expect(webMap).toMatch(/const fallbackZoom = 13\.25/);
+    expect(webMap).toMatch(/zoom: restoredCamera\?\.zoom \?\? \(first \? 13 : fallbackZoom\)/);
+    expect(webMap).toMatch(/cameraFitPlaces\(places, Boolean\(searchAreaKey\)\)/);
+    expect(webMap).toMatch(/isLocalExtent\(fitBounds\)/);
+    expect(nativeMap).toMatch(/latitudeDelta: 0\.08,[\s\S]*longitudeDelta: 0\.08/);
+  });
+
+  it('supports direct wheel zoom and a real vector 3D fallback on web', () => {
+    expect(webMap).toMatch(/openFreeMapStyleUrl = 'https:\/\/tiles\.openfreemap\.org\/styles\/liberty'/);
+    expect(webMap).toMatch(/cooperativeGestures: false/);
+    expect(webMap).toMatch(/scrollZoom: true/);
+    expect(webMap).toMatch(/pitch: restoredCamera\?\.pitch \?\? 42/);
   });
 
   it('invalidates stale searches and refuses oversized live-inventory viewports', () => {
@@ -74,15 +83,15 @@ describe('global map camera integration', () => {
       /AppState\.addEventListener\('change'[\s\S]*appForegroundRef\.current = active;[\s\S]*if \(active\) return;[\s\S]*locationRequestGeneration\.current \+= 1;[\s\S]*setLocating\(false\)/,
     );
     expect(discover).toMatch(
-      /if \(!isSupabaseConfigured \|\| !focused \|\| !appForeground\)[\s\S]*Location\.getForegroundPermissionsAsync\(\)/,
+      /if \(!focused \|\| !appForeground\)[\s\S]*if \(automaticNearbyAttempted\.current\) return;[\s\S]*void requestNearby\(\)/,
     );
     expect(discover.match(/!focusedRef\.current \|\| !appForegroundRef\.current/g)?.length)
       .toBeGreaterThanOrEqual(2);
   });
 
-  it('never silently re-shares location after resume or a manual area choice', () => {
+  it('requests foreground location once, then never silently re-shares after resume or a manual area choice', () => {
     expect(discover).toMatch(
-      /if \(automaticNearbyAttempted\.current\) return;[\s\S]*automaticNearbyAttempted\.current = true;[\s\S]*Location\.getForegroundPermissionsAsync\(\)/,
+      /if \(automaticNearbyAttempted\.current\) return;[\s\S]*automaticNearbyAttempted\.current = true;[\s\S]*void requestNearby\(\)/,
     );
     expect(discover).toMatch(
       /const applyManualArea[\s\S]*automaticNearbyAttempted\.current = true;[\s\S]*searchArea\(clean\)/,

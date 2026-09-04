@@ -8,10 +8,10 @@ const browserMapSources = browserMapOrigins.join(' ');
 const browserContentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'self'",
-  `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://tile.openstreetmap.org ${browserMapSources}`.trim(),
+  `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://tile.openstreetmap.org https://tiles.openfreemap.org ${browserMapSources}`.trim(),
   "font-src 'self' data:",
   "form-action 'self'",
-  `img-src 'self' data: blob: https://images.unsplash.com https://tile.openstreetmap.org https://*.supabase.co ${browserMapSources}`.trim(),
+  `img-src 'self' data: blob: https://images.unsplash.com https://tile.openstreetmap.org https://tiles.openfreemap.org https://*.supabase.co ${browserMapSources}`.trim(),
   "manifest-src 'self'",
   "object-src 'none'",
   "script-src 'self' 'sha256-67fhrP0+BkBqmgGGXTtgiVO/9EQs3QruYNU/7fnRkI8='",

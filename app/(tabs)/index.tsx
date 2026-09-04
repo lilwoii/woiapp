@@ -352,6 +352,13 @@ function ScopedDiscoverScreen() {
       const latitude = current.coords.latitude;
       const longitude = current.coords.longitude;
       if (!isCurrent()) return;
+      setLocationLabel('Near your current location');
+      setActiveArea('');
+      setMapFocusKey(`near:${generation}:${latitude.toFixed(5)}:${longitude.toFixed(5)}`);
+      setSelectedId(undefined);
+      setSelectedLocationId(undefined);
+      setLocationPanelOpen(false);
+      setSortMode('nearby');
       const searchResult = await refresh({
         latitude,
         longitude,
@@ -362,13 +369,6 @@ function ScopedDiscoverScreen() {
         setLocationError(searchResult.reason);
         return;
       }
-      setLocationLabel('Near your current location');
-      setActiveArea('');
-      setMapFocusKey(`near:${generation}:${latitude.toFixed(5)}:${longitude.toFixed(5)}`);
-      setSelectedId(undefined);
-      setSelectedLocationId(undefined);
-      setLocationPanelOpen(false);
-      setSortMode('nearby');
       if (!isCurrent()) return;
       void loadMapInventory(viewportAroundPoint(latitude, longitude, 16_093));
     } catch {
@@ -380,40 +380,13 @@ function ScopedDiscoverScreen() {
   }, [loadMapInventory, refresh]);
 
   useEffect(() => {
-    if (!isSupabaseConfigured || !focused || !appForeground) {
+    if (!focused || !appForeground) {
       const timer = setTimeout(() => setLocating(false), 0);
       return () => clearTimeout(timer);
     }
     if (automaticNearbyAttempted.current) return;
     automaticNearbyAttempted.current = true;
-    const generation = ++locationRequestGeneration.current;
-    let active = true;
-    const isCurrent = () =>
-      active &&
-      mounted.current &&
-      focusedRef.current &&
-      appForegroundRef.current &&
-      locationRequestGeneration.current === generation;
-    void Location.getForegroundPermissionsAsync()
-      .then((permission) => {
-        if (!isCurrent()) return;
-        if (permission.status === 'granted') {
-          void requestNearby();
-          return;
-        }
-        setLocating(false);
-      })
-      .catch(() => {
-        if (!isCurrent()) return;
-        setLocating(false);
-        setLocationError('Choose a city or ZIP, or use location when you are ready.');
-      });
-    return () => {
-      active = false;
-      if (locationRequestGeneration.current === generation) {
-        locationRequestGeneration.current += 1;
-      }
-    };
+    void requestNearby();
   }, [appForeground, focused, requestNearby]);
 
   const applyManualArea = async () => {
@@ -1177,7 +1150,7 @@ function ScopedDiscoverScreen() {
                         : visibleMapInventory.length
                           ? 'More places are visible on the map'
                           : syncStatus === 'error'
-                            ? 'The map is ready when listings reconnect'
+                            ? 'Verified listings are not connected'
                             : enabledPlaces.length
                               ? 'No places match these filters'
                               : locationLabel !== defaultLocationLabel
@@ -1190,7 +1163,7 @@ function ScopedDiscoverScreen() {
                         : visibleMapInventory.length
                           ? 'Zoom into a cluster or search this area to load its detailed list.'
                           : syncStatus === 'error'
-                            ? 'Base-map exploration remains available. Retry to restore live, verified listings.'
+                            ? 'Explore detailed streets, buildings, and public map labels now. Spottr markers require the verified listing database.'
                             : enabledPlaces.length
                               ? 'Clear a filter or search another visible area.'
                               : locationLabel !== defaultLocationLabel

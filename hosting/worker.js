@@ -60,11 +60,11 @@ function htmlHeaders(env) {
   'Content-Security-Policy': [
     "default-src 'self'",
     "base-uri 'self'",
-    `connect-src 'self' https://*.supabase.co wss://*.supabase.co ${supabaseOrigins} https://tile.openstreetmap.org ${mapOrigins}`.trim(),
+    `connect-src 'self' https://*.supabase.co wss://*.supabase.co ${supabaseOrigins} https://tile.openstreetmap.org https://tiles.openfreemap.org ${mapOrigins}`.trim(),
     "font-src 'self' data:",
     "form-action 'self'",
     "frame-ancestors 'none'",
-    `img-src 'self' data: blob: https://images.unsplash.com https://tile.openstreetmap.org https://*.supabase.co ${supabaseImageOrigins} ${mapOrigins}`.trim(),
+    `img-src 'self' data: blob: https://images.unsplash.com https://tile.openstreetmap.org https://tiles.openfreemap.org https://*.supabase.co ${supabaseImageOrigins} ${mapOrigins}`.trim(),
     "manifest-src 'self'",
     "object-src 'none'",
     "script-src 'self' 'sha256-67fhrP0+BkBqmgGGXTtgiVO/9EQs3QruYNU/7fnRkI8='",

@@ -99,6 +99,8 @@ test('HTML responses allow validated map origins in both resource directives', a
     assert.ok(connect.split(' ').includes(origin));
     assert.ok(images.split(' ').includes(origin));
   }
+  assert.ok(connect.split(' ').includes('https://tiles.openfreemap.org'));
+  assert.ok(images.split(' ').includes('https://tiles.openfreemap.org'));
 });
 
 test('public profile URLs fall back to the exported dynamic profile route', async () => {

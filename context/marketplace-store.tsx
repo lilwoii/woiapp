@@ -145,7 +145,7 @@ function createMarketplaceStoreState(scopeKey: string): MarketplaceStoreState {
     syncStatus: isSupabaseConfigured ? 'idle' : 'error',
     syncMessage: isSupabaseConfigured
       ? 'Choose your location, city, or ZIP to load nearby listings.'
-      : 'Live Spottr services are not configured. Listings and account changes are unavailable.',
+      : 'This private preview is not connected to the verified listing database yet.',
     hasMoreResults: false,
     loadingMoreResults: false,
     pendingPlaceIds: [],

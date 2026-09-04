@@ -21,6 +21,12 @@ can scale independently:
   OpenMapTiles, and exposes building height fields for 3D extrusion where the
   source data contains them. The chosen style must also include an enabled
   `fill-extrusion` layer; height fields alone do not make a visible 3D map.
+- Owner previews and local development use OpenFreeMap's public Liberty vector
+  style so streets, place labels, and OSM-derived 3D building extrusion remain
+  testable without a key. OpenFreeMap allows commercial use but currently offers
+  no SLA; it is a transparent preview fallback, not the high-availability launch
+  provider. Its source origin and attribution remain explicit in the browser CSP
+  and map UI.
 - Keep the existing server-only Mapbox Directions adapter for walking, cycling,
   and traffic-aware driving routes. The current public pricing includes 100,000
   Directions requests per month before usage charges.
@@ -40,6 +46,8 @@ Primary provider references:
 - [Stadia Maps pricing](https://stadiamaps.com/pricing/)
 - [Stadia Maps attribution](https://docs.stadiamaps.com/attribution/)
 - [Stadia 3D buildings with MapLibre](https://docs.stadiamaps.com/tutorials/adding-3d-buildings-to-your-maps-with-maplibre/)
+- [OpenFreeMap quick start](https://openfreemap.org/quick_start/)
+- [OpenFreeMap terms](https://openfreemap.org/tos/)
 - [Mapbox pricing](https://www.mapbox.com/pricing)
 - [Mapbox Directions API](https://docs.mapbox.com/api/navigation/directions/)
 - [Google Maps URLs](https://developers.google.com/maps/documentation/urls/get-started)

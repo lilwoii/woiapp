@@ -45,49 +45,40 @@ export type Props = {
   navigationMode?: TravelMode;
 };
 
-const fallbackCenter: [number, number] = [0, 20];
-const mapAttribution = process.env.EXPO_PUBLIC_MAP_ATTRIBUTION?.trim() || '© OpenStreetMap';
+const fallbackCenter: [number, number] = [-118.2437, 34.0522];
+const fallbackZoom = 13.25;
+const openFreeMapStyleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+const mapAttribution = process.env.EXPO_PUBLIC_MAP_ATTRIBUTION?.trim() ||
+  'OpenFreeMap · © OpenMapTiles · OpenStreetMap';
 const mapAttributionUrl = (() => {
   const candidate =
     process.env.EXPO_PUBLIC_MAP_ATTRIBUTION_URL?.trim() ||
-    'https://www.openstreetmap.org/copyright';
+    'https://openfreemap.org/';
   try {
     const url = new URL(candidate);
-    return url.protocol === 'https:' ? url.toString() : 'https://www.openstreetmap.org/copyright';
+    return url.protocol === 'https:' ? url.toString() : 'https://openfreemap.org/';
   } catch {
-    return 'https://www.openstreetmap.org/copyright';
+    return 'https://openfreemap.org/';
   }
 })();
 
 function createMapStyle(): maplibregl.StyleSpecification | string {
   const configuredStyle = process.env.EXPO_PUBLIC_MAP_STYLE_URL?.trim();
   if (configuredStyle) return configuredStyle;
+  return openFreeMapStyleUrl;
+}
 
-  return {
-    version: 8,
-    sources: {
-      openstreetmap: {
-        type: 'raster',
-        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-        tileSize: 256,
-        attribution: '© OpenStreetMap contributors',
-        maxzoom: 19,
-      },
-    },
-    layers: [
-      {
-        id: 'openstreetmap',
-        source: 'openstreetmap',
-        type: 'raster',
-        paint: {
-          'raster-saturation': -0.42,
-          'raster-contrast': -0.05,
-          'raster-brightness-min': 0.18,
-          'raster-brightness-max': 0.97,
-        },
-      },
-    ],
-  };
+function cameraFitPlaces(places: Place[], deliberateArea: boolean) {
+  const nearby = places.filter((place) => place.distanceMiles !== null);
+  if (nearby.length) return nearby;
+  return deliberateArea ? places : places.slice(0, 1);
+}
+
+function isLocalExtent(bounds: ReturnType<typeof boundsForMapCoordinates>) {
+  const longitudeSpan = bounds.east >= bounds.west
+    ? bounds.east - bounds.west
+    : 360 - bounds.west + bounds.east;
+  return bounds.north - bounds.south <= 2.5 && longitudeSpan <= 2.5;
 }
 
 function markerElement(
@@ -385,14 +376,15 @@ export default function MapLibreMapView({
         bearing: restoredCamera?.bearing ?? 0,
         center: restoredCamera?.center ?? (first ? [first.longitude, first.latitude] : fallbackCenter),
         container: element,
-        cooperativeGestures: true,
+        cooperativeGestures: false,
         maxPitch: 60,
         maxZoom: 20,
         minZoom: 2,
-        pitch: restoredCamera?.pitch ?? 0,
+        pitch: restoredCamera?.pitch ?? 42,
         pitchWithRotate: true,
+        scrollZoom: true,
         style: createMapStyle(),
-        zoom: restoredCamera?.zoom ?? (first ? 11.5 : 2.35),
+        zoom: restoredCamera?.zoom ?? (first ? 13 : fallbackZoom),
       });
       mapRef.current = map;
       failureTimer = setTimeout(() => setFailed(true), 12_000);
@@ -405,6 +397,7 @@ export default function MapLibreMapView({
           map.getStyle().layers?.some((layer) => layer.type === 'fill-extrusion'),
         );
         setSupports3D(styleSupports3D);
+        if (!styleSupports3D && !restoredCamera) map.jumpTo({ bearing: 0, pitch: 0 });
         setPerspective(styleSupports3D && map.getPitch() > 0);
         setMapZoom(map.getZoom());
         setInventoryViewportEligible(
@@ -629,26 +622,35 @@ export default function MapLibreMapView({
     }
 
     const fitRequestKey = searchAreaKey || (!mapWasInteracted.current ? 'initial-results' : '');
-    if (fitRequestKey && fitRequestKey !== fittedPlacesKey.current && places.length) {
+    const fitPlaces = cameraFitPlaces(places, Boolean(searchAreaKey));
+    if (fitRequestKey && fitRequestKey !== fittedPlacesKey.current && fitPlaces.length) {
       fittedPlacesKey.current = fitRequestKey;
-      if (places.length === 1) {
+      if (fitPlaces.length === 1) {
         map.easeTo({
-          center: [places[0].longitude, places[0].latitude],
+          center: [fitPlaces[0].longitude, fitPlaces[0].latitude],
           duration: motionDuration(reduceMotion, 450),
-          zoom: 13,
+          zoom: Math.max(map.getZoom(), 13),
         });
-      } else if (places.length > 1) {
-        const fitBounds = boundsForMapCoordinates(places, {
+      } else if (fitPlaces.length > 1) {
+        const fitBounds = boundsForMapCoordinates(fitPlaces, {
           latitude: fallbackCenter[1],
           longitude: fallbackCenter[0],
           latitudeDelta: 0.18,
           longitudeDelta: 0.17,
         });
-        const bounds = new LngLatBounds(
-          [fitBounds.west, fitBounds.south],
-          [fitBounds.east, fitBounds.north],
-        );
-        map.fitBounds(bounds, { duration: motionDuration(reduceMotion, 450), maxZoom: 14, padding: 70 });
+        if (isLocalExtent(fitBounds)) {
+          const bounds = new LngLatBounds(
+            [fitBounds.west, fitBounds.south],
+            [fitBounds.east, fitBounds.north],
+          );
+          map.fitBounds(bounds, { duration: motionDuration(reduceMotion, 450), maxZoom: 15, padding: 70 });
+        } else {
+          map.easeTo({
+            center: [fitPlaces[0].longitude, fitPlaces[0].latitude],
+            duration: motionDuration(reduceMotion, 450),
+            zoom: Math.max(map.getZoom(), 13),
+          });
+        }
       }
     }
   }, [authoritativeInventory, inventoryViewportEligible, mapZoom, markersSuppressed, places, ready, reduceMotion, renderedInventoryFeatures, searchAreaKey, selectedId, selectedLocationId]);
